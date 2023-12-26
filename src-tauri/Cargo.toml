@@ -1,0 +1,52 @@
+[package]
+name = "echo"
+version = "0.0.0"
+description = "Voice driven text entry"
+authors = ["corey m."]
+license = ""
+repository = ""
+edition = "2021"
+
+
+[build-dependencies]
+tauri-build = { version = "1.5.0", features = [] }
+
+[dependencies]
+tauri = { version = "1.5.2", features = [
+  "macos-private-api",
+  "system-tray",
+  "api-all",
+  "icon-png",
+] }
+tauri-plugin-autostart = { git = "https://github.com/vovayatsyuk/tauri-plugins-workspace/", branch = "fix-macos-launcher" }
+tauri-plugin-store = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v1" }
+cli-clipboard = "0.4.0"
+cpal = "0.15.2"
+crossbeam-channel = "0.5.8"
+env_logger = "0.10.0"
+hound = "3.5.1"
+log = "0.4.19"
+macos-accessibility-client = "0.0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+whisper-rs = { version = "0.10.0" }
+reqwest = "0.11.22"
+samplerate-rs = "0.1.0"
+
+# needed to paste on macos
+core-graphics = "0.23.1"
+
+# for downloading the model
+tokio = { version = "1.0", features = ["full"] }
+futures-util = "0.3.29"
+
+
+[dependencies.fix-path-env]
+git = "https://github.com/tauri-apps/fix-path-env-rs"
+branch = "dev"
+
+
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]

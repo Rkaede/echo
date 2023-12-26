@@ -1,0 +1,105 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist",
+    "withGlobalTauri": false
+  },
+  "package": {
+    "productName": "Echo",
+    "version": "0.0.0-pre.1"
+  },
+  "tauri": {
+    "macOSPrivateApi": true,
+    "systemTray": {
+      "iconPath": "icons/waveform@2x.png",
+      "iconAsTemplate": true
+    },
+    "allowlist": {
+      "all": true,
+      "globalShortcut": {
+        "all": true
+      },
+      "path": {
+        "all": true
+      },
+      "fs": {
+        "scope": ["$RESOURCE/**", "$APPLOCALDATA/**"],
+        "all": true
+      },
+      "shell": {
+        "all": true,
+        "execute": true,
+        "open": true,
+        "sidecar": true,
+        "scope": []
+      }
+    },
+    "bundle": {
+      "resources": ["resources/**/*"],
+      "active": true,
+      "icon": ["icons/AppIcon.icns"],
+      "identifier": "io.littlecove.echo",
+      "category": "Productivity",
+      "targets": "all"
+    },
+    "security": {
+      "csp": null
+    },
+    "updater": {
+      "active": false
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "decorations": false,
+        "hiddenTitle": true,
+        "visible": true,
+        "transparent": true,
+        "resizable": false,
+        "focus": false,
+        "title": "echo",
+        "url": "index.html",
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "width": 300,
+        "height": 100
+      },
+      {
+        "label": "settings",
+        "title": "settings",
+        "fullscreen": false,
+        "closable": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "visible": false,
+        "transparent": false,
+        "resizable": true,
+        "focus": false,
+        "url": "index.html?route=settings",
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "width": 800,
+        "height": 600
+      },
+      {
+        "label": "debug",
+        "title": "debug",
+        "fullscreen": false,
+        "closable": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "visible": false,
+        "transparent": false,
+        "resizable": true,
+        "focus": false,
+        "url": "index.html?route=debug",
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "width": 1200,
+        "height": 800
+      }
+    ]
+  }
+}

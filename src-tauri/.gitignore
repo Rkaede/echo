@@ -1,0 +1,6 @@
+# will have compiled files and executables
+/target/
+/models/
+target/
+
+
