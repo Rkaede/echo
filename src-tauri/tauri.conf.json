@@ -55,7 +55,7 @@
         "fullscreen": false,
         "decorations": false,
         "hiddenTitle": true,
-        "visible": true,
+        "visible": false,
         "transparent": true,
         "resizable": false,
         "focus": false,
