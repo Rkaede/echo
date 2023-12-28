@@ -1,10 +1,12 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use config::*;
 use crossbeam_channel::{unbounded, Sender};
 use download::WhisperModelDownloader;
 use env_logger::Builder;
 use log::{info, LevelFilter};
+use once_cell::sync::OnceCell;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -15,12 +17,16 @@ use tauri_plugin_autostart::MacosLauncher;
 
 mod accessibility;
 mod audio;
+mod config;
 mod download;
 mod paste;
 mod record;
 mod whisper;
 
 struct RecordState(Arc<Mutex<Option<Sender<()>>>>);
+
+// Global AppHandle
+pub static APP: OnceCell<tauri::AppHandle> = OnceCell::new();
 
 #[tauri::command]
 fn download_model(window: tauri::Window, src: String, target: String, model: String) {
@@ -103,6 +109,18 @@ fn main() {
             Some(vec![]),
         ))
         .setup(move |app| {
+            // AppHandle singleton
+            APP.get_or_init(|| app.handle());
+
+            // Init config
+            info!("Init Config Store");
+            init_config(app);
+
+            if is_first_run() {
+                create_default_config();
+                info!("First Run, opening onboarding window");
+                // todo: show onboarding window
+            }
             // prevent the app icon from showing on the dock
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 

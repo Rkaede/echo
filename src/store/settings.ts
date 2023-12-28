@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Store } from 'tauri-plugin-store-api';
+import { log } from '~/util';
 
-export const settingsStore = new Store('.settings.dat');
+export const settingsStore = new Store('config.json');
 
 export function useSetting<T>(key: string, defaultValue: T): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(defaultValue);
@@ -18,9 +19,15 @@ export function useSetting<T>(key: string, defaultValue: T): [T, (value: T) => v
   }, [key, defaultValue]);
 
   const set = (value: T) => {
-    settingsStore.set(key, value).then(() => {
+    if (value === undefined) {
+      log(`deleting ${key}`);
+      settingsStore.delete(key);
       settingsStore.save();
-    });
+    } else {
+      settingsStore.set(key, value).then(() => {
+        settingsStore.save();
+      });
+    }
     setValue(value);
   };
 
