@@ -139,6 +139,7 @@ fn main() {
             SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
                 "settings" => {
                     app.get_window("settings").unwrap().show().unwrap();
+                    app.get_window("settings").unwrap().set_focus().unwrap();
                 }
                 "quit" => {
                     std::process::exit(0);
