@@ -27,7 +27,8 @@ pub fn init_config(app: &mut tauri::App) {
 
 pub fn get(key: &str) -> Option<Value> {
     let state = APP.get().unwrap().state::<StoreWrapper>();
-    let store = state.0.lock().unwrap();
+    let mut store = state.0.lock().unwrap();
+    store.load().unwrap();
     match store.get(key) {
         Some(value) => Some(value.clone()),
         None => None,
@@ -49,4 +50,9 @@ pub fn is_first_run() -> bool {
 
 pub fn create_default_config() {
     set("model", "base");
+    set("sound-effects", true);
+    set("sound-volume", 1);
+    set("sound-start", "tick.mp3");
+    set("sound-stop", "tick.mp3");
+    set("sound-complete", "tick.mp3");
 }

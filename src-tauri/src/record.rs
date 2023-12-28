@@ -1,4 +1,4 @@
-use crate::audio;
+use crate::audio::{self, play_sound};
 use crate::paste::paste;
 use crate::whisper;
 use cpal::{
@@ -18,33 +18,48 @@ use tauri::{AppHandle, Manager};
 
 pub struct Record {
     app_handle: AppHandle,
-    enable_paste: bool
+    enable_paste: bool,
 }
 
 // the payload type must implement `Serialize` and `Clone`.
 #[derive(Clone, serde::Serialize)]
 struct Payload {
-  status: String
+    status: String,
 }
 
 impl Record {
     pub fn new(app_handle: AppHandle) -> Self {
-        Self { app_handle, enable_paste: true }
+        Self {
+            app_handle,
+            enable_paste: true,
+        }
     }
 
     pub fn start(&self, model: String, stop_record_rx: Receiver<()>) -> Result<(), Box<dyn Error>> {
-        self.app_handle.emit_all("change_status", Payload { status: "recording".to_string()}).unwrap();
+        self.app_handle
+            .emit_all(
+                "change_status",
+                Payload {
+                    status: "recording".to_string(),
+                },
+            )
+            .unwrap();
+
+        info!("[rust]: start recording");
+
+        play_sound("sound-start");
+
         let host = cpal::default_host();
         let device = host
             .default_input_device()
             .ok_or("No default input device")?;
 
-        println!("[rust]: device {:?}", device.name());
-        let config = device.default_input_config()?;
+        info!("[rust]: device {:?}", device.name());
+        let device_config = device.default_input_config()?;
 
-        println!("[rust]: config {:?}", config);
+        info!("[rust]: config {:?}", device_config);
 
-        let spec = audio::wav_spec_from_config(&config);
+        let spec = audio::wav_spec_from_config(&device_config);
         let data_dir = self
             .app_handle
             .path_resolver()
@@ -66,27 +81,27 @@ impl Record {
         // original writer to still be used elsewhere in the code.
         let writer_clone = writer.clone();
 
-        info!("[rust]: start recording {}", config.sample_format());
+        info!("[rust]: start recording {}", device_config.sample_format());
 
         let err_fn = move |err| {
             error!("[rust]: an error occurred on stream: {}", err);
         };
 
-        let stream = match config.sample_format() {
+        let stream = match device_config.sample_format() {
             SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
+                &device_config.into(),
                 move |data, _: &_| audio::write_input_data::<f32, f32>(data, &writer_clone),
                 err_fn,
                 None,
             ),
             SampleFormat::U16 => device.build_input_stream(
-                &config.into(),
+                &device_config.into(),
                 move |data, _: &_| audio::write_input_data::<u16, i16>(data, &writer_clone),
                 err_fn,
                 None,
             ),
             SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
+                &device_config.into(),
                 move |data, _: &_| audio::write_input_data::<i16, i16>(data, &writer_clone),
                 err_fn,
                 None,
@@ -107,7 +122,16 @@ impl Record {
         drop(stream);
         drop(writer);
 
-        self.app_handle.emit_all("change_status", Payload { status: "transcribing".to_string()}).unwrap();
+        play_sound("sound-stop");
+
+        self.app_handle
+            .emit_all(
+                "change_status",
+                Payload {
+                    status: "transcribing".to_string(),
+                },
+            )
+            .unwrap();
 
         let out_path = Path::new(&wav_path);
 
@@ -160,7 +184,17 @@ impl Record {
         if self.enable_paste {
             let _ = paste(&text);
         }
-        self.app_handle.emit_all("change_status", Payload { status: "idle".to_string()}).unwrap();
+
+        play_sound("sound-complete");
+
+        self.app_handle
+            .emit_all(
+                "change_status",
+                Payload {
+                    status: "idle".to_string(),
+                },
+            )
+            .unwrap();
 
         Ok(())
     }

@@ -13,7 +13,9 @@ export function useSetting<T>(key: string, defaultValue: T): [T, (value: T) => v
         setValue(value);
       } else {
         setValue(defaultValue);
-        settingsStore.set(key, defaultValue);
+        if (defaultValue !== undefined) {
+          settingsStore.set(key, defaultValue);
+        }
       }
     });
   }, [key, defaultValue]);

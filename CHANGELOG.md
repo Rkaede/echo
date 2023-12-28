@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/).
 ### Added
 
 - Added better config management in the rust backend.
+- Added sound effects.
 
 ### Changed
 

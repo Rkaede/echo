@@ -7,10 +7,13 @@
     "biomejs",
     "enigo",
     "fullscreen",
+    "ggml",
     "hookform",
     "lucide",
     "reqwest",
+    "rodio",
     "samplerate",
+    "Sinc",
     "tailwindcss",
     "tauri"
   ],
