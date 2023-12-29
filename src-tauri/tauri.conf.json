@@ -52,8 +52,8 @@
     },
     "windows": [
       {
-        "label": "echo",
-        "title": "echo",
+        "label": "overlay",
+        "title": "overlay",
         "url": "index.html",
         "alwaysOnTop": true,
         "decorations": false,

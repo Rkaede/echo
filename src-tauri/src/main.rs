@@ -58,7 +58,7 @@ fn position_window_at_top_center(window: &Window) {
 
 #[tauri::command]
 fn start_recording(model: String, state: State<'_, RecordState>, window: tauri::Window) {
-    let main_window = window.app_handle().get_window("main").unwrap();
+    let main_window = window.app_handle().get_window("overlay").unwrap();
     position_window_at_top_center(&main_window);
     let _ = main_window.show();
     let mut lock = state.0.lock().unwrap();
@@ -146,10 +146,6 @@ fn main() {
                 }
                 "debug" => {
                     open_debug_window(app.clone()).unwrap();
-                }
-                "hide" => {
-                    let window = app.get_window("main").unwrap();
-                    window.hide().unwrap();
                 }
                 _ => {}
             },
