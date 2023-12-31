@@ -1,7 +1,7 @@
 {
   "name": "echo",
   "private": true,
-  "version": "0.0.0-pre.1",
+  "version": "0.0.0-pre.2",
   "description": "Speech to text input",
   "type": "module",
   "license": "MIT",
