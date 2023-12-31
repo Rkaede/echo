@@ -16,16 +16,16 @@ Please note: You will be prompted to allow microphone and accessibility permissi
 
 ## Roadmap
 
-- Distil models
-- Audio cues
-- Permissions onboarding
+- Audio cues (done)
 - Text replacement
+- Permissions onboarding
+- ffmpeg processing (noise reduction, silence removal etc.)
+- History
 - Custom prompt support (basic)
 - Customizable hotkey
-- ffmpeg processing (noise reduction, silence removal etc.)
 - Audio device selection
-- History
 - Profiles
+- Distil models
 - LLM support
 - Overlay updates
 - Linux & Windows support
