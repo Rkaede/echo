@@ -29,10 +29,7 @@ pub fn get(key: &str) -> Option<Value> {
     let state = APP.get().unwrap().state::<StoreWrapper>();
     let mut store = state.0.lock().unwrap();
     store.load().unwrap();
-    match store.get(key) {
-        Some(value) => Some(value.clone()),
-        None => None,
-    }
+    store.get(key).cloned()
 }
 
 pub fn set<T: serde::ser::Serialize>(key: &str, value: T) {

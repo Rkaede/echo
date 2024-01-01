@@ -47,10 +47,10 @@ impl WhisperModelDownloader {
 
         if std::path::Path::new(&path).exists() {
             println!("File exists. Removing...");
-            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path);
         }
 
-        file = File::create(&path)
+        file = File::create(path)
             .or(Err(format!("Failed to create file '{}'", &path)))
             .unwrap();
 
@@ -58,11 +58,9 @@ impl WhisperModelDownloader {
         let mut rate = 0.0;
 
         while let Some(item) = stream.next().await {
-            let chunk = item
-                .or(Err(format!("Error while downloading file")))
-                .unwrap();
-            file.write(&chunk)
-                .or(Err(format!("Error while writing to file")))
+            let chunk = item.or(Err("Error while downloading file")).unwrap();
+            file.write_all(&chunk)
+                .or(Err("Error while writing to file"))
                 .unwrap();
             let new = min(downloaded + (chunk.len() as u64), total_size);
             downloaded = new;

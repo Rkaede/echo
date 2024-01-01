@@ -9,7 +9,8 @@ pub fn transcribe(
 
     let mut whisper_params = WhisperContextParameters::new();
     whisper_params.use_gpu = false;
-    let ctx = WhisperContext::new_with_params(&model_path, whisper_params).expect("failed to load model");
+    let ctx =
+        WhisperContext::new_with_params(model_path, whisper_params).expect("failed to load model");
 
     let mut state = ctx.create_state().expect("failed to create state");
     let mut params = FullParams::new(SamplingStrategy::default());

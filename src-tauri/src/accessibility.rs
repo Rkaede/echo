@@ -6,7 +6,7 @@ pub fn query_accessibility_permissions() -> bool {
     } else {
         println!("[rust]: app is NOT trusted for accessibility");
     }
-    return trusted;
+    trusted
 }
 
 #[cfg(not(target_os = "macos"))]

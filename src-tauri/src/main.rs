@@ -38,7 +38,7 @@ fn download_model(window: tauri::Window, src: String, target: String, model: Str
 
 #[tauri::command]
 fn open_debug_window(app: AppHandle) -> Result<(), String> {
-    let _ = app.get_window("debug").unwrap().show().unwrap();
+    app.get_window("debug").unwrap().show().unwrap();
     Ok(())
 }
 
@@ -135,37 +135,36 @@ fn main() {
             stop_recording,
             download_model
         ])
-        .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "settings" => {
-                    app.get_window("settings").unwrap().show().unwrap();
-                    app.get_window("settings").unwrap().set_focus().unwrap();
+        .on_system_tray_event(|app, event| {
+            if let SystemTrayEvent::MenuItemClick { id, .. } = event {
+                match id.as_str() {
+                    "settings" => {
+                        app.get_window("settings").unwrap().show().unwrap();
+                        app.get_window("settings").unwrap().set_focus().unwrap();
+                    }
+                    "quit" => {
+                        std::process::exit(0);
+                    }
+                    "debug" => {
+                        open_debug_window(app.clone()).unwrap();
+                    }
+                    _ => {}
                 }
-                "quit" => {
-                    std::process::exit(0);
-                }
-                "debug" => {
-                    open_debug_window(app.clone()).unwrap();
-                }
-                _ => {}
-            },
-            _ => {}
+            }
         })
-        // prevent the window from closing
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
-                print!("close requested");
+        .on_window_event(|event| {
+            // prevent the window from closing
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+                println!("close requested");
                 event.window().hide().unwrap();
                 api.prevent_close();
             }
-            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| match event {
-            tauri::RunEvent::ExitRequested { api, .. } => {
+        .run(|_, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 api.prevent_exit();
             }
-            _ => {}
         });
 }

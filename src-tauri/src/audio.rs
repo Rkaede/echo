@@ -73,9 +73,9 @@ pub fn play_sound(sound_name: &str) {
 
         let file_path = handle
             .path_resolver()
-            .resolve_resource(&format!("resources/audio/{}", filename));
+            .resolve_resource(format!("resources/audio/{}", filename));
 
-        if let None = file_path {
+        if file_path.is_none() {
             info!("[rust]: file not found");
             return;
         }
