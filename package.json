@@ -12,7 +12,7 @@
     "ci": "biome ci src",
     "lint": "biome check src",
     "lint:fix": "biome check --apply src",
-    "release": "tauri build --target aarch64-apple-darwin",
+    "release": "tauri build --target aarch64-apple-darwin && tauri build --target x86_64-apple-darwin",
     "preview": "vite preview",
     "tauri": "tauri"
   },
