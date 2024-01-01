@@ -1,15 +1,15 @@
 import * as RadioGroup from '@radix-ui/react-radio-group';
+import { BaseDirectory, removeFile } from '@tauri-apps/api/fs';
 import { VariantProps, cva } from 'cva';
 import { CheckCircle2, DownloadCloudIcon, Trash2 } from 'lucide-react';
+import { Button } from '~/components/ui/button';
+import { Progress } from '~/components/ui/progress';
+import { useSetting } from '~/store/settings';
+import useStore from '~/store/store';
 import { Model } from '~/types';
 import { cn } from '~/util';
-import useStore from '~/store/store';
 import { Rating } from './components/Rating';
-import { Progress } from '~/components/ui/progress';
-import { Button } from '~/components/ui/button';
-import { BaseDirectory, removeFile } from '@tauri-apps/api/fs';
 import { SettingTitle } from './components/SettingTitle';
-import { useSetting } from '~/store/settings';
 
 const modelRadio = cva(
   ['flex flex-col gap-2 items-center px-4 py-2 rounded-lg border relative'],
@@ -27,7 +27,7 @@ const modelRadio = cva(
     defaultVariants: {
       selected: false,
     },
-  }
+  },
 );
 
 export type ModelProps = VariantProps<typeof modelRadio> & {
@@ -63,8 +63,7 @@ export function SelectModel() {
             key={model.id}
             className={cn(
               'border rounded-lg px-0 py-2 w-full grid grid-cols-[46px_1fr_120px_120px_52px] items-center hover:bg-slate-50',
-              model.id === selectedModel &&
-                'outline outline-2 outline-indigo-500'
+              model.id === selectedModel && 'outline outline-2 outline-indigo-500',
             )}
             value={model.id}
           >
@@ -76,12 +75,8 @@ export function SelectModel() {
               )}
             </div>
             <div className="flex flex-col items-start">
-              <div className="text-base font-medium leading-none">
-                {model.label}
-              </div>
-              <div className="text-xs font-normal text-left">
-                {model.description}
-              </div>
+              <div className="text-base font-medium leading-none">{model.label}</div>
+              <div className="text-xs font-normal text-left">{model.description}</div>
             </div>
             <div className="flex items-start flex-col gap-1">
               <div className="text-xs font-medium leading-none">Speed:</div>
@@ -93,12 +88,7 @@ export function SelectModel() {
             </div>
             <div className="flex items-start flex-col gap-1">
               {model.id !== 'base' && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleDelete(model)}
-                  asChild
-                >
+                <Button size="sm" variant="ghost" onClick={() => handleDelete(model)} asChild>
                   {/* we need to use a div here because the button is a radio button */}
                   <div role="button">
                     <Trash2 className="w-6 h-6" />
@@ -127,17 +117,13 @@ export function DownloadModels() {
             key={model.id}
             className={cn(
               'border-b px-0 py-2 w-full grid grid-cols-[46px_1fr_120px_120px_52px] items-center',
-              model.id === models[0].id && 'border-t'
+              model.id === models[0].id && 'border-t',
             )}
           >
             <div className="min-w-8 px-3 flex justify-center" />
             <div className="flex flex-col items-start">
-              <div className="text-base font-medium leading-none">
-                {model.label}
-              </div>
-              <div className="text-xs font-normal text-left">
-                {model.description}
-              </div>
+              <div className="text-base font-medium leading-none">{model.label}</div>
+              <div className="text-xs font-normal text-left">{model.description}</div>
             </div>
             <div className="flex items-start flex-col gap-1">
               <div className="text-xs font-medium leading-none">Speed:</div>
@@ -148,19 +134,12 @@ export function DownloadModels() {
               <Rating rating={model.ratings.accuracy} />
             </div>
             <div className="flex items-start flex-col gap-1">
-              {model.downloadProgress !== null && (
-                <Progress value={model.downloadProgress} />
+              {model.downloadProgress !== null && <Progress value={model.downloadProgress} />}
+              {model.downloadProgress === null && model.status !== 'available' && (
+                <Button size="sm" variant="ghost" onClick={() => downloadModel(model.id)}>
+                  <DownloadCloudIcon />
+                </Button>
               )}
-              {model.downloadProgress === null &&
-                model.status !== 'available' && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => downloadModel(model.id)}
-                  >
-                    <DownloadCloudIcon />
-                  </Button>
-                )}
             </div>
           </div>
         ))}

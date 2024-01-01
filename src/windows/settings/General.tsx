@@ -1,8 +1,8 @@
+import { CheckedState } from '@radix-ui/react-checkbox';
+import { ReactNode, useEffect, useState } from 'react';
+import { disable, enable, isEnabled } from 'tauri-plugin-autostart-api';
 import { Checkbox } from '~/components/ui/checkbox';
 import { Label } from '~/components/ui/label';
-import { ReactNode, useEffect, useState } from 'react';
-import { Textarea } from '~/components/ui/textarea';
-import { SettingTitle } from './components/SettingTitle';
 import {
   Select,
   SelectContent,
@@ -10,11 +10,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '~/components/ui/select';
-import { enable, isEnabled, disable } from 'tauri-plugin-autostart-api';
-import { CheckedState } from '@radix-ui/react-checkbox';
-import { useSetting } from '~/store/settings';
-import { Slider } from '~/components/ui/slider';
 import { Separator } from '~/components/ui/separator';
+import { Slider } from '~/components/ui/slider';
+import { Textarea } from '~/components/ui/textarea';
+import { useSetting } from '~/store/settings';
+import { SettingTitle } from './components/SettingTitle';
 
 // placeholders for future features
 const showPlaceholders = false;
@@ -85,11 +85,7 @@ export function General() {
               />
             </>
             <>
-              <SoundSelect
-                label="Stop recording:"
-                soundEvent="sound-stop"
-                disabled={!sounds}
-              />
+              <SoundSelect label="Stop recording:" soundEvent="sound-stop" disabled={!sounds} />
             </>
             <>
               <SoundSelect
@@ -99,9 +95,7 @@ export function General() {
               />
             </>
             <>
-              <div className="text-xs col-start-2">
-                More sounds coming soon!
-              </div>
+              <div className="text-xs col-start-2">More sounds coming soon!</div>
             </>
           </LayoutGrid>
         </div>
@@ -121,8 +115,8 @@ export function General() {
         <section>
           <SettingTitle>Prompt</SettingTitle>
           <Description>
-            The prompt to provide the model. This is typically used to correct
-            spelling. Limit of 250 characters.
+            The prompt to provide the model. This is typically used to correct spelling. Limit
+            of 250 characters.
           </Description>
           <div className="flex items-center">
             <Textarea className="max-w-lg h-[100px] resize-none" />
@@ -133,8 +127,8 @@ export function General() {
         <section>
           <SettingTitle>Audio Device</SettingTitle>
           <Description>
-            The prompt to provide the model. This is typically used to correct
-            spelling. Limit of 250 characters.
+            The prompt to provide the model. This is typically used to correct spelling. Limit
+            of 250 characters.
           </Description>
           <Select>
             <SelectTrigger className="w-[180px]">
@@ -190,15 +184,8 @@ type SoundSelectProps = {
   disabled: boolean;
 };
 
-function SoundSelect({
-  label,
-  soundEvent,
-  disabled = false,
-}: SoundSelectProps) {
-  const [soundSetting, setSoundSetting] = useSetting<string>(
-    soundEvent,
-    'none'
-  );
+function SoundSelect({ label, soundEvent, disabled = false }: SoundSelectProps) {
+  const [soundSetting, setSoundSetting] = useSetting<string>(soundEvent, 'none');
 
   function handleChange(value: string) {
     setSoundSetting(value);
@@ -207,11 +194,7 @@ function SoundSelect({
   return (
     <>
       <div className="justify-self-end text-sm">{label}</div>
-      <Select
-        value={soundSetting ?? 'none'}
-        onValueChange={handleChange}
-        disabled={disabled}
-      >
+      <Select value={soundSetting ?? 'none'} onValueChange={handleChange} disabled={disabled}>
         <SelectTrigger className="w-[180px] h-8">
           <SelectValue />
         </SelectTrigger>

@@ -18,6 +18,4 @@ const urlParams = new URLSearchParams(window.location.search);
 const route = urlParams.get('route') ?? 'app';
 const RouteComponent = routes[route as Routes];
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  RouteComponent
-);
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(RouteComponent);

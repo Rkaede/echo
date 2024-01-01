@@ -1,6 +1,6 @@
+import { appWindow } from '@tauri-apps/api/window';
 import { VariantProps, cva } from 'cva';
 import { AnimatePresence, motion } from 'framer-motion';
-import { appWindow } from '@tauri-apps/api/window';
 
 const overlay = cva(
   [
@@ -25,7 +25,7 @@ const overlay = cva(
     defaultVariants: {
       status: 'idle',
     },
-  }
+  },
 );
 
 const variants = {

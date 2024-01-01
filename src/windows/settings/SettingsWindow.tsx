@@ -1,8 +1,8 @@
-import { DownloadModels, SelectModel } from './Models';
 import { useEffect, useState } from 'react';
-import { refreshModels } from '~/store/store';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
+import { refreshModels } from '~/store/store';
 import { General } from './General';
+import { DownloadModels, SelectModel } from './Models';
 
 export function Settings() {
   useEffect(() => {

@@ -2,10 +2,10 @@ import { invoke } from '@tauri-apps/api';
 import { listen } from '@tauri-apps/api/event';
 import { isRegistered, register } from '@tauri-apps/api/globalShortcut';
 import { useEffect } from 'react';
-import { log } from '~/util';
-import { Overlay } from './Overlay';
-import useStore, { Status } from '../../store/store';
 import { settingsStore, useSetting } from '~/store/settings';
+import { log } from '~/util';
+import useStore, { Status } from '../../store/store';
+import { Overlay } from './Overlay';
 
 export function OverlayWindow() {
   const status = useStore((state) => state.status);
