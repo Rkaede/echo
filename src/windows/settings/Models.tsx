@@ -10,6 +10,7 @@ import { Model } from '~/types';
 import { cn } from '~/util';
 import { Rating } from './components/Rating';
 import { SettingTitle } from './components/SettingTitle';
+import { useEffect } from 'react';
 
 const modelRadio = cva(
   ['flex flex-col gap-2 items-center px-4 py-2 rounded-lg border relative'],
@@ -42,6 +43,13 @@ export function SelectModel() {
   const models = allModels.filter((model) => model.status === 'available');
 
   const [selectedModel, setModel] = useSetting<string>('model', 'base');
+
+  useEffect(() => {
+    const model = models.find((model) => model.id === selectedModel);
+    if (!model) {
+      setModel('base');
+    }
+  }, [models, selectedModel, setModel]);
 
   async function handleDelete(model: Model) {
     deleteModel(model.id);
