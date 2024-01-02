@@ -82,7 +82,7 @@ export function SelectModel() {
                 <div className="h-6 w-6" />
               )}
             </div>
-            <div className="flex flex-col items-start">
+            <div className="flex flex-col items-start pr-2">
               <div className="text-base font-medium leading-none">{model.label}</div>
               <div className="text-xs font-normal text-left">{model.description}</div>
             </div>
@@ -129,7 +129,7 @@ export function DownloadModels() {
             )}
           >
             <div className="min-w-8 px-3 flex justify-center" />
-            <div className="flex flex-col items-start">
+            <div className="flex flex-col items-start pr-2">
               <div className="text-base font-medium leading-none">{model.label}</div>
               <div className="text-xs font-normal text-left">{model.description}</div>
             </div>
