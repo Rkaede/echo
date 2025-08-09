@@ -1,7 +1,7 @@
 <p align="center">
   <img width="549" height="208" alt="echo-logo" align="center" src="https://github.com/user-attachments/assets/a6363096-0748-40a3-b9a7-979ca909cd5b" />
 </p>
-<p align="center">Desktop transcription app using Groq (it's fast! ⚡).</p>
+<p align="center">Lightning-Fast Voice-to-Text for macOS ⚡</p>
 
 
 
