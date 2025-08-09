@@ -2,5 +2,13 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Echo</title>
+        <item>
+            <title>0.0.1</title>
+            <pubDate>Sun, 10 Aug 2025 09:12:59 +1000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://raw.githubusercontent.com/Rkaede/echo/main/docs/Echo-0.0.1.dmg" length="1466928" type="application/octet-stream" sparkle:edSignature="kMnYftJi36VqI7tKyarmBeg7o639thKzJqBLGLgyjJmemMWTPWh5AcTxJo9XqZrdA55W9lo8qmmLgmb5+PwpBw=="/>
+        </item>
     </channel>
 </rss>
