@@ -1,0 +1,24 @@
+{
+  "originHash" : "c35e61a988e64bb4c87aeaa1636eab4692249332a791217342bff96e0166475c",
+  "pins" : [
+    {
+      "identity" : "hotkey",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/soffes/HotKey",
+      "state" : {
+        "branch" : "main",
+        "revision" : "a3cf605d7a96f6ff50e04fcb6dea6e2613cfcbe4"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "df074165274afaa39539c05d57b0832620775b11",
+        "version" : "2.7.1"
+      }
+    }
+  ],
+  "version" : 3
+}

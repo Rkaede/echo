@@ -1,0 +1,2 @@
+- do not to commit code unless asked
+- run xcodebuild to validate any changes
