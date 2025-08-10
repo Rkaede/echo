@@ -108,6 +108,13 @@ check_prerequisites() {
         exit 1
     fi
     
+    # Check for xmlstarlet (used to inject release notes link into appcast)
+    if ! command -v xmlstarlet &> /dev/null; then
+        print_error "xmlstarlet not found. Please install it:"
+        print_error "  brew install xmlstarlet"
+        exit 1
+    fi
+    
     # Check for gh CLI (optional for GitHub releases)
     if ! command -v gh &> /dev/null; then
         print_warning "gh CLI not found. GitHub release creation will be skipped."
@@ -366,7 +373,38 @@ update_appcast() {
         exit 1
     fi
     
+    # Inject sparkle:releaseNotesLink pointing to our hosted HTML release notes (via xmlstarlet)
+    local release_notes_url="https://rkaede.github.io/echo/Echo-${version}.html"
+    local xpath="/rss/channel/item[title='${version}' or sparkle:shortVersionString='${version}']"
+    xmlstarlet ed \
+        -N sparkle='http://www.andymatuschak.org/xml-namespaces/sparkle' \
+        -d "${xpath}/sparkle:releaseNotesLink" \
+        -s "${xpath}" -t elem -n "sparkle:releaseNotesLink" -v "${release_notes_url}" \
+        "$DOCS_DIR/appcast.xml" > "$DOCS_DIR/appcast.xml.tmp" \
+        && mv "$DOCS_DIR/appcast.xml.tmp" "$DOCS_DIR/appcast.xml"
+
+    # Point enclosure URL to the GitHub Releases asset for this tag
+    local enclosure_url="https://github.com/Rkaede/echo/releases/download/v${version}/Echo.dmg"
+    xmlstarlet ed \
+        -N sparkle='http://www.andymatuschak.org/xml-namespaces/sparkle' \
+        -u "${xpath}/enclosure/@url" -v "${enclosure_url}" \
+        "$DOCS_DIR/appcast.xml" > "$DOCS_DIR/appcast.xml.tmp" \
+        && mv "$DOCS_DIR/appcast.xml.tmp" "$DOCS_DIR/appcast.xml"
+
     print_success "Appcast updated with DMG file"
+}
+
+# Generate HTML release notes from CHANGELOG
+generate_release_notes_html() {
+    local version=$1
+    print_status "Generating HTML release notes from CHANGELOG for ${version}..."
+    mkdir -p "$DOCS_DIR"
+    "${PROJECT_DIR}/scripts/changelog-to-html.sh" "$version" > "${DOCS_DIR}/Echo-${version}.html"
+    if [[ $? -ne 0 || ! -s "${DOCS_DIR}/Echo-${version}.html" ]]; then
+        print_error "Failed to generate HTML release notes"
+        exit 1
+    fi
+    print_success "Release notes generated: ${DOCS_DIR}/Echo-${version}.html"
 }
 
 # Commit and tag the release
@@ -377,7 +415,7 @@ commit_and_tag() {
     
     git add "$INFO_PLIST"
     git add "$DOCS_DIR/appcast.xml" 2>/dev/null || true
-    git add "$DOCS_DIR/Echo-${version}.md" 2>/dev/null || true
+    git add "$DOCS_DIR/Echo-${version}.html" 2>/dev/null || true
     git add "${PROJECT_DIR}/CHANGELOG.md" 2>/dev/null || true
     git add "${PROJECT_DIR}/Echo.xcodeproj/project.pbxproj" 2>/dev/null || true
     
@@ -443,10 +481,12 @@ create_github_release() {
     local release_title="Echo ${version}"
     local tag_name="v${version}"
 
+    # Upload both versioned and stable-named DMGs so README latest link works
+    local stable_dmg="${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     gh release create "$tag_name" \
         --title "$release_title" \
         --notes-file "$tmp_notes" \
-        "$dmg_file"
+        "$stable_dmg"
 
     local gh_status=$?
     rm -f "$tmp_notes"
@@ -522,12 +562,19 @@ main() {
     # Create DMG distribution file
     create_dmg "$NEW_VERSION"
     
+    # Generate HTML release notes for Sparkle
+    generate_release_notes_html "$NEW_VERSION"
+    
     # Notarize (optional)
     read -p "Notarize the app? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         notarize_app "$NEW_VERSION"
     fi
+    
+    # Create stable-named DMG for latest download link
+    cp -f "${EXPORT_DIR}/${PROJECT_NAME}-${NEW_VERSION}.dmg" "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
+    print_success "Stable DMG created: ${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     
     # Update appcast
     update_appcast "$NEW_VERSION"

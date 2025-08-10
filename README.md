@@ -62,7 +62,7 @@ Models can be selected in the settings.
 
 ## 🚀 Getting Started
 
-1. Download the latest release from the [releases page](https://github.com/Rkaede/echo/releases)
+1. Download the latest DMG: [Download for macOS](https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg) (or visit the [releases page](https://github.com/Rkaede/echo/releases))
 2. Open the DMG and drag the app to your Applications folder
 3. Open the app and follow the onboarding process
 4. Grant microphone and accessibility permissions
