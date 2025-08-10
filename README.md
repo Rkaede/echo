@@ -3,7 +3,7 @@
 </p>
 <p align="center">Lightning-Fast Voice-to-Text for macOS ⚡</p>
 
-
+<p align="center"><a href="https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg">Download</a> for macOS 15+</p>
 
 <p align="center">
   <a href="LICENSE">
