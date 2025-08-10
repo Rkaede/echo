@@ -1,18 +1,18 @@
 <p align="center">
-  <img width="549" height="208" alt="echo-logo" align="center" src="https://github.com/user-attachments/assets/a6363096-0748-40a3-b9a7-979ca909cd5b" />
+  <img width="349"  alt="echo-logo" align="center" src="https://github.com/user-attachments/assets/a6363096-0748-40a3-b9a7-979ca909cd5b" />
 </p>
 <p align="center">Lightning-Fast Voice-to-Text for macOS ⚡</p>
 
-<p align="center"><a href="https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg">Download</a> for macOS 15+</p>
 
 <p align="center">
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="MIT License">
+  <a href="https://www.youtube.com/watch?v=vWJGuGEDd28" target="_blank">
+    <img width="800" alt="Demo video" src="https://github.com/user-attachments/assets/292643b6-2382-4fd2-b31e-8662080176ca" />
   </a>
 </p>
 
----
+<p align="center"><a href="https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg">Download</a> for macOS 15+</p>
 
+---
 
 A lightweight macOS app for instant speech-to-text. Press Option+Space to toggle recording or hold the Fn key for push-to-talk.
 
