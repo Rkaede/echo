@@ -50,6 +50,7 @@ class AppState: ObservableObject {
             errorMessage = ""
         }
         
+        print("AppState: Status changing from \(status) to \(newStatus)")
         status = newStatus
         
         // If status is inserted or cancelled, automatically return to idle after 2 seconds
@@ -69,6 +70,7 @@ class AppState: ObservableObject {
             return
         }
         
+        print("AppState: Setting error: \(message)")
         errorMessage = message
         status = .error
     }

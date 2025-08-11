@@ -33,14 +33,19 @@ class TranscriptionViewModel: ObservableObject {
   }
 
   func toggleRecording() async {
+    print("TranscriptionViewModel: toggleRecording called, current status: \(appState.status)")
     switch appState.status {
     case .idle, .error:
+      print("TranscriptionViewModel: Starting recording from \(appState.status) state")
       await startRecording()
     case .recording:
+      print("TranscriptionViewModel: Stopping recording")
       await stopRecording()
     case .initiatingRecording, .processing, .inserted, .cancelled, .confirmingCancel:
+      print("TranscriptionViewModel: Ignoring toggle, currently in \(appState.status) state")
       break
     }
+    print("TranscriptionViewModel: toggleRecording completed")
   }
   
   func startRecordingOnly() async {

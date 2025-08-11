@@ -27,6 +27,8 @@ class TranscriptionService: ObservableObject {
   // MARK: - Public Interface
   
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
+    print("TranscriptionService: startRecording called with mode: \(mode)")
+    
     // Reset cancellation flag for new recording
     isCancelled = false
     
@@ -34,25 +36,32 @@ class TranscriptionService: ObservableObject {
     appState.setRecordingMode(mode)
     
     // Ensure API key is loaded before starting recording
+    print("TranscriptionService: Ensuring API key is loaded...")
     settingsManager.ensureAPIKeyLoaded()
     
     // Check if we have an API key after loading
     guard settingsManager.hasAPIKey else {
+      print("TranscriptionService: No API key found! Please configure in Settings.")
       let error = TranscriptionError.noAPIKey
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
+    print("TranscriptionService: API key found, proceeding with recording...")
     
     // Request microphone permission if needed
+    print("TranscriptionService: Requesting microphone permission...")
     let hasAudioPermission = await audioRecorder.requestPermission()
+    print("TranscriptionService: Microphone permission result: \(hasAudioPermission)")
+    
     guard hasAudioPermission else {
+      print("TranscriptionService: No microphone permission, showing error")
       let error = TranscriptionError.noMicrophonePermission
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
     
     do {
-      print("TranscriptionService: Starting recording")
+      print("TranscriptionService: Have permission, starting recording")
       appState.updateStatus(.initiatingRecording)
       appState.transcriptionText = ""
       try await audioRecorder.startRecording()
