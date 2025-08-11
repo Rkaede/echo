@@ -3,6 +3,11 @@
 
 # build 
 .build
+build-release/
+
+# Code coverage files
+*.profraw
+
 
 # Xcode
 #
