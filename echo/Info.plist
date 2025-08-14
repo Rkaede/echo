@@ -5,11 +5,11 @@
 		<key>CFBundleDevelopmentRegion</key>
 		<string>en</string>
 		<key>CFBundleExecutable</key>
-		<string>Echo</string>
+		<string>$(PRODUCT_NAME)</string>
 		<key>CFBundleIconFile</key>
 		<string>AppIcon</string>
 		<key>CFBundleIdentifier</key>
-		<string>io.littlecove.echo</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 		<key>CFBundleInfoDictionaryVersion</key>
 		<string>6.0</string>
 		<key>CFBundleName</key>
@@ -29,7 +29,7 @@
 		<key>SUEnableAutomaticChecks</key>
 		<true />
 		<key>SUFeedURL</key>
-		<string>https://raw.githubusercontent.com/Rkaede/echo/main/docs/appcast.xml</string>
+		<string>https://rkaede.github.io/echo/appcast.xml</string>
 		<key>SUPublicEDKey</key>
 		<string>hX7VZOZJ7tkQfO3ewTtWrWlcr7fIeGAcUtOfLJzPzuE=</string>
 		<key>SUScheduledCheckInterval</key>
