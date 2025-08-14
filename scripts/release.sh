@@ -576,8 +576,14 @@ main() {
     cp -f "${EXPORT_DIR}/${PROJECT_NAME}-${NEW_VERSION}.dmg" "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     print_success "Stable DMG created: ${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     
+    # Temporarily move stable DMG to avoid duplicate error in appcast generation
+    mv "${EXPORT_DIR}/${PROJECT_NAME}.dmg" "${EXPORT_DIR}/${PROJECT_NAME}.dmg.tmp"
+    
     # Update appcast
     update_appcast "$NEW_VERSION"
+    
+    # Restore stable DMG after appcast generation
+    mv "${EXPORT_DIR}/${PROJECT_NAME}.dmg.tmp" "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     
     # Commit and tag
     read -p "Commit and tag release? (y/n) " -n 1 -r
