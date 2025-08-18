@@ -12,7 +12,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		04EF51372E2A4FAC00C95CA1 /* EchoDev.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EchoDev.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		04EF51372E2A4FAC00C95CA1 /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -60,7 +60,7 @@
 		04EF51382E2A4FAC00C95CA1 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				04EF51372E2A4FAC00C95CA1 /* EchoDev.app */,
+				04EF51372E2A4FAC00C95CA1 /* Echo.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -89,7 +89,7 @@
 				049C83B72E383A6500B262D9 /* Sparkle */,
 			);
 			productName = echo;
-			productReference = 04EF51372E2A4FAC00C95CA1 /* EchoDev.app */;
+			productReference = 04EF51372E2A4FAC00C95CA1 /* Echo.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -283,7 +283,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8X5D6DQHTZ;
 				ENABLE_HARDENED_RUNTIME = NO;
-				ENABLE_PREVIEWS = NO;
+				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = echo/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -298,7 +298,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = io.littlecove.echo.dev;
-				PRODUCT_NAME = "$(TARGET_NAME)Dev";
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
