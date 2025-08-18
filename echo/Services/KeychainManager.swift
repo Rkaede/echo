@@ -1,7 +1,6 @@
 import Foundation
 import Security
 
-@MainActor
 class KeychainManager: ObservableObject {
     static let shared = KeychainManager()
     
