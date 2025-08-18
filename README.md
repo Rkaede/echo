@@ -87,15 +87,12 @@ Models can be selected in the settings.
 
 ## 🛣️ Roadmap
 
-- Bug fixes
-- Cancel recording
-- Restore clipboard after pasting
-- LLM post processing
+- History
 - Profiles with Customizable hotkey and push-to-talk keys
+- LLM post processing
 - Per-app paste behavior (append newline, keep clipboard, etc.)
 - Dictionary/word replacements
 - Take screenshot for additional context
-- History
 
 ## 🤝 Contributing
 
