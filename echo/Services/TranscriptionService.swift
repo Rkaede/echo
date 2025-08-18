@@ -229,13 +229,13 @@ class TranscriptionService: ObservableObject {
         return false
       } else {
         print("TranscriptionService: Accessibility permission granted, attempting paste")
-        let success = await pasteService.pasteToFocusedApp(text)
+        let success = await pasteService.pasteToFocusedApp(text, restoreClipboard: settingsManager.restoreClipboard)
         print("TranscriptionService: Paste success: \(success)")
         return success
       }
     } else {
       print("TranscriptionService: Accessibility permissions already granted, pasting")
-      let success = await pasteService.pasteToFocusedApp(text)
+      let success = await pasteService.pasteToFocusedApp(text, restoreClipboard: settingsManager.restoreClipboard)
       print("TranscriptionService: Paste success: \(success)")
       return success
     }

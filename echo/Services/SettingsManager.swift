@@ -17,6 +17,7 @@ class SettingsManager: ObservableObject {
   @AppStorage("autoTranscribe") var autoTranscribe = true
   @AppStorage("selectedModel") var selectedModel = Constants.API.whisperModel
   @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding = false
+  @AppStorage("restoreClipboard") var restoreClipboard = true
   
   // API key uses lazy loading to avoid immediate keychain access
   var apiKey: String {

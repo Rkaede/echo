@@ -94,11 +94,20 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
   @EnvironmentObject private var updateManager: UpdateManager
   @Environment(\.openWindow) private var openWindow
+  @ObservedObject private var settings = SettingsManager.shared
 
   var body: some View {
     Form {
       Section("Startup") {
         LaunchAtLogin.Toggle()
+      }
+      
+      Section("Clipboard") {
+        Toggle("Restore clipboard after pasting", isOn: $settings.restoreClipboard)
+        
+        Text("When enabled, the clipboard will be restored to its previous content after transcribed text is pasted.")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
       
       Section("Updates") {

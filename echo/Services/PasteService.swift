@@ -4,10 +4,12 @@ import Foundation
 
 class PasteService {
   static let shared = PasteService()
+  
+  private var savedClipboardContent: String?
 
   private init() {}
 
-  func pasteToFocusedApp(_ text: String) async -> Bool {
+  func pasteToFocusedApp(_ text: String, restoreClipboard: Bool = true) async -> Bool {
     print("PasteService: Attempting to paste text: '\(text.prefix(50))...'")
 
     // Check for accessibility permissions
@@ -17,6 +19,12 @@ class PasteService {
     }
 
     print("PasteService: Accessibility permissions confirmed")
+
+    // Save current clipboard content if restoration is enabled
+    if restoreClipboard {
+      savedClipboardContent = NSPasteboard.general.string(forType: .string)
+      print("PasteService: Saved clipboard content for restoration")
+    }
 
     // Copy text to clipboard
     NSPasteboard.general.clearContents()
@@ -29,6 +37,13 @@ class PasteService {
     // Simulate paste
     print("PasteService: Simulating Cmd+V paste")
     await simulatePaste()
+
+    // Restore clipboard if enabled and we have saved content
+    if restoreClipboard {
+      // Wait a bit longer to ensure the paste operation completed
+      try? await Task.sleep(nanoseconds: 500_000_000)
+      await restoreSavedClipboard()
+    }
 
     print("PasteService: Paste operation completed")
     return true
@@ -101,5 +116,19 @@ class PasteService {
     } else {
       print("PasteService: Failed to create URL for accessibility preferences")
     }
+  }
+  
+  private func restoreSavedClipboard() async {
+    guard let savedContent = savedClipboardContent else {
+      print("PasteService: No saved clipboard content to restore")
+      return
+    }
+    
+    NSPasteboard.general.clearContents()
+    let success = NSPasteboard.general.setString(savedContent, forType: .string)
+    print("PasteService: Clipboard restored successfully: \(success)")
+    
+    // Clear the saved content after restoration
+    savedClipboardContent = nil
   }
 }
