@@ -36,7 +36,20 @@ open Echo.xcodeproj
 
 ## Build Validation
 
-After any set of changes, validate build commands by checking for zero error and warning output. 
+After any set of changes, validate builds:
+
+```bash
+# Validate Debug build
+xcodebuild -scheme Echo -configuration Debug build | grep -E "(error|warning)"
+
+# Validate Release build
+xcodebuild -scheme Echo -configuration Release build | grep -E "(error|warning)"
+
+# Run all tests
+xcodebuild -scheme Echo test
+
+# Check for zero errors and warnings in output
+``` 
 
 ## Testing
 
@@ -72,7 +85,7 @@ The codebase follows MVVM pattern with clear separation:
 4. **Services/** - External integrations and utilities
    - `GroqClient.swift` - Groq API transcription requests
    - `HotkeyManager.swift` - Global hotkey (Option+Space) for toggle mode
-   - `GlobalShortcutMonitor.swift` - Push-to-talk mode monitoring
+   - `GlobalShortcutMonitor.swift` - Push-to-talk mode monitoring (Fn key)
    - `PasteService.swift` - Simulates Cmd+V for auto-pasting
    - `SettingsManager.swift` - UserDefaults for non-sensitive preferences
    - `KeychainManager.swift` - Secure API key storage in macOS Keychain
@@ -80,12 +93,22 @@ The codebase follows MVVM pattern with clear separation:
    - `DisplayManager.swift` - Multi-monitor support and overlay positioning
    - `UpdateManager.swift` - Sparkle framework integration for auto-updates
    - `TempFileManager.swift` - Manages temporary audio file cleanup and periodic maintenance
+   - `PermissionService.swift` - Handles microphone and accessibility permissions
+   - `AccessibilityService.swift` - Manages accessibility permissions and events
+   - `AppStateService.swift` - Central state management service
+   - `NotificationService.swift` - System notifications and user feedback
+
+5. **Components/** - Reusable UI components
+   - `PermissionStatusView.swift` - Permission status indicators
+   - `ModelSelectionView.swift` - Groq model selection interface
+   - `VolumeVisualizerView.swift` - Audio level visualization
+   - `StatusIndicatorView.swift` - Recording status indicators
 
 ## Key Implementation Details
 
 ### Recording Modes
 1. **Toggle Mode** (default): Press Option+Space to start/stop
-2. **Push-to-Talk Mode**: Hold Option+Space to record, release to stop
+2. **Push-to-Talk Mode**: Hold Fn key to record, release to stop
 
 ### Recording Workflow
 Managed by `TranscriptionService` and `TranscriptionViewModel`:
@@ -114,27 +137,35 @@ Overlay window configuration in `App.swift`:
 
 ### Automatic Updates
 **Sparkle Configuration:**
-- Update feed: `https://raw.githubusercontent.com/Rkaede/echo/main/docs/appcast.xml`
+- Update feed: `https://raw.githubusercontent.com/corey-taylor/echo/main/docs/appcast.xml`
 - Public key: `hX7VZOZJ7tkQfO3ewTtWrWlcr7fIeGAcUtOfLJzPzuE=`
 - Check interval: 7 days (604800 seconds)
 - Version info in Info.plist: `CFBundleShortVersionString` and `CFBundleVersion`
+- Automated via `scripts/release.sh` with appcast generation
 
 ## Security & Storage
 
 ### Data Storage
 - **Keychain**: API keys via `KeychainManager`
 - **UserDefaults**: Non-sensitive preferences (selected model, onboarding status)
-- **Temporary files**: Audio recordings stored in `/tmp/echo/` and automatically cleaned up
+- **Temporary files**: Audio recordings managed by `TempFileManager`
+  - Storage location: `/tmp/echo/` directory
   - Immediate cleanup after transcription success/failure
-  - Periodic cleanup every 30 minutes for orphaned files (>1 hour old)
-  - Startup cleanup to remove files from previous sessions
+  - Periodic maintenance every 30 minutes removes files >1 hour old
+  - Startup cleanup removes orphaned files from previous app sessions
+  - Automatic directory creation and permission handling
 
 ### Entitlements
-- **Development**: Non-sandboxed for debugging
-- **Release**: Sandboxed with:
+- **Development** (`Echo.entitlements`): Non-sandboxed for debugging
   - `com.apple.security.audio-input` - Microphone access
   - `com.apple.security.network.client` - API requests
   - `com.apple.security.automation.apple-events` - Accessibility for pasting
+- **Release** (`EchoRelease.entitlements`): Sandboxed with:
+  - `com.apple.security.app-sandbox` - App Store sandbox
+  - `com.apple.security.audio-input` - Microphone access
+  - `com.apple.security.network.client` - API requests
+  - `com.apple.security.automation.apple-events` - Accessibility for pasting
+  - `com.apple.security.files.user-selected.read-write` - File access when needed
 
 ### Required Permissions
 1. **Microphone**: Audio recording (requested on first use)
@@ -166,7 +197,18 @@ Package resolution stored in `Package.resolved`.
 
 ### To release a new version:
 1. Update version in `Info.plist` (`CFBundleShortVersionString` and `CFBundleVersion`)
-2. Build release configuration
-3. Sign and notarize the app
-4. Update `docs/appcast.xml` with new release info
-5. Use `scripts/release.sh` for automation
+2. Run automated release script: `./scripts/release.sh`
+   - Builds release configuration
+   - Signs and notarizes the app
+   - Creates DMG installer
+   - Generates and updates `docs/appcast.xml`
+   - Uploads artifacts to GitHub releases
+
+### Release Automation
+The `scripts/release.sh` script automates the complete release workflow:
+- Version validation and Git tagging
+- Xcode build with proper code signing
+- macOS notarization process
+- DMG creation and signing
+- Sparkle appcast XML generation
+- GitHub release creation with artifacts
