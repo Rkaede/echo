@@ -18,6 +18,10 @@ class SettingsManager: ObservableObject {
   @AppStorage("selectedModel") var selectedModel = Constants.API.whisperModel
   @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding = false
   @AppStorage("restoreClipboard") var restoreClipboard = true
+  @AppStorage("enableHistory") var enableHistory = false
+  @AppStorage("saveAudioWithHistory") var saveAudioWithHistory = false
+  @AppStorage("audioStoragePath") var audioStoragePath = ""
+  @AppStorage("audioStorageBookmark") var audioStorageBookmark = Data()
   
   // API key uses lazy loading to avoid immediate keychain access
   var apiKey: String {
@@ -86,5 +90,73 @@ class SettingsManager: ObservableObject {
     if !hasLoadedAPIKey {
       loadAPIKeyIfNeeded()
     }
+  }
+  
+  // MARK: - Security-Scoped Bookmark Management
+  
+  /// Sets a custom audio storage directory with security-scoped bookmark
+  /// - Parameter url: The directory URL to set
+  func setAudioStorageDirectory(_ url: URL) {
+    // Store the path for display purposes
+    audioStoragePath = url.path
+    
+    // Create and store security-scoped bookmark
+    do {
+      let bookmarkData = try url.bookmarkData(
+        options: [.withSecurityScope],
+        includingResourceValuesForKeys: nil,
+        relativeTo: nil
+      )
+      audioStorageBookmark = bookmarkData
+      print("SettingsManager: Saved security-scoped bookmark for \(url.path)")
+    } catch {
+      print("SettingsManager: Failed to create security-scoped bookmark: \(error)")
+      // Clear bookmark on failure but keep path for display
+      audioStorageBookmark = Data()
+    }
+  }
+  
+  /// Resolves the security-scoped bookmark to access the custom directory
+  /// - Returns: The resolved URL if bookmark is valid, nil otherwise
+  func resolveAudioStorageDirectory() -> URL? {
+    guard !audioStorageBookmark.isEmpty else {
+      return nil
+    }
+    
+    do {
+      var isStale = false
+      let resolvedURL = try URL(
+        resolvingBookmarkData: audioStorageBookmark,
+        options: [.withSecurityScope],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+      )
+      
+      if isStale {
+        print("SettingsManager: Security-scoped bookmark is stale, clearing")
+        audioStorageBookmark = Data()
+        return nil
+      }
+      
+      // Start accessing the security-scoped resource
+      guard resolvedURL.startAccessingSecurityScopedResource() else {
+        print("SettingsManager: Failed to start accessing security-scoped resource")
+        return nil
+      }
+      
+      print("SettingsManager: Resolved security-scoped bookmark to \(resolvedURL.path)")
+      return resolvedURL
+      
+    } catch {
+      print("SettingsManager: Failed to resolve security-scoped bookmark: \(error)")
+      audioStorageBookmark = Data()
+      return nil
+    }
+  }
+  
+  /// Clears the custom audio storage directory and bookmark
+  func clearAudioStorageDirectory() {
+    audioStoragePath = ""
+    audioStorageBookmark = Data()
   }
 }

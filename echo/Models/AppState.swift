@@ -26,6 +26,10 @@ class AppState: ObservableObject {
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
     
+    @Published var isHistoryWindowOpen: Bool = false
+    @Published var historyCount: Int = 0
+    @Published var recentTranscriptions: [TranscriptionHistory] = []
+    
     private var confirmationTimeoutTask: Task<Void, Never>?
     private var _previousStatusBeforeConfirmation: RecordingStatus?
     
@@ -139,5 +143,14 @@ class AppState: ObservableObject {
         errorMessage = ""
         status = .idle
         recordingMode = nil
+    }
+    
+    func updateHistoryState(count: Int, recent: [TranscriptionHistory]) {
+        historyCount = count
+        recentTranscriptions = recent
+    }
+    
+    func toggleHistoryWindow() {
+        isHistoryWindowOpen.toggle()
     }
 }

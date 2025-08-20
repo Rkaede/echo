@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 @MainActor
 class TranscriptionService: ObservableObject {
@@ -8,9 +9,13 @@ class TranscriptionService: ObservableObject {
   private let apiClient = GroqAPIClient.shared
   private let appState: AppState
   private let pasteService = PasteService.shared
+  private let historyManager = HistoryManager.shared
   
   private var cancellables = Set<AnyCancellable>()
   private var isCancelled = false
+  
+  private var recordingStartTime: Date?
+  private var transcriptionStartTime: Date?
   
   init(appState: AppState) {
     self.appState = appState
@@ -64,6 +69,8 @@ class TranscriptionService: ObservableObject {
       print("TranscriptionService: Have permission, starting recording")
       appState.updateStatus(.initiatingRecording)
       appState.transcriptionText = ""
+      
+      recordingStartTime = Date()
       try await audioRecorder.startRecording()
       
       // Update current input device in AppState
@@ -85,6 +92,7 @@ class TranscriptionService: ObservableObject {
         // Try once more after cleanup
         do {
           print("TranscriptionService: Retrying recording after cleanup")
+          recordingStartTime = Date()
           try await audioRecorder.startRecording()
           appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
           appState.updateStatus(.recording)
@@ -102,6 +110,8 @@ class TranscriptionService: ObservableObject {
   
   func stopRecordingAndTranscribe() async -> TranscriptionServiceResult {
     print("TranscriptionService: Stopping recording")
+    let recordingEndTime = Date()
+    
     guard let audioFileURL = await audioRecorder.stopRecording() else {
       print("TranscriptionService: Failed to stop recording")
       let error = TranscriptionError.recordingStopFailed
@@ -112,6 +122,12 @@ class TranscriptionService: ObservableObject {
     print("TranscriptionService: Recording stopped, file at: \(audioFileURL)")
     appState.updateStatus(.processing)
     
+    // Calculate recording duration
+    let recordingDuration = recordingStartTime.map { recordingEndTime.timeIntervalSince($0) } ?? 0
+    
+    // Get active application context
+    let activeApp = getActiveApplicationName()
+    
     // Ensure cleanup happens regardless of success or failure
     defer {
       audioRecorder.deleteRecording()
@@ -119,8 +135,23 @@ class TranscriptionService: ObservableObject {
     
     do {
       print("TranscriptionService: Starting transcription")
-      let result = try await apiClient.transcribeAudio(fileURL: audioFileURL, apiKey: settingsManager.apiKey)
-      print("TranscriptionService: Transcription completed: '\(result.text.prefix(50))...'")
+      transcriptionStartTime = Date()
+      let uploadStartTime = Date()
+      
+      let resultWithTiming = try await apiClient.transcribeAudio(fileURL: audioFileURL, apiKey: settingsManager.apiKey)
+
+      let transcriptionEndTime = Date()
+      let totalTime = transcriptionEndTime.timeIntervalSince(transcriptionStartTime!)
+
+      // Extract timing data
+      let pureUploadTime = resultWithTiming.uploadTime
+      let downloadTime = resultWithTiming.downloadTime
+      let totalNetworkTime = resultWithTiming.totalNetworkTime
+
+      // Legacy uploadTime calculation (for backward compatibility)
+      let legacyUploadTime = transcriptionEndTime.timeIntervalSince(uploadStartTime)
+      
+      print("TranscriptionService: Transcription completed: '\(resultWithTiming.result.text.prefix(50))...'")
       
       // Check if cancelled after API call completes
       if isCancelled {
@@ -128,8 +159,49 @@ class TranscriptionService: ObservableObject {
         return .success(())
       }
       
-      let transcribedText = result.text.trimmingCharacters(in: .whitespaces)
+      let transcribedText = resultWithTiming.result.text.trimmingCharacters(in: .whitespaces)
       appState.transcriptionText = transcribedText
+      
+      // Save successful transcription to history if enabled
+      if !transcribedText.isEmpty && settingsManager.enableHistory {
+        print("TranscriptionService: Preparing to save transcription to history")
+        
+        // Generate ID for this history entry
+        let historyEntryId = UUID()
+        
+        // Save audio file if enabled and we have the recording file
+        var audioFileReference: String? = nil
+        if settingsManager.saveAudioWithHistory {
+          audioFileReference = AudioStorageManager.shared.saveAudioFile(from: audioFileURL, transcriptionId: historyEntryId)
+          
+          if audioFileReference != nil {
+            print("TranscriptionService: Saved audio file for history entry")
+          } else {
+            print("TranscriptionService: Failed to save audio file, continuing without audio")
+          }
+        }
+        
+        let historyEntry = TranscriptionHistory(
+          id: historyEntryId,
+          transcribedText: transcribedText,
+          duration: recordingDuration,
+          audioFileReference: audioFileReference,
+          languageDetected: resultWithTiming.result.language,
+          modelUsed: settingsManager.selectedModel,
+          applicationContext: activeApp,
+          uploadTime: legacyUploadTime,  // Legacy field for backward compatibility
+          pureUploadTime: pureUploadTime,
+          downloadTime: downloadTime,
+          totalNetworkTime: totalNetworkTime,
+          groqProcessingTime: totalTime - legacyUploadTime,  // Server processing time
+          totalTranscriptionTime: totalTime
+        )
+        
+        historyManager.saveTranscription(historyEntry)
+        print("TranscriptionService: Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")")
+      } else {
+        print("TranscriptionService: History save skipped - isEmpty: \(!transcribedText.isEmpty), enableHistory: \(settingsManager.enableHistory)")
+      }
       
       // Check cancellation before auto-paste
       if isCancelled {
@@ -212,6 +284,13 @@ class TranscriptionService: ObservableObject {
   }
   
   // MARK: - Private Methods
+  
+  private func getActiveApplicationName() -> String? {
+    guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+      return nil
+    }
+    return frontmostApp.localizedName
+  }
   
   private func performAutoPaste(text: String) async -> Bool {
     print("TranscriptionService: Attempting to paste transcribed text")
