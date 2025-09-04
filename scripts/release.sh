@@ -114,6 +114,13 @@ check_prerequisites() {
         print_error "  brew install xmlstarlet"
         exit 1
     fi
+
+    # Check for pandoc (used to convert markdown to HTML)
+    if ! command -v pandoc &> /dev/null; then
+        print_error "pandoc not found. Please install it:"
+        print_error "  brew install pandoc"
+        exit 1
+    fi
     
     # Check for gh CLI (optional for GitHub releases)
     if ! command -v gh &> /dev/null; then
@@ -205,7 +212,8 @@ build_app() {
         PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_IDENTIFIER" \
         DEVELOPMENT_TEAM="$TEAM_ID" \
         CODE_SIGN_IDENTITY="$DEVELOPER_ID" \
-        CODE_SIGN_STYLE="Manual"
+        CODE_SIGN_STYLE="Manual" \
+        OTHER_CODE_SIGN_FLAGS="--timestamp"
     
     if [ $? -ne 0 ]; then
         print_error "Build failed"
@@ -229,7 +237,8 @@ archive_app() {
         PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_IDENTIFIER" \
         DEVELOPMENT_TEAM="$TEAM_ID" \
         CODE_SIGN_IDENTITY="$DEVELOPER_ID" \
-        CODE_SIGN_STYLE="Manual"
+        CODE_SIGN_STYLE="Manual" \
+        OTHER_CODE_SIGN_FLAGS="--timestamp"
     
     if [ $? -ne 0 ]; then
         print_error "Archive failed"

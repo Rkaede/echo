@@ -45,19 +45,8 @@ extract_version_section() {
 
 markdown_to_html() {
   local text="$1"
-  # headers
-  text=$(echo "$text" | sed -E 's/^### (.*)$/<h3>\1<\/h3>/')
-  text=$(echo "$text" | sed -E 's/^## (.*)$/<h2>\1<\/h2>/')
-  # list items (bold section on leading **label**)
-  text=$(echo "$text" | sed -E 's/^\- \*\*([^*]+)\*\*(.*)$/<li><strong>\1<\/strong>\2<\/li>/')
-  text=$(echo "$text" | sed -E 's/^\- (.*)$/<li>\1<\/li>/')
-  # bold
-  text=$(echo "$text" | sed -E 's/\*\*([^*]+)\*\*/<strong>\1<\/strong>/g')
-  # inline code
-  text=$(echo "$text" | sed -E 's/`([^`]+)`/<code>\1<\/code>/g')
-  # links [text](url)
-  text=$(echo "$text" | sed -E 's/\[([^]]+)\]\(([^)]+)\)/<a href="\2">\1<\/a>/g')
-  echo "$text"
+  # Use pandoc to convert markdown to HTML
+  echo "$text" | pandoc -f markdown -t html --wrap=none
 }
 
 version_content="$(extract_version_section "$VERSION" "$CHANGELOG_FILE" || true)"
@@ -71,28 +60,8 @@ EOF
   exit 0
 fi
 
-in_list=false
-while IFS= read -r line; do
-  if [[ "$line" =~ ^- ]]; then
-    if [ "$in_list" = false ]; then
-      echo "<ul>"
-      in_list=true
-    fi
-    markdown_to_html "$line"
-  else
-    if [ "$in_list" = true ]; then
-      echo "</ul>"
-      in_list=false
-    fi
-    if [ -n "$line" ]; then
-      markdown_to_html "$line"
-    fi
-  fi
-done <<< "$version_content"
-
-if [ "$in_list" = true ]; then
-  echo "</ul>"
-fi
+# Convert the entire version content to HTML using pandoc
+markdown_to_html "$version_content"
 
 echo "<p><a href=\"https://github.com/Rkaede/echo/blob/main/CHANGELOG.md\">View full changelog</a></p>"
 

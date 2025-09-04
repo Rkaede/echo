@@ -34,5 +34,7 @@
 		<string>hX7VZOZJ7tkQfO3ewTtWrWlcr7fIeGAcUtOfLJzPzuE=</string>
 		<key>SUScheduledCheckInterval</key>
 		<integer>604800</integer>
+		<key>SUEnableInstallerLauncherService</key>
+		<true />
 	</dict>
 </plist>
