@@ -27,6 +27,7 @@ Your speech is transcribed via Groq's Whisper models and automatically pasted in
 - Minimal overlay
 - Push-to-talk OR toggle to start/stop recording
 - Input transcription into the current app (e.g. Slack, Cursor, etc.)
+- History with audio playback and full-text search
 
 ## 📉 Costs
 
@@ -87,7 +88,6 @@ Models can be selected in the settings.
 
 ## 🛣️ Roadmap
 
-- History
 - Profiles with Customizable hotkey and push-to-talk keys
 - LLM post processing
 - Per-app paste behavior (append newline, keep clipboard, etc.)
