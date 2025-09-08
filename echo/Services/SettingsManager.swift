@@ -22,6 +22,11 @@ class SettingsManager: ObservableObject {
   @AppStorage("saveAudioWithHistory") var saveAudioWithHistory = false
   @AppStorage("audioStoragePath") var audioStoragePath = ""
   @AppStorage("audioStorageBookmark") var audioStorageBookmark = Data()
+  @AppStorage("soundEnabled") var soundEnabled = true
+  @AppStorage("soundOnRecordingStart") var soundOnRecordingStart = true
+  @AppStorage("soundOnTranscriptionComplete") var soundOnTranscriptionComplete = true
+  @AppStorage("recordingStartSound") var recordingStartSound = "click01"
+  @AppStorage("transcriptionCompleteSound") var transcriptionCompleteSound = "click02"
   
   // API key uses lazy loading to avoid immediate keychain access
   var apiKey: String {

@@ -10,6 +10,7 @@ class TranscriptionService: ObservableObject {
   private let appState: AppState
   private let pasteService = PasteService.shared
   private let historyManager = HistoryManager.shared
+  private let soundManager = SoundManager.shared
   
   private var cancellables = Set<AnyCancellable>()
   private var isCancelled = false
@@ -78,6 +79,10 @@ class TranscriptionService: ObservableObject {
       
       print("TranscriptionService: Recording started successfully")
       appState.updateStatus(.recording)
+      
+      // Play recording start sound
+      soundManager.playRecordingStartSound()
+      
       return .success(())
       
     } catch {
@@ -96,6 +101,10 @@ class TranscriptionService: ObservableObject {
           try await audioRecorder.startRecording()
           appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
           appState.updateStatus(.recording)
+          
+          // Play recording start sound
+          soundManager.playRecordingStartSound()
+          
           return .success(())
         } catch {
           print("TranscriptionService: Retry also failed: \(error)")
@@ -214,6 +223,9 @@ class TranscriptionService: ObservableObject {
         let pasteSuccess = await performAutoPaste(text: transcribedText)
         if !pasteSuccess {
           print("TranscriptionService: Auto-paste failed, but transcription succeeded")
+        } else {
+          // Play completion sound only if paste was successful
+          soundManager.playTranscriptionCompleteSound()
         }
       } else {
         print("TranscriptionService: No text to paste (empty result)")
