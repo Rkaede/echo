@@ -99,6 +99,9 @@ struct EchoApp: App {
     .onChange(of: displayManager.shouldRepositionOverlay) {
       repositionOverlayWindow()
     }
+    .onChange(of: displayManager.spaceDidChange) {
+      handleSpaceChange()
+    }
     .onChange(of: globalShortcutMonitor.shouldCancelRecording) {
       handleCancelRecording()
     }
@@ -184,6 +187,25 @@ struct EchoApp: App {
     }
   }
   
+  private func handleSpaceChange() {
+    print("App: Space changed - ensuring overlay window visibility")
+    
+    // Wait a bit for space transition to complete, then reposition
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+      self.repositionOverlayWindow()
+      
+      // Double-check that window is actually visible after repositioning
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        if let window = self.overlayWindowRef ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
+          if !window.isVisible {
+            print("App: Overlay window not visible after space change - recreating")
+            self.recreateOverlayWindow()
+          }
+        }
+      }
+    }
+  }
+  
   private func updateHistoryState() {
     appState.updateHistoryState(count: historyManager.totalCount, recent: historyManager.recentTranscriptions)
   }
@@ -191,11 +213,11 @@ struct EchoApp: App {
   private func configureOverlayWindow() {
     DispatchQueue.main.async {
       if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
-        // Essential: Set collection behavior for fullscreen support
+        // Essential: Set collection behavior for fullscreen and space support
         window.collectionBehavior = [
           .canJoinAllSpaces,
           .fullScreenAuxiliary,
-          .transient,
+          .stationary,
           .ignoresCycle,
         ]
 
@@ -203,7 +225,10 @@ struct EchoApp: App {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask = [.borderless, .nonactivatingPanel]
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)))
+        
+        // Use dynamic window level based on current system state
+        let optimalLevel = displayManager.getOptimalWindowLevel()
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
 
         // Position window at bottom center of active screen
         let windowWidth: CGFloat = 300  // Increased for padding
@@ -222,6 +247,9 @@ struct EchoApp: App {
         // Make window transparent
         window.isOpaque = false
         window.backgroundColor = NSColor.clear
+        
+        // Force window to front and ensure it's visible
+        window.orderFrontRegardless()
         
         // Store reference to overlay window for repositioning
         self.overlayWindowRef = window
@@ -253,21 +281,53 @@ struct EchoApp: App {
         let windowWidth: CGFloat = 300  // Increased for padding
         let windowHeight: CGFloat = 60
         
+        // Force re-application of collection behavior to ensure window joins new spaces
+        window.collectionBehavior = [
+          .canJoinAllSpaces,
+          .fullScreenAuxiliary,
+          .stationary,
+          .ignoresCycle,
+        ]
+        
         if let optimalPosition = self.displayManager.getOptimalOverlayPosition(
           windowWidth: windowWidth,
           windowHeight: windowHeight
         ) {
           window.setFrame(optimalPosition, display: true)
-          // Ensure window is visible on current space
-          window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)))
-          window.orderFront(nil)
-          print("App: Repositioned overlay window to: \(optimalPosition)")
+          
+          // Ensure window is visible on current space with dynamic level
+          let optimalLevel = self.displayManager.getOptimalWindowLevel()
+          window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
+          
+          // Force window to front with multiple strategies
+          window.orderFrontRegardless()
+          window.makeKeyAndOrderFront(nil)
+          
+          print("App: Repositioned overlay window to: \(optimalPosition) with level: \(optimalLevel)")
         } else {
           print("App: Warning - Could not determine optimal position for repositioning")
         }
       } else {
         print("App: Warning - Overlay window not found for repositioning")
+        // If window is not found, try to recreate it
+        self.recreateOverlayWindow()
       }
+    }
+  }
+  
+  private func recreateOverlayWindow() {
+    print("App: Recreating overlay window to ensure visibility")
+    
+    // Close existing overlay window if it exists
+    if let existingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
+      existingWindow.close()
+      overlayWindowRef = nil
+    }
+    
+    // Small delay to ensure window is properly closed
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      // Recreate overlay window
+      self.openWindow(id: "overlay")
     }
   }
   

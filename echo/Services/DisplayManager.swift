@@ -6,8 +6,10 @@ class DisplayManager: ObservableObject {
     static let shared = DisplayManager()
     
     @Published var shouldRepositionOverlay = false
+    @Published var spaceDidChange = false
     
     private var displayChangeNotification: NSObjectProtocol?
+    private var spaceChangeNotification: NSObjectProtocol?
     
     private init() {
         setupDisplayChangeMonitoring()
@@ -16,6 +18,9 @@ class DisplayManager: ObservableObject {
     deinit {
         if let notification = displayChangeNotification {
             NotificationCenter.default.removeObserver(notification)
+        }
+        if let notification = spaceChangeNotification {
+            NSWorkspace.shared.notificationCenter.removeObserver(notification)
         }
     }
     
@@ -29,11 +34,29 @@ class DisplayManager: ObservableObject {
             print("DisplayManager: Screen parameters changed!")
             self?.handleDisplayChange()
         }
+        
+        // Monitor for space/desktop changes
+        spaceChangeNotification = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("DisplayManager: Active space changed!")
+            self?.handleSpaceChange()
+        }
     }
     
     private func handleDisplayChange() {
         // Trigger overlay repositioning with a slight delay to ensure screen changes are complete
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.shouldRepositionOverlay.toggle()
+        }
+    }
+    
+    private func handleSpaceChange() {
+        // Trigger overlay repositioning when space changes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.spaceDidChange.toggle()
             self.shouldRepositionOverlay.toggle()
         }
     }
@@ -84,5 +107,50 @@ class DisplayManager: ObservableObject {
         }
         
         return calculateOverlayPosition(for: activeScreen, windowWidth: windowWidth, windowHeight: windowHeight)
+    }
+    
+    /// Checks if any application is currently in full-screen mode
+    func isAnyAppInFullScreen() -> Bool {
+        // Check all running applications
+        let runningApps = NSWorkspace.shared.runningApplications
+        
+        for app in runningApps {
+            if app.activationPolicy == .regular {
+                // Get windows for this application
+                let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+                if let windows = windowList as? [[String: Any]] {
+                    for window in windows {
+                        if let ownerPID = window[kCGWindowOwnerPID as String] as? Int,
+                           ownerPID == app.processIdentifier,
+                           let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                           let width = bounds["Width"] as? CGFloat,
+                           let height = bounds["Height"] as? CGFloat {
+                            
+                            // Check if window dimensions match any screen (indicating full-screen)
+                            for screen in NSScreen.screens {
+                                let screenSize = screen.frame.size
+                                if abs(width - screenSize.width) < 10 && abs(height - screenSize.height) < 10 {
+                                    print("DisplayManager: Detected full-screen app: \(app.localizedName ?? "Unknown")")
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return false
+    }
+    
+    /// Returns the optimal window level based on current system state
+    func getOptimalWindowLevel() -> CGWindowLevelKey {
+        if isAnyAppInFullScreen() {
+            print("DisplayManager: Using popUpMenu level for full-screen compatibility")
+            return .popUpMenuWindow
+        } else {
+            print("DisplayManager: Using screenSaver level for normal mode")
+            return .screenSaverWindow
+        }
     }
 }
