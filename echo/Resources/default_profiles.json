@@ -1,0 +1,26 @@
+[
+  {
+    "title": "General Dictation",
+    "isDefault": true,
+    "isEnabled": true,
+    "shortcut": "alt+space",
+    "transcriptionModel": null,
+    "postProcessingEnabled": false,
+    "postProcessingPrompt": "{{TRANSCRIPTION}}",
+    "postProcessingModel": null,
+    "iconName": "waveform",
+    "iconColor": "blue"
+  },
+  {
+    "title": "Coding",
+    "isDefault": false,
+    "isEnabled": true,
+    "shortcut": null,
+    "transcriptionModel": "distil-whisper-large-v3-en",
+    "postProcessingEnabled": false,
+    "postProcessingPrompt": "{{TRANSCRIPTION}}",
+    "postProcessingModel": null,
+    "iconName": "ear.fill",
+    "iconColor": "indigo"
+  }
+]

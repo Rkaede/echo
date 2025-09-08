@@ -7,6 +7,7 @@ class HotkeyManager: ObservableObject {
   static let shared = HotkeyManager()
 
   private var toggleHotKey: HotKey?
+  private var isToggleHotKeySuspended = false
   
   @Published var shouldTriggerRecording = false
 
@@ -27,5 +28,23 @@ class HotkeyManager: ObservableObject {
     }
 
     print("HotkeyManager: Toggle hotkey setup complete")
+  }
+
+  func suspendToggleHotkey() {
+    guard !isToggleHotKeySuspended else { return }
+    print("HotkeyManager: Suspending toggle hotkey")
+    isToggleHotKeySuspended = true
+    toggleHotKey?.isPaused = true
+  }
+
+  func resumeToggleHotkey() {
+    guard isToggleHotKeySuspended else { return }
+    print("HotkeyManager: Resuming toggle hotkey")
+    isToggleHotKeySuspended = false
+    if let toggleHotKey {
+      toggleHotKey.isPaused = false
+    } else {
+      setupToggleHotkey()
+    }
   }
 }

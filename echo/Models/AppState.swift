@@ -1,11 +1,13 @@
 import Foundation
 import SwiftUI
+import CoreGraphics
 
 enum RecordingStatus: String {
     case idle
     case initiatingRecording = "initiating recording"
     case recording
     case processing
+    case postProcessing = "post-processing"
     case inserted
     case cancelled
     case confirmingCancel = "confirming cancel"
@@ -25,6 +27,10 @@ class AppState: ObservableObject {
     @Published var errorMessage: String = ""
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
+    @Published var currentInputLevel: CGFloat = 0
+    @Published var showingProfileName: String? = nil
+    @Published var showingProfileIconName: String? = nil
+    @Published var showingProfileColorToken: String? = nil
     
     @Published var isHistoryWindowOpen: Bool = false
     @Published var historyCount: Int = 0
@@ -32,6 +38,7 @@ class AppState: ObservableObject {
     
     private var confirmationTimeoutTask: Task<Void, Never>?
     private var _previousStatusBeforeConfirmation: RecordingStatus?
+    private var profileDisplayTimeoutTask: Task<Void, Never>?
     
     init() {}
     
@@ -139,10 +146,16 @@ class AppState: ObservableObject {
         print("AppState: Force resetting to idle state")
         confirmationTimeoutTask?.cancel()
         confirmationTimeoutTask = nil
+        profileDisplayTimeoutTask?.cancel()
+        profileDisplayTimeoutTask = nil
         _previousStatusBeforeConfirmation = nil
         errorMessage = ""
         status = .idle
         recordingMode = nil
+        showingProfileName = nil
+        currentInputLevel = 0
+        showingProfileIconName = nil
+        showingProfileColorToken = nil
     }
     
     func updateHistoryState(count: Int, recent: [TranscriptionHistory]) {
@@ -152,5 +165,45 @@ class AppState: ObservableObject {
     
     func toggleHistoryWindow() {
         isHistoryWindowOpen.toggle()
+    }
+    
+    func showProfileSwitch(_ profile: Profile) {
+        // Cancel any existing profile display timeout
+        profileDisplayTimeoutTask?.cancel()
+        
+        // Show the profile name with a smooth transition
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showingProfileName = profile.title
+            showingProfileIconName = profile.iconName
+            showingProfileColorToken = profile.iconColor
+        }
+        print("AppState: Showing profile switch to: \(profile.title)")
+        
+        // Set timeout to fade back to recording device after 2 seconds
+        profileDisplayTimeoutTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        self.showingProfileName = nil
+                        self.showingProfileIconName = nil
+                        self.showingProfileColorToken = nil
+                    }
+                    print("AppState: Profile display timeout - returning to recording device")
+                }
+            } catch {
+                // Task was cancelled, which is expected
+            }
+        }
+    }
+    
+    func clearProfileDisplay() {
+        profileDisplayTimeoutTask?.cancel()
+        profileDisplayTimeoutTask = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showingProfileName = nil
+            showingProfileIconName = nil
+            showingProfileColorToken = nil
+        }
     }
 }

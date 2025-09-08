@@ -10,6 +10,8 @@ class GlobalShortcutMonitor: ObservableObject {
     @Published var shouldStartPushToTalk = false
     @Published var shouldStopPushToTalk = false
     @Published var shouldCancelRecording = false
+    @Published var shouldActivateNextProfile = false
+    @Published var shouldActivatePreviousProfile = false
 
     init() {
         startMonitoring()
@@ -92,12 +94,26 @@ class GlobalShortcutMonitor: ObservableObject {
     private func handleKeyDown(event: CGEvent) {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         
-        // Check for Escape key (keyCode 53)
-        if keyCode == 53 {
+        switch keyCode {
+        case 53:
             print("GlobalShortcutMonitor: Escape key pressed - requesting recording cancellation")
             DispatchQueue.main.async {
                 self.shouldCancelRecording.toggle()
             }
+        case 123:
+            // Left arrow key
+            print("GlobalShortcutMonitor: Left arrow key pressed - requesting previous profile")
+            DispatchQueue.main.async {
+                self.shouldActivatePreviousProfile.toggle()
+            }
+        case 124:
+            // Right arrow key  
+            print("GlobalShortcutMonitor: Right arrow key pressed - requesting next profile")
+            DispatchQueue.main.async {
+                self.shouldActivateNextProfile.toggle()
+            }
+        default:
+            break
         }
     }
 }

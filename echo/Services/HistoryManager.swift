@@ -16,23 +16,8 @@ enum HistoryError: Error, LocalizedError {
 
 actor HistoryDatabaseActor {
     private var db: OpaquePointer?
-    private let dbPath: String
     
     init() {
-        // Use Application Support directory (sandbox-safe)
-        let appSupportPath = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let echoDirectory = appSupportPath.appendingPathComponent("Echo")
-        
-        // Ensure directory exists
-        do {
-            try FileManager.default.createDirectory(at: echoDirectory, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            print("HistoryDatabaseActor: Failed to create Application Support directory: \(error)")
-        }
-        
-        dbPath = echoDirectory.appendingPathComponent("echo_history.sqlite").path
-        
-        // Initialize on actor context after creation
         Task { @MainActor in
             let _ = await self.initializeDatabase()
         }
@@ -45,29 +30,19 @@ actor HistoryDatabaseActor {
     }
     
     private func initializeDatabase() async {
-        openDatabase()
-        createTable()
-    }
-    
-    private func openDatabase() {
-        if sqlite3_open(dbPath, &db) == SQLITE_OK {
-            print("HistoryDatabaseActor: Successfully opened connection to database at \(dbPath)")
-            
-            // Check if file exists and get its size
-            let fileManager = FileManager.default
-            if fileManager.fileExists(atPath: dbPath) {
-                do {
-                    let attributes = try fileManager.attributesOfItem(atPath: dbPath)
-                    let fileSize = attributes[.size] as? Int64 ?? 0
-                    print("HistoryDatabaseActor: Database file exists, size: \(fileSize) bytes")
-                } catch {
-                    print("HistoryDatabaseActor: Could not get database file attributes: \(error)")
-                }
-            } else {
-                print("HistoryDatabaseActor: Warning - Database file does not exist at path")
-            }
+        // Use a dedicated SQLite connection to avoid multi-threaded access to a shared handle
+        let path = await DatabaseService.shared.databasePath()
+        var localDB: OpaquePointer?
+        if sqlite3_open(path, &localDB) == SQLITE_OK, let opened = localDB {
+            // Improve concurrency characteristics
+            _ = sqlite3_exec(opened, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+            _ = sqlite3_exec(opened, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
+            sqlite3_busy_timeout(opened, 1000)
+            db = opened
+            createTable()
         } else {
-            print("HistoryDatabaseActor: Unable to open database: \(String(cString: sqlite3_errmsg(db)))")
+            let err = localDB.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            print("HistoryDatabaseActor: Failed to open database at \(path): \(err)")
         }
     }
     

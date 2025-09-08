@@ -13,6 +13,7 @@ struct EchoApp: App {
   @StateObject private var displayManager = DisplayManager.shared
   @StateObject private var tempFileManager = TempFileManager.shared
   @StateObject private var historyManager = HistoryManager.shared
+  @StateObject private var profilesService = ProfilesService.shared
   @State private var updateManager: UpdateManager?
   @State private var overlayWindowRef: NSWindow?
 
@@ -44,8 +45,11 @@ struct EchoApp: App {
     Window("Settings", id: "settings") {
       SettingsView()
         .environmentObject(updateManager ?? UpdateManager())
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
     .restorationBehavior(.disabled)
+    .windowLevel(.floating)
     .defaultSize(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
     .defaultLaunchBehavior(.suppressed)
     .windowStyle(.hiddenTitleBar)
@@ -65,10 +69,25 @@ struct EchoApp: App {
     Window("Overlay", id: "overlay") {
       VStack {
         Spacer()
-        OverlayView(status: appState.status)
-          .padding(.horizontal, 20)
+        Group {
+          if settings.useOverlayV2 {
+            OverlayViewV2(
+              status: appState.status,
+              showingProfileName: appState.showingProfileName,
+              showingProfileIconName: appState.showingProfileIconName,
+              showingProfileColorToken: appState.showingProfileColorToken,
+              currentInputDevice: appState.currentInputDevice,
+              currentInputLevel: Float(appState.currentInputLevel),
+              activeProfileIconName: profilesService.activeProfile?.iconName
+            )
+          } else {
+            OverlayView(status: appState.status)
+          }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
       }
-      .frame(width: 300, height: 60)
+      .frame(width: 300, height: 72)
       .background(Color.clear)
       .ignoresSafeArea()
       .onAppear {
@@ -78,7 +97,7 @@ struct EchoApp: App {
     }
     .windowStyle(.plain)
     .windowLevel(.floating)
-    .defaultSize(width: 300, height: 60)
+    .defaultSize(width: 300, height: 72)
     .defaultLaunchBehavior(.presented)
   }
   
@@ -105,6 +124,12 @@ struct EchoApp: App {
     .onChange(of: globalShortcutMonitor.shouldCancelRecording) {
       handleCancelRecording()
     }
+    .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) {
+      handleProfileSwitch(direction: .next)
+    }
+    .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) {
+      handleProfileSwitch(direction: .previous)
+    }
     .onChange(of: historyManager.recentTranscriptions) {
       updateHistoryState()
     }
@@ -129,7 +154,7 @@ struct EchoApp: App {
       await viewModel.toggleRecording()
     }
   }
-  
+
   private func handlePushToTalkStart() {
     Task {
       print("App: Push-to-talk start triggered via GlobalShortcutMonitor")
@@ -210,6 +235,26 @@ struct EchoApp: App {
     appState.updateHistoryState(count: historyManager.totalCount, recent: historyManager.recentTranscriptions)
   }
 
+  @MainActor
+  private func handleProfileSwitch(direction: ProfileSwitchDirection) {
+    guard appState.status == .recording else { return }
+
+    let previousProfile = profilesService.activeProfile
+    
+    switch direction {
+    case .next:
+      profilesService.activateNextProfile()
+    case .previous:
+      profilesService.activatePreviousProfile()
+    }
+    
+    // Show profile switch feedback if profile changed
+    if let newProfile = profilesService.activeProfile,
+       newProfile.id != previousProfile?.id {
+      appState.showProfileSwitch(newProfile)
+    }
+  }
+
   private func configureOverlayWindow() {
     DispatchQueue.main.async {
       if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
@@ -232,7 +277,7 @@ struct EchoApp: App {
 
         // Position window at bottom center of active screen
         let windowWidth: CGFloat = 300  // Increased for padding
-        let windowHeight: CGFloat = 60
+        let windowHeight: CGFloat = 72
         
         if let optimalPosition = displayManager.getOptimalOverlayPosition(
           windowWidth: windowWidth, 
@@ -279,7 +324,7 @@ struct EchoApp: App {
     DispatchQueue.main.async {
       if let window = self.overlayWindowRef ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
         let windowWidth: CGFloat = 300  // Increased for padding
-        let windowHeight: CGFloat = 60
+        let windowHeight: CGFloat = 72
         
         // Force re-application of collection behavior to ensure window joins new spaces
         window.collectionBehavior = [
@@ -414,4 +459,9 @@ struct EchoApp: App {
     updateManager?.checkForUpdates()
   }
 
+}
+
+private enum ProfileSwitchDirection {
+  case next
+  case previous
 }

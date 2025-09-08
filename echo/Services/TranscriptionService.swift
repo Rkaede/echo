@@ -7,6 +7,8 @@ class TranscriptionService: ObservableObject {
   private let settingsManager = SettingsManager.shared
   private let audioRecorder = AudioRecorder()
   private let apiClient = GroqAPIClient.shared
+  private let profilesService = ProfilesService.shared
+  private let postProcessor = PostProcessingService.shared
   private let appState: AppState
   private let pasteService = PasteService.shared
   private let historyManager = HistoryManager.shared
@@ -28,6 +30,13 @@ class TranscriptionService: ObservableObject {
         }
       }
       .store(in: &cancellables)
+
+    audioRecorder.$currentLevel
+      .sink { [weak self] level in
+        self?.appState.currentInputLevel = level
+      }
+      .store(in: &cancellables)
+
   }
   
   // MARK: - Public Interface
@@ -147,7 +156,9 @@ class TranscriptionService: ObservableObject {
       transcriptionStartTime = Date()
       let uploadStartTime = Date()
       
-      let resultWithTiming = try await apiClient.transcribeAudio(fileURL: audioFileURL, apiKey: settingsManager.apiKey)
+      // Choose model from active profile when available
+      let modelToUse = profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
+      let resultWithTiming = try await apiClient.transcribeAudio(fileURL: audioFileURL, apiKey: settingsManager.apiKey, model: modelToUse)
 
       let transcriptionEndTime = Date()
       let totalTime = transcriptionEndTime.timeIntervalSince(transcriptionStartTime!)
@@ -196,7 +207,7 @@ class TranscriptionService: ObservableObject {
           duration: recordingDuration,
           audioFileReference: audioFileReference,
           languageDetected: resultWithTiming.result.language,
-          modelUsed: settingsManager.selectedModel,
+          modelUsed: modelToUse,
           applicationContext: activeApp,
           uploadTime: legacyUploadTime,  // Legacy field for backward compatibility
           pureUploadTime: pureUploadTime,
@@ -218,9 +229,30 @@ class TranscriptionService: ObservableObject {
         return .success(())
       }
       
-      // Automatically paste the transcribed text
-      if !transcribedText.isEmpty {
-        let pasteSuccess = await performAutoPaste(text: transcribedText)
+      var finalText = transcribedText
+
+      // Optional post-processing based on active profile
+      if let profile = profilesService.activeProfile, profile.postProcessingEnabled, !transcribedText.isEmpty {
+        appState.updateStatus(.postProcessing)
+        let ppModel = profile.postProcessingModel.isEmpty
+          ? PostProcessingModelOption.defaultOptionValue
+          : profile.postProcessingModel
+        do {
+          let processed = try await postProcessor.processText(transcribedText, promptTemplate: profile.postProcessingPrompt, postProcessingModel: ppModel)
+          // If not cancelled during processing, update final text and UI
+          if !isCancelled {
+            finalText = processed
+            appState.transcriptionText = processed
+          }
+        } catch {
+          print("TranscriptionService: Post-processing failed: \(error)")
+          // Fall back to raw text; proceed without blocking
+        }
+      }
+
+      // Automatically paste the chosen text
+      if !finalText.isEmpty {
+        let pasteSuccess = await performAutoPaste(text: finalText)
         if !pasteSuccess {
           print("TranscriptionService: Auto-paste failed, but transcription succeeded")
         } else {

@@ -41,7 +41,7 @@ class TranscriptionViewModel: ObservableObject {
     case .recording:
       print("TranscriptionViewModel: Stopping recording")
       await stopRecording()
-    case .initiatingRecording, .processing, .inserted, .cancelled, .confirmingCancel:
+    case .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
       print("TranscriptionViewModel: Ignoring toggle, currently in \(appState.status) state")
       break
     }
@@ -53,7 +53,7 @@ class TranscriptionViewModel: ObservableObject {
     switch appState.status {
     case .idle, .error:
       await startRecording(mode: .pushToTalk)
-    case .recording, .initiatingRecording, .processing, .inserted, .cancelled, .confirmingCancel:
+    case .recording, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
       // Don't start if already recording or processing
       print("TranscriptionViewModel: Cannot start push-to-talk recording - already in \(appState.status) state")
       break
@@ -65,7 +65,7 @@ class TranscriptionViewModel: ObservableObject {
     switch appState.status {
     case .recording:
       await stopRecording()
-    case .idle, .error, .initiatingRecording, .processing, .inserted, .cancelled, .confirmingCancel:
+    case .idle, .error, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
       // Don't stop if not recording
       print("TranscriptionViewModel: Cannot stop push-to-talk recording - currently in \(appState.status) state")
       break
@@ -84,7 +84,7 @@ class TranscriptionViewModel: ObservableObject {
       case .failure:
         print("TranscriptionViewModel: Failed to cancel recording")
       }
-    case .idle, .error, .initiatingRecording, .inserted, .cancelled:
+    case .idle, .error, .initiatingRecording, .postProcessing, .inserted, .cancelled:
       // Don't cancel if not in a cancellable state
       print("TranscriptionViewModel: Cannot cancel recording - currently in \(appState.status) state")
       break
@@ -121,6 +121,8 @@ class TranscriptionViewModel: ObservableObject {
       return "Recording..."
     case .processing:
       return "Processing..."
+    case .postProcessing:
+      return "Post-processing..."
     case .inserted:
       return "Inserted"
     case .cancelled:
@@ -149,7 +151,7 @@ class TranscriptionViewModel: ObservableObject {
 
   var isButtonDisabled: Bool {
     switch appState.status {
-    case .processing, .initiatingRecording, .cancelled, .confirmingCancel:
+    case .processing, .postProcessing, .initiatingRecording, .cancelled, .confirmingCancel:
       return true
     default:
       // Only check API key - microphone permission will be requested when needed

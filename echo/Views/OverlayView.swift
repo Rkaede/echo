@@ -48,17 +48,36 @@ struct OverlayView: View {
               Image(systemName: statusIcon)
                 .font(.system(size: 20, weight: .medium))
                 .foregroundColor(statusColor)
-                .symbolEffect(.pulse, isActive: status == .recording || status == .processing)
+                .symbolEffect(.pulse, isActive: status == .recording || status == .processing || status == .postProcessing)
             )
             .frame(width: 36, alignment: .leading) // Match the right padding width
             .padding(.leading, 4)
 
           // Text content - centered in remaining space
-          Text(displayText)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(Constants.Colors.muted2)
-            .lineLimit(1)
+          if let profileName = appState.showingProfileName {
+            HStack(spacing: 6) {
+              Image(systemName: profileDisplaySymbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 16, height: 16, alignment: .center)
+
+              Text(profileName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            }
             .frame(maxWidth: .infinity, alignment: .center)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            .animation(.easeInOut(duration: 0.3), value: profileName)
+          } else {
+            Text(displayText)
+              .font(.system(size: 12, weight: .medium))
+              .foregroundColor(Constants.Colors.muted2)
+              .lineLimit(1)
+              .frame(maxWidth: .infinity, alignment: .center)
+              .transition(.opacity.combined(with: .scale(scale: 0.98)))
+              .animation(.easeInOut(duration: 0.3), value: displayText)
+          }
 
           // Right spacer - matches left icon area width
           Spacer()
@@ -131,6 +150,8 @@ struct OverlayView: View {
       return "record.circle.fill"
     case .processing:
       return "sparkles"
+    case .postProcessing:
+      return "wand.and.rays"
     case .inserted:
       return "checkmark.circle.fill"
     case .cancelled:
@@ -152,6 +173,8 @@ struct OverlayView: View {
       return .red
     case .processing:
       return .yellow
+    case .postProcessing:
+      return .purple
     case .inserted:
       return .green
     case .cancelled:
@@ -177,11 +200,22 @@ struct OverlayView: View {
   }
 
   private var displayText: String {
-    if status == .recording && !appState.currentInputDevice.isEmpty {
+    // Priority 1: Show profile name if switching profiles
+    if let profileName = appState.showingProfileName {
+      return profileName
+    }
+    // Priority 2: Show recording device when recording
+    else if status == .recording && !appState.currentInputDevice.isEmpty {
       return appState.currentInputDevice
-    } else {
+    }
+    // Priority 3: Show status text
+    else {
       return statusText
     }
+  }
+
+  private var profileDisplaySymbol: String {
+    ProfileAppearancePalette.displaySymbol(for: appState.showingProfileIconName)
   }
 
   private var backgroundColorForStatus: Color {
@@ -192,6 +226,8 @@ struct OverlayView: View {
       return Color.red
     case .processing:
       return Color.orange
+    case .postProcessing:
+      return Color.purple
     case .inserted:
       return Color.green
     case .cancelled:
@@ -258,6 +294,27 @@ struct OverlayView: View {
     }
     
     HStack {
+      Text("Profile Switch")
+        .font(.caption)
+        .foregroundColor(.primary)
+        .frame(width: 120, alignment: .leading)
+
+      Spacer()
+
+      VStack {
+        Spacer()
+        HStack {
+          Spacer()
+          OverlayProfilePreview(profileName: "Focus Mode", iconName: "bolt.fill", colorToken: "indigo")
+          Spacer()
+        }
+      }
+      .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.previewFrameHeight)
+      .background(Color.black.opacity(0.1))
+      .border(Color.gray.opacity(0.3))
+    }
+    
+    HStack {
       Text("Recording with External Mic")
         .font(.caption)
         .foregroundColor(.primary)
@@ -312,6 +369,21 @@ private struct OverlayRecordingPreview: View {
   var body: some View {
     let appState = AppState()
     appState.currentInputDevice = deviceName
+    return OverlayView(status: .recording)
+      .environmentObject(appState)
+  }
+}
+
+private struct OverlayProfilePreview: View {
+  let profileName: String
+  let iconName: String?
+  let colorToken: String?
+
+  var body: some View {
+    let appState = AppState()
+    appState.showingProfileName = profileName
+    appState.showingProfileIconName = iconName
+    appState.showingProfileColorToken = colorToken
     return OverlayView(status: .recording)
       .environmentObject(appState)
   }

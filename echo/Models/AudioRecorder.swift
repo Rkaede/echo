@@ -1,14 +1,17 @@
 import AVFoundation
 import Foundation
+import CoreGraphics
 
 @MainActor
 class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private var audioRecorder: AVAudioRecorder?
   private var recordingStartTime: Date?
   private var hasCheckedPermission = false
+  private var meterUpdateTimer: Timer?
 
   @Published var isRecording = false
   @Published var hasPermission = false
+  @Published var currentLevel: CGFloat = 0
 
   private var audioFileURL: URL {
     let tempDirectory = FileManager.default.temporaryDirectory
@@ -32,6 +35,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       try? FileManager.default.removeItem(at: url)
       print("AudioRecorder: Cleaned up recording file in deinit: \(url)")
     }
+    meterUpdateTimer?.invalidate()
+    meterUpdateTimer = nil
   }
 
   // Check current permission status without requesting
@@ -138,6 +143,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     do {
       audioRecorder = try AVAudioRecorder(url: recordingURL, settings: settings)
       audioRecorder?.delegate = self
+      audioRecorder?.isMeteringEnabled = true
 
       // Prepare to record with retry logic
       if audioRecorder?.prepareToRecord() != true {
@@ -149,6 +155,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         throw RecordingError.failedToStartRecording
       }
 
+      startMetering()
       recordingStartTime = Date()
       isRecording = true
 
@@ -171,6 +178,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     isRecording = false
     recordingStartTime = nil
 
+    stopMetering()
+
     // Audio cleanup is handled automatically by AVAudioRecorder on macOS
     deactivateAudioSession()
 
@@ -190,6 +199,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     audioRecorder = nil
     isRecording = false
     recordingStartTime = nil
+
+    stopMetering()
 
     // Audio cleanup is handled automatically by AVAudioRecorder on macOS
     deactivateAudioSession()
@@ -222,6 +233,48 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       }
       currentRecordingURL = nil
     }
+  }
+
+  private func startMetering() {
+    audioRecorder?.isMeteringEnabled = true
+    meterUpdateTimer?.invalidate()
+    meterUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+      Task { @MainActor in
+        guard let self else { return }
+        guard let recorder = self.audioRecorder else {
+          self.currentLevel = 0
+          return
+        }
+        recorder.updateMeters()
+        let averagePower = recorder.averagePower(forChannel: 0)
+        let normalized = self.normalizedLevel(from: averagePower)
+        let smoothing: CGFloat = 0.2
+        let smoothed = smoothing * normalized + (1 - smoothing) * self.currentLevel
+        self.currentLevel = smoothed.isNaN ? 0 : smoothed
+      }
+    }
+    if let timer = meterUpdateTimer {
+      RunLoop.main.add(timer, forMode: .common)
+    }
+  }
+
+  private func stopMetering() {
+    meterUpdateTimer?.invalidate()
+    meterUpdateTimer = nil
+    currentLevel = 0
+  }
+
+  private func normalizedLevel(from decibels: Float) -> CGFloat {
+    let minDb: Float = -60  // Changed from -80 to -60 for better sensitivity
+    let maxDb: Float = -10  // Cap at -10dB instead of 0dB for normal speech levels
+    
+    if decibels <= minDb {
+      return 0
+    }
+    
+    let clamped = min(max(decibels, minDb), maxDb)
+    let normalized = (clamped - minDb) / (maxDb - minDb)
+    return CGFloat(max(0, min(1, normalized)))
   }
 
   // MARK: - Audio Configuration
@@ -266,6 +319,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     Task { @MainActor in
       isRecording = false
       recordingStartTime = nil
+      stopMetering()
       if let error = error {
         print("Recording encode error: \(error)")
       }

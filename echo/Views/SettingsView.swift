@@ -1,10 +1,39 @@
+import AppKit
 import SwiftUI
 import AVFoundation
+
+// Helper to configure NSWindow for full height content
+struct FullHeightWindowConfigurator: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    DispatchQueue.main.async {
+      if let window = view.window {
+        // Configure window to allow content in title bar area
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.toolbar = nil
+      }
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    // Check again in case window wasn't ready on first call
+    if let window = nsView.window {
+      window.styleMask.insert(.fullSizeContentView)
+      window.titlebarAppearsTransparent = true
+      window.titleVisibility = .hidden
+      window.toolbar = nil
+    }
+  }
+}
 
 enum SettingsSection: String, CaseIterable, Identifiable {
   case general = "General"
   case transcription = "Transcription"
   case sound = "Sound"
+  case profiles = "Profiles"
   case history = "History"
   case permissions = "Permissions"
   case about = "About"
@@ -16,6 +45,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case .general: return "gearshape"
     case .transcription: return "waveform"
     case .sound: return "speaker.2"
+    case .profiles: return "person.crop.square"
     case .history: return "clock.arrow.circlepath"
     case .permissions: return "lock.shield"
     case .about: return "info.circle"
@@ -26,57 +56,47 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsView: View {
   @ObservedObject private var settings = SettingsManager.shared
   @EnvironmentObject private var updateManager: UpdateManager
-  @State private var selectedSection: SettingsSection? = .general
+  @State private var selectedSection: SettingsSection? = .profiles
 
   var body: some View {
-    HStack(spacing: 0) {
-      // Custom Sidebar
-      VStack(alignment: .leading, spacing: 0) {
-        // Sidebar List
-        List(SettingsSection.allCases, selection: $selectedSection) { section in
-          Button(action: {
-            selectedSection = section
-          }) {
-            HStack {
-              Label(section.rawValue, systemImage: section.icon)
-              Spacer()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
+    ZStack {
+      // Window configurator to enable full height content
+      FullHeightWindowConfigurator()
+        .frame(width: 0, height: 0)
+
+      HSplitView {
+        // Sidebar
+        List(selection: $selectedSection) {
+          ForEach(SettingsSection.allCases) { section in
+            Label(section.rawValue, systemImage: section.icon)
+              .tag(section)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.vertical, 4)
           }
-          .buttonStyle(.plain)
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-          .listRowBackground(
-            RoundedRectangle(cornerRadius: 4)
-              .fill(selectedSection == section ? Color.accentColor.opacity(0.15) : Color.clear)
-              .padding(.horizontal, 8)
-          )
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .padding(.top, 28)  // Compensate for toolbar area
-      }
-      .frame(width: 180)
-      .background(Color(NSColor.windowBackgroundColor))
-      .gesture(WindowDragGesture())
+        .background(Color(NSColor.windowBackgroundColor))
+        .frame(minWidth: 180, idealWidth: 180, maxWidth: 240)
+        .gesture(WindowDragGesture())
 
-      // Separator
-      Divider()
-
-      // Detail View
-      ScrollView {
-        destinationView(for: selectedSection ?? .general)
-          .frame(maxWidth: .infinity, alignment: .topLeading)
-          .padding(.trailing, 20)  // Add padding between content and scrollbar
+        // Detail
+        ScrollView {
+          destinationView(for: selectedSection ?? .profiles)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 8)
+        }
+        .frame(minWidth: 450, maxWidth: .infinity)
+        .ignoresSafeArea(.all)
+        .background(Color.clear)
+        .gesture(WindowDragGesture())
       }
-      .frame(minWidth: 450, maxWidth: .infinity)
-      .background(Color(NSColor.clear))
-      .gesture(WindowDragGesture())
     }
-    .ignoresSafeArea()
-    .frame(minWidth: Constants.Windows.settingsWidth, minHeight: Constants.Windows.settingsHeight)
+    .frame(
+      minWidth: Constants.Windows.settingsWidth, minHeight: Constants.Windows.settingsHeight,
+      maxHeight: .infinity
+    )
+    .ignoresSafeArea(.all)
     .environmentObject(updateManager)
   }
 
@@ -89,6 +109,8 @@ struct SettingsView: View {
       TranscriptionSettingsView()
     case .sound:
       SoundSettingsView()
+    case .profiles:
+      ProfilesSettingsView()
     case .history:
       HistorySettingsView()
     case .permissions:
@@ -108,6 +130,25 @@ struct GeneralSettingsView: View {
     Form {
       Section("Startup") {
         LaunchAtLogin.Toggle()
+      }
+
+      Section("Overlay") {
+        Toggle("Use new overlay", isOn: $settings.useOverlayV2)
+
+        Text(
+          "Switch back to the classic overlay if you run into any issues with the new design."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
+      Section("API Configuration") {
+        SecureField("Groq API Key", text: $settings.apiKey)
+          .textFieldStyle(.roundedBorder)
+
+        Text("Enter your Groq API key for speech-to-text transcription")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
 
       Section("Clipboard") {
@@ -147,23 +188,9 @@ struct GeneralSettingsView: View {
         .foregroundColor(.secondary)
       }
 
-      Section("Onboarding") {
-        VStack(alignment: .leading, spacing: 8) {
-          Button("Revisit onboarding") {
-            // Mark onboarding as incomplete and present the window
-            SettingsManager.shared.hasCompletedOnboarding = false
-            openWindow(id: "onboarding")
-          }
-          Text(
-            "Run the initial setup and guidance again. Your settings and API key will be preserved."
-          )
-          .font(.caption)
-          .foregroundColor(.secondary)
-        }
-      }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 24, leading: 20, bottom: 20, trailing: 0))
+    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
   }
 }
 
@@ -223,138 +250,9 @@ struct PermissionsSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 24, leading: 16, bottom: 16, trailing: 0))
+    .padding(EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 0))
     .onAppear {
       permissionManager.checkAllPermissions()
-    }
-  }
-}
-
-struct TranscriptionSettingsView: View {
-  @ObservedObject private var settings = SettingsManager.shared
-
-  let modelOptions = [
-    ModelOption(
-      value: "whisper-large-v3",
-      label: "Whisper Large V3",
-      supportedLanguages: "Multilingual",
-      description:
-        "Provides state-of-the-art performance with high accuracy for multilingual transcription and translation tasks.",
-      costPerHour: 0.111,
-      translationSupport: true,
-      realTimeSpeedFactor: 189,
-      wordErrorRate: "10.3%"
-    ),
-    ModelOption(
-      value: "whisper-large-v3-turbo",
-      label: "Whisper Large V3 Turbo",
-      supportedLanguages: "Multilingual",
-      description:
-        "A fine-tuned version of a pruned Whisper Large V3 designed for fast, multilingual transcription tasks.",
-      costPerHour: 0.04,
-      translationSupport: false,
-      realTimeSpeedFactor: 216,
-      wordErrorRate: "12%"
-    ),
-    ModelOption(
-      value: "distil-whisper-large-v3-en",
-      label: "Distil-Whisper English",
-      supportedLanguages: "English-only",
-      description:
-        "A distilled, or compressed, version of OpenAI's Whisper model, designed to provide faster, lower cost English speech recognition while maintaining comparable accuracy.",
-      costPerHour: 0.02,
-      translationSupport: false,
-      realTimeSpeedFactor: 250,
-      wordErrorRate: "13%"
-    ),
-  ]
-
-  var selectedModel: ModelOption? {
-    modelOptions.first { $0.value == settings.selectedModel }
-  }
-
-  var body: some View {
-    Form {
-      Section("API Configuration") {
-        SecureField("Groq API Key", text: $settings.apiKey)
-          .textFieldStyle(.roundedBorder)
-
-        Text("Enter your Groq API key for speech-to-text transcription")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-
-      Section("Model Selection") {
-        Picker("Model", selection: $settings.selectedModel) {
-          ForEach(modelOptions, id: \.value) { model in
-            Text(model.label).tag(model.value)
-          }
-        }
-        .pickerStyle(.menu)
-
-        if let model = selectedModel {
-          VStack(alignment: .leading, spacing: 8) {
-            Text(model.description)
-              .font(.caption)
-              .foregroundColor(.secondary)
-              .padding(.bottom, 4)
-
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8) {
-              GridRow {
-                Text("Languages:")
-                  .font(.caption)
-                  .fontWeight(.semibold)
-                  .gridColumnAlignment(.trailing)
-                Text(model.supportedLanguages)
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                  .gridColumnAlignment(.leading)
-              }
-
-              GridRow {
-                Text("Cost per Hour:")
-                  .font(.caption)
-                  .fontWeight(.semibold)
-                  .gridColumnAlignment(.trailing)
-                Text("$\(String(format: "%.3f", model.costPerHour))")
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                  .gridColumnAlignment(.leading)
-              }
-
-              GridRow {
-                Text("Speed Factor:")
-                  .font(.caption)
-                  .fontWeight(.semibold)
-                  .gridColumnAlignment(.trailing)
-                Text("\(model.realTimeSpeedFactor)x real-time")
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                  .gridColumnAlignment(.leading)
-              }
-
-              GridRow {
-                Text("Word Error Rate:")
-                  .font(.caption)
-                  .fontWeight(.semibold)
-                  .gridColumnAlignment(.trailing)
-                Text(model.wordErrorRate)
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                  .gridColumnAlignment(.leading)
-              }
-            }
-          }
-          .padding(.top, 4)
-        }
-      }
-
-    }
-    .formStyle(.grouped)
-    .padding(EdgeInsets(top: 24, leading: 16, bottom: 16, trailing: 0))
-    .onAppear {
-      // Load API key when settings view appears
-      settings.ensureAPIKeyLoaded()
     }
   }
 }
@@ -364,17 +262,6 @@ private let relativeDateFormatter: RelativeDateTimeFormatter = {
   formatter.unitsStyle = .abbreviated
   return formatter
 }()
-
-struct ModelOption {
-  let value: String
-  let label: String
-  let supportedLanguages: String
-  let description: String
-  let costPerHour: Double
-  let translationSupport: Bool
-  let realTimeSpeedFactor: Int
-  let wordErrorRate: String
-}
 
 struct AboutView: View {
   @EnvironmentObject private var updateManager: UpdateManager
@@ -525,13 +412,13 @@ struct HistorySettingsView: View {
       }
 
       Section("Data Management") {
-        
+
         // Audio Files Section
         VStack(alignment: .leading, spacing: 12) {
           Text("Audio Recordings")
             .font(.subheadline)
             .fontWeight(.medium)
-          
+
           Text(
             "\(audioStorage.getAudioFileCount()) audio files (\(audioStorage.formattedStorageUsage))"
           )
@@ -555,15 +442,11 @@ struct HistorySettingsView: View {
           .foregroundColor(.secondary)
         }
 
-   
-
         // Complete Data Section
         VStack(alignment: .leading, spacing: 12) {
           Text("Complete History")
             .font(.subheadline)
             .fontWeight(.medium)
-          
-
 
           HStack(spacing: 12) {
             Button("Delete Everything", role: .destructive) {
@@ -576,13 +459,13 @@ struct HistorySettingsView: View {
           }
 
           Text("Removes all transcription history and all audio files.")
-          .font(.caption)
-          .foregroundColor(.secondary)
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 24, leading: 20, bottom: 20, trailing: 0))
+    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
     .fileImporter(
       isPresented: $showingFolderPicker,
       allowedContentTypes: [.folder],
@@ -785,8 +668,49 @@ struct SoundPickerMenu: View {
   }
 }
 
+#if DEBUG
+  import AppKit
+
+  private final class _PreviewWindowAccessorView: NSView {
+    var onWindowChanged: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      onWindowChanged?(window)
+    }
+  }
+
+  private struct PreviewWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> _PreviewWindowAccessorView {
+      let view = _PreviewWindowAccessorView()
+      view.onWindowChanged = { window in
+        guard
+          let window,
+          ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+        else { return }
+
+        window.title = "Settings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.styleMask.remove(.titled)
+        window.styleMask.insert(.borderless)
+        window.isMovableByWindowBackground = true
+        window.level = .floating
+      }
+      return view
+    }
+
+    func updateNSView(_ nsView: _PreviewWindowAccessorView, context: Context) {}
+  }
+#endif
+
 #Preview {
   SettingsView()
     .frame(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
+    .ignoresSafeArea()
     .environmentObject(UpdateManager())
+    #if DEBUG
+      .background(PreviewWindowConfigurator())
+    #endif
 }
