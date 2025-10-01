@@ -14,6 +14,7 @@ Echo is a macOS menu bar application that provides speech-to-text transcription 
 - AVFoundation for audio recording
 - Groq API (Whisper model) for speech-to-text
 - Sparkle framework for automatic updates
+- SQLite for transcription history storage
 
 ## Build Commands
 
@@ -69,18 +70,27 @@ The codebase follows MVVM pattern with clear separation:
      - `initiatingRecording` - Requesting microphone permission
      - `recording` - Actively recording audio
      - `processing` - Sending to Groq API
+     - `postProcessing` - Running LLM post-processing on transcribed text
      - `inserted` - Text pasted successfully
+     - `cancelled` - Recording cancelled by user
+     - `confirmingCancel` - Showing cancellation confirmation dialog
      - `error` - Error occurred with message
    - `AudioRecorder.swift` - AVAudioRecorder wrapper for 16kHz mono WAV capture
    - `TranscriptionResult.swift` - Groq API response models
+   - `Profile.swift` - User profile system for different recording configurations
+   - `TranscriptionHistory.swift` - SQLite-backed history storage models
+   - `ChatCompletionModels.swift` - LLM post-processing API models
 
 2. **ViewModels/** - Orchestration and business logic
    - `TranscriptionViewModel.swift` - Main workflow controller that coordinates recording, API calls, and pasting
 
 3. **Views/** - SwiftUI interfaces
-   - `OverlayView.swift` - Floating status window (300x60 with padding for animations)
-   - `SettingsView.swift` - API key configuration and update preferences
+   - `OverlayView.swift` - Original floating status window (300x60 with padding for animations)
+   - `OverlayViewV2.swift` - New redesigned overlay with profile display and animations
+   - `SettingsView.swift` - Main settings interface with tabs for API, profiles, and preferences
+   - `ProfilesSettingsView.swift` - Profile management interface
    - `OnboardingView.swift` - First-time setup flow for permissions and API key
+   - `HistoryView.swift` - Transcription history browser with search and audio playback
 
 4. **Services/** - External integrations and utilities
    - `GroqClient.swift` - Groq API transcription requests
@@ -93,16 +103,28 @@ The codebase follows MVVM pattern with clear separation:
    - `DisplayManager.swift` - Multi-monitor support and overlay positioning
    - `UpdateManager.swift` - Sparkle framework integration for auto-updates
    - `TempFileManager.swift` - Manages temporary audio file cleanup and periodic maintenance
-   - `PermissionService.swift` - Handles microphone and accessibility permissions
-   - `AccessibilityService.swift` - Manages accessibility permissions and events
-   - `AppStateService.swift` - Central state management service
-   - `NotificationService.swift` - System notifications and user feedback
+   - `PermissionManager.swift` - Handles microphone and accessibility permissions
+   - `LaunchAtLogin.swift` - macOS launch at login functionality
+   - `DatabaseService.swift` - SQLite database management for history
+   - `HistoryManager.swift` - Transcription history operations and queries
+   - `ProfilesService.swift` - Profile management and switching
+   - `ProfilesRepository.swift` - Profile data persistence
+   - `DefaultProfilesProvider.swift` - Built-in profile templates
+   - `PostProcessing.swift` - LLM post-processing pipeline
+   - `SoundManager.swift` - Audio feedback and notification sounds
+   - `AudioStorageManager.swift` - Audio file storage for history playback
+   - `AudioPlayerManager.swift` - Audio playback controls for history
 
 5. **Components/** - Reusable UI components
    - `PermissionStatusView.swift` - Permission status indicators
-   - `ModelSelectionView.swift` - Groq model selection interface
-   - `VolumeVisualizerView.swift` - Audio level visualization
-   - `StatusIndicatorView.swift` - Recording status indicators
+   - `AudioControlsView.swift` - Audio playback controls for history
+   - `ColorPickerView.swift` - Profile color selection interface
+   - `IconPickerView.swift` - Profile icon selection interface
+   - `OverlayWaveformView.swift` - Real-time audio waveform visualization
+   - `ProfileAppearancePalette.swift` - Profile visual customization
+   - `ProfileListIconView.swift` - Profile icons in lists
+   - `SettingsButton.swift` - Reusable settings button component
+   - `ShortcutRecorderView.swift` - Hotkey recording interface
 
 ## Key Implementation Details
 
@@ -110,14 +132,23 @@ The codebase follows MVVM pattern with clear separation:
 1. **Toggle Mode** (default): Press Option+Space to start/stop
 2. **Push-to-Talk Mode**: Hold Fn key to record, release to stop
 
+### Profile System
+Echo supports multiple user profiles with customizable settings:
+- **Profile Configuration**: Different hotkeys, models, post-processing settings per profile
+- **Visual Customization**: Custom icons and colors for each profile
+- **Default Profiles**: Built-in templates for common use cases
+- **Profile Switching**: Quick switching via settings or overlay display
+
 ### Recording Workflow
 Managed by `TranscriptionService` and `TranscriptionViewModel`:
 1. User triggers recording → Check API key and permissions
 2. Start recording → `AudioRecorder` captures to temporary WAV file
 3. Stop recording → Upload audio to Groq API
 4. Process response → Extract transcribed text
-5. Auto-paste → `PasteService` simulates Cmd+V
-6. Cleanup → Delete temporary audio file
+5. **Optional Post-Processing** → Run through LLM for enhancement/correction
+6. **History Storage** → Save transcription and audio to SQLite database
+7. Auto-paste → `PasteService` simulates Cmd+V
+8. Cleanup → Delete temporary audio file (but preserve history audio)
 
 ### Window Management
 Overlay window configuration in `App.swift`:
@@ -137,7 +168,7 @@ Overlay window configuration in `App.swift`:
 
 ### Automatic Updates
 **Sparkle Configuration:**
-- Update feed: `https://raw.githubusercontent.com/corey-taylor/echo/main/docs/appcast.xml`
+- Update feed: `https://rkaede.github.io/echo/appcast.xml`
 - Public key: `hX7VZOZJ7tkQfO3ewTtWrWlcr7fIeGAcUtOfLJzPzuE=`
 - Check interval: 7 days (604800 seconds)
 - Version info in Info.plist: `CFBundleShortVersionString` and `CFBundleVersion`
@@ -147,25 +178,38 @@ Overlay window configuration in `App.swift`:
 
 ### Data Storage
 - **Keychain**: API keys via `KeychainManager`
-- **UserDefaults**: Non-sensitive preferences (selected model, onboarding status)
+- **UserDefaults**: Non-sensitive preferences (selected model, onboarding status, profile settings)
+- **SQLite Database**: Transcription history via `DatabaseService` and `HistoryManager`
+  - Storage location: Application Support directory
+  - Full-text search capabilities
+  - Audio file references for playback
 - **Temporary files**: Audio recordings managed by `TempFileManager`
   - Storage location: `/tmp/echo/` directory
   - Immediate cleanup after transcription success/failure
   - Periodic maintenance every 30 minutes removes files >1 hour old
   - Startup cleanup removes orphaned files from previous app sessions
   - Automatic directory creation and permission handling
+- **History Audio**: Long-term audio storage via `AudioStorageManager`
+  - Organized by date for easy cleanup and management
+  - Referenced by database for playback functionality
 
 ### Entitlements
-- **Development** (`Echo.entitlements`): Non-sandboxed for debugging
-  - `com.apple.security.audio-input` - Microphone access
+- **Development** (`echo.entitlements`): Sandboxed for development with debugging enabled
+  - `com.apple.security.app-sandbox` - App sandbox enabled
+  - `com.apple.security.device.microphone` - Microphone access
+  - `com.apple.security.device.audio-input` - Legacy audio input (backward compatibility)
   - `com.apple.security.network.client` - API requests
-  - `com.apple.security.automation.apple-events` - Accessibility for pasting
-- **Release** (`EchoRelease.entitlements`): Sandboxed with:
+  - `com.apple.security.accessibility` - Accessibility for pasting
+  - `com.apple.security.get-task-allow` - Debugging enabled
+  - Sparkle framework mach lookup exceptions for updates
+- **Release** (`echoRelease.entitlements`): Production sandbox configuration
   - `com.apple.security.app-sandbox` - App Store sandbox
-  - `com.apple.security.audio-input` - Microphone access
+  - `com.apple.security.device.microphone` - Microphone access
+  - `com.apple.security.device.audio-input` - Legacy audio input (backward compatibility)
   - `com.apple.security.network.client` - API requests
-  - `com.apple.security.automation.apple-events` - Accessibility for pasting
-  - `com.apple.security.files.user-selected.read-write` - File access when needed
+  - `com.apple.security.accessibility` - Accessibility for pasting
+  - `com.apple.security.get-task-allow` - Debugging disabled for release
+  - Sparkle framework mach lookup exceptions for updates
 
 ### Required Permissions
 1. **Microphone**: Audio recording (requested on first use)
@@ -184,16 +228,37 @@ Package resolution stored in `Package.resolved`.
 ### To modify the hotkey:
 1. Edit `HotkeyManager.swift` - Change `Key.space` and/or `NSEvent.ModifierFlags.option`
 2. Update `GlobalShortcutMonitor.swift` for push-to-talk mode
+3. Consider profile-specific hotkeys in `Profile.swift` model
+
+### To add a new profile:
+1. Update `DefaultProfilesProvider.swift` to add built-in profiles
+2. Modify `ProfilesService.swift` for profile management logic
+3. Update `ProfilesSettingsView.swift` for UI changes
+4. Consider database schema changes in `DatabaseService.swift`
+
+### To add LLM post-processing features:
+1. Update `PostProcessing.swift` service for new processing logic
+2. Modify `ChatCompletionModels.swift` for new API models
+3. Update profile configuration in `Profile.swift` for new settings
+4. Add UI controls in `ProfilesSettingsView.swift`
 
 ### To change API provider:
 1. Replace `GroqClient.swift` implementation
 2. Update `TranscriptionResult.swift` models
 3. Modify `TranscriptionService` if workflow changes
+4. Update post-processing service if using same provider
 
 ### To adjust overlay window:
-1. Edit size constants in `App.swift` (currently 300x60)
-2. Update `OverlayView.swift` for UI changes
+1. For OverlayView: Edit size constants in `App.swift` (currently 300x60)
+2. For OverlayViewV2: Update `OverlayViewV2.swift` for new design changes
 3. Modify `DisplayManager.swift` for positioning logic
+4. Update profile display logic if needed
+
+### To add history features:
+1. Update `DatabaseService.swift` for schema changes
+2. Modify `HistoryManager.swift` for new query operations
+3. Update `HistoryView.swift` for UI enhancements
+4. Consider `AudioStorageManager.swift` for audio-related features
 
 ### To release a new version:
 1. Update version in `Info.plist` (`CFBundleShortVersionString` and `CFBundleVersion`)

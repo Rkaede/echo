@@ -87,6 +87,22 @@ struct ProfilesSettingsView: View {
           )
 
           Form {
+            Section {
+              HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                  .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                  Text("The push-to-talk shortcut (Fn key) always uses the default profile.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                  Text("Switch between profiles during recording using the left/right arrow keys.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                }
+              }
+              .padding(.vertical, 4)
+            }
+            
             Section("Profiles") {
               ForEach(service.profiles, id: \.id) { p in
                 Button(action: { startEditing(profile: p) }) {

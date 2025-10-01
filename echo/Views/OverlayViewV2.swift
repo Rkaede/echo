@@ -17,16 +17,15 @@ struct OverlayViewV2: View {
   let status: RecordingStatus
   let showingProfileName: String?
   let showingProfileIconName: String?
-  let showingProfileColorToken: String?
   let currentInputDevice: String
   let currentInputLevel: Float
   let activeProfileIconName: String?
 
   // Animation configuration
-  private let containerAnimation = Animation.spring(response: 0.4, dampingFraction: 0.8)
-  private let contentAnimation = Animation.easeInOut(duration: 0.25)
-  private let containerDuration: Double = 0.4
-  private let contentDuration: Double = 0.25
+  private let containerAnimation = Animation.smooth(duration: 0.3)
+  private let contentAnimation = Animation.smooth(duration: 0.2)
+  private let containerDuration: Double = 0.3
+  private let contentDuration: Double = 0.2
 
   // Internal staging state
   @State private var isExpanded: Bool
@@ -37,7 +36,6 @@ struct OverlayViewV2: View {
     status: RecordingStatus,
     showingProfileName: String? = nil,
     showingProfileIconName: String? = nil,
-    showingProfileColorToken: String? = nil,
     currentInputDevice: String = "",
     currentInputLevel: Float = 0.0,
     activeProfileIconName: String? = nil
@@ -45,7 +43,6 @@ struct OverlayViewV2: View {
     self.status = status
     self.showingProfileName = showingProfileName
     self.showingProfileIconName = showingProfileIconName
-    self.showingProfileColorToken = showingProfileColorToken
     self.currentInputDevice = currentInputDevice
     self.currentInputLevel = currentInputLevel
     self.activeProfileIconName = activeProfileIconName
@@ -112,8 +109,8 @@ struct OverlayViewV2: View {
               .animation(.easeInOut(duration: 0.3), value: displayText)
           }
 
-          // Waveform indicator - only show during recording and idle states
-          if shouldShowWaveform {
+          // Waveform indicator - only show during recording and idle states when content is visible
+          if shouldShowWaveform && showContent {
             OverlayWaveformView(level: CGFloat(currentInputLevel))
               .frame(width: 36, alignment: .trailing)
               .padding(.trailing, 10)
@@ -148,33 +145,50 @@ struct OverlayViewV2: View {
 
     // If moving between non-idle states and content is already visible and expanded, no staging needed
     if newStatus != .idle && isExpanded && showContent {
+      print("OverlayViewV2: Early return - already expanded and showing content")
       return
     }
+
+    print("OverlayViewV2: Starting staged animation for \(newStatus) (isExpanded: \(isExpanded), showContent: \(showContent))")
 
     animationTask = Task { @MainActor in
       if newStatus == .idle {
         // Fade out content first, then shrink container
         if showContent {
+          print("OverlayViewV2: Hiding content")
           withAnimation(contentAnimation) {
             showContent = false
           }
-          // Wait for fade-out to complete
+          // Wait for full content animation to complete before shrinking container
           try? await Task.sleep(nanoseconds: UInt64(contentDuration * 1_000_000_000))
         }
+        print("OverlayViewV2: Shrinking container")
         withAnimation(containerAnimation) {
           isExpanded = false
         }
       } else {
         // Expand container first, then fade in content
+        print("OverlayViewV2: Expanding container")
         withAnimation(containerAnimation) {
           isExpanded = true
         }
-        // Wait for expand to complete
-        try? await Task.sleep(nanoseconds: UInt64(containerDuration * 1_000_000_000))
+        // Wait for container animation plus extra buffer before showing content
+        print("OverlayViewV2: Waiting before showing content...")
+        try? await Task.sleep(nanoseconds: UInt64(containerDuration * 1.5 * 1_000_000_000))
+
+        // Check if task was cancelled during sleep
+        if Task.isCancelled {
+          print("OverlayViewV2: Task cancelled, skipping content show")
+          return
+        }
+
         if !showContent {
+          print("OverlayViewV2: Showing content now")
           withAnimation(contentAnimation) {
             showContent = true
           }
+        } else {
+          print("OverlayViewV2: Content already visible, skipping")
         }
       }
     }
@@ -209,7 +223,7 @@ struct OverlayViewV2: View {
   }
 
   private var iconFontSize: CGFloat {
-    status == .recording ? 16 : 20
+    return 20
   }
 
   private var statusIconColor: Color {
@@ -302,6 +316,85 @@ struct OverlayViewV2: View {
   }
 }
 
+
+
+// MARK: - Preview
+
+// Helper used only in previews
+private struct OverlayViewV2RecordingPreview: View {
+  let deviceName: String
+
+  var body: some View {
+    return OverlayViewV2(
+      status: .recording,
+      currentInputDevice: deviceName,
+      currentInputLevel: 0.65
+    )
+  }
+}
+
+private struct OverlayViewV2ProfilePreview: View {
+  let profileName: String
+  let iconName: String?
+
+  var body: some View {
+    return OverlayViewV2(
+      status: .recording,
+      showingProfileName: profileName,
+      showingProfileIconName: iconName,
+      currentInputLevel: 0.5
+    )
+  }
+}
+
+#Preview("Animated") {
+  struct OverlayViewV2AnimatedPreview: View {
+    @State private var currentStatus: RecordingStatus = .idle
+    let statuses: [RecordingStatus] = [
+      .idle, .initiatingRecording, .recording, .processing, .inserted, .error,
+    ]
+
+    var body: some View {
+      VStack(spacing: 20) {
+        VStack {
+          Spacer()
+          HStack {
+            Spacer()
+            OverlayViewV2(status: currentStatus)
+            Spacer()
+          }
+        }
+        .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.activeHeight)
+        .background(Color.black.opacity(0.1))
+        .border(Color.gray.opacity(0.3))
+
+        HStack(spacing: 16) {
+          Button("Toggle Idle/Initiating") {
+            currentStatus = currentStatus == .idle ? .initiatingRecording : .idle
+          }
+          .buttonStyle(.borderedProminent)
+
+          Button("Next State") {
+            if let currentIndex = statuses.firstIndex(of: currentStatus) {
+              let nextIndex = (currentIndex + 1) % statuses.count
+              currentStatus = statuses[nextIndex]
+            }
+          }
+        }
+
+        Text("Current: \(currentStatus.rawValue)")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(40)
+      .background(.secondary)
+    }
+  }
+
+  return OverlayViewV2AnimatedPreview()
+}
+
+
 #Preview("Static States") {
   VStack(spacing: 30) {
     ForEach(
@@ -355,7 +448,7 @@ struct OverlayViewV2: View {
     }
     
     HStack {
-      Text("Profile Switch")
+      Text("Profile: Focus Mode")
         .font(.caption)
         .foregroundColor(.primary)
         .frame(width: 120, alignment: .leading)
@@ -366,7 +459,7 @@ struct OverlayViewV2: View {
         Spacer()
         HStack {
           Spacer()
-          OverlayViewV2ProfilePreview(profileName: "Focus Mode", iconName: "bolt.fill", colorToken: "indigo")
+          OverlayViewV2ProfilePreview(profileName: "Focus Mode", iconName: "bolt.circle.fill")
           Spacer()
         }
       }
@@ -374,7 +467,70 @@ struct OverlayViewV2: View {
       .background(Color.black.opacity(0.1))
       .border(Color.gray.opacity(0.3))
     }
-    
+
+    HStack {
+      Text("Profile: Meeting Notes")
+        .font(.caption)
+        .foregroundColor(.primary)
+        .frame(width: 120, alignment: .leading)
+
+      Spacer()
+
+      VStack {
+        Spacer()
+        HStack {
+          Spacer()
+          OverlayViewV2ProfilePreview(profileName: "Meeting Notes", iconName: "person.2.circle.fill")
+          Spacer()
+        }
+      }
+      .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.previewFrameHeight)
+      .background(Color.black.opacity(0.1))
+      .border(Color.gray.opacity(0.3))
+    }
+
+    HStack {
+      Text("Profile: Code Review")
+        .font(.caption)
+        .foregroundColor(.primary)
+        .frame(width: 120, alignment: .leading)
+
+      Spacer()
+
+      VStack {
+        Spacer()
+        HStack {
+          Spacer()
+          OverlayViewV2ProfilePreview(profileName: "Code Review", iconName: "curlybraces.circle.fill")
+          Spacer()
+        }
+      }
+      .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.previewFrameHeight)
+      .background(Color.black.opacity(0.1))
+      .border(Color.gray.opacity(0.3))
+    }
+
+    HStack {
+      Text("Profile: Quick Capture")
+        .font(.caption)
+        .foregroundColor(.primary)
+        .frame(width: 120, alignment: .leading)
+
+      Spacer()
+
+      VStack {
+        Spacer()
+        HStack {
+          Spacer()
+          OverlayViewV2ProfilePreview(profileName: "Quick Capture", iconName: "arrow.down.circle.fill")
+          Spacer()
+        }
+      }
+      .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.previewFrameHeight)
+      .background(Color.black.opacity(0.1))
+      .border(Color.gray.opacity(0.3))
+    }
+
     HStack {
       Text("Recording with External Mic")
         .font(.caption)
@@ -419,82 +575,4 @@ struct OverlayViewV2: View {
   }
   .padding(40)
   .background(OverlayColors.bg)
-}
-
-
-
-// Helper used only in previews
-private struct OverlayViewV2RecordingPreview: View {
-  let deviceName: String
-
-  var body: some View {
-    return OverlayViewV2(
-      status: .recording,
-      currentInputDevice: deviceName,
-      currentInputLevel: 0.65
-    )
-  }
-}
-
-private struct OverlayViewV2ProfilePreview: View {
-  let profileName: String
-  let iconName: String?
-  let colorToken: String?
-
-  var body: some View {
-    return OverlayViewV2(
-      status: .recording,
-      showingProfileName: profileName,
-      showingProfileIconName: iconName,
-      showingProfileColorToken: colorToken,
-      currentInputLevel: 0.5
-    )
-  }
-}
-
-#Preview("Animated") {
-  struct OverlayViewV2AnimatedPreview: View {
-    @State private var currentStatus: RecordingStatus = .idle
-    let statuses: [RecordingStatus] = [
-      .idle, .initiatingRecording, .recording, .processing, .inserted, .error,
-    ]
-
-    var body: some View {
-      VStack(spacing: 20) {
-        VStack {
-          Spacer()
-          HStack {
-            Spacer()
-            OverlayViewV2(status: currentStatus)
-            Spacer()
-          }
-        }
-        .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.activeHeight)
-        .background(Color.black.opacity(0.1))
-        .border(Color.gray.opacity(0.3))
-
-        HStack(spacing: 16) {
-          Button("Toggle Idle/Initiating") {
-            currentStatus = currentStatus == .idle ? .initiatingRecording : .idle
-          }
-          .buttonStyle(.borderedProminent)
-
-          Button("Next State") {
-            if let currentIndex = statuses.firstIndex(of: currentStatus) {
-              let nextIndex = (currentIndex + 1) % statuses.count
-              currentStatus = statuses[nextIndex]
-            }
-          }
-        }
-
-        Text("Current: \(currentStatus.rawValue)")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      .padding(40)
-      .background(.secondary)
-    }
-  }
-
-  return OverlayViewV2AnimatedPreview()
 }

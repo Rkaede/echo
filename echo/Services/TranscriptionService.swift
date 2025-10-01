@@ -43,13 +43,17 @@ class TranscriptionService: ObservableObject {
   
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
     print("TranscriptionService: startRecording called with mode: \(mode)")
-    
+
     // Reset cancellation flag for new recording
     isCancelled = false
-    
+
     // Set recording mode in app state
     appState.setRecordingMode(mode)
-    
+
+    // Update status immediately so animation starts before any blocking work
+    appState.updateStatus(.initiatingRecording)
+    appState.transcriptionText = ""
+
     // Ensure API key is loaded before starting recording
     print("TranscriptionService: Ensuring API key is loaded...")
     settingsManager.ensureAPIKeyLoaded()
@@ -77,21 +81,19 @@ class TranscriptionService: ObservableObject {
     
     do {
       print("TranscriptionService: Have permission, starting recording")
-      appState.updateStatus(.initiatingRecording)
-      appState.transcriptionText = ""
-      
+
       recordingStartTime = Date()
       try await audioRecorder.startRecording()
-      
+
       // Update current input device in AppState
       appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
-      
+
       print("TranscriptionService: Recording started successfully")
       appState.updateStatus(.recording)
-      
-      // Play recording start sound
+
+      // Play sound after recording is confirmed started to avoid audio I/O conflicts
       soundManager.playRecordingStartSound()
-      
+
       return .success(())
       
     } catch {
@@ -110,10 +112,10 @@ class TranscriptionService: ObservableObject {
           try await audioRecorder.startRecording()
           appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
           appState.updateStatus(.recording)
-          
-          // Play recording start sound
+
+          // Play sound after recording is confirmed started
           soundManager.playRecordingStartSound()
-          
+
           return .success(())
         } catch {
           print("TranscriptionService: Retry also failed: \(error)")

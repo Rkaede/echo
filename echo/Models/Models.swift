@@ -272,16 +272,5 @@ struct TranscriptionData {
       realTimeSpeedFactor: 216,
       wordErrorRate: "12%"
     ),
-    ModelOption(
-      value: "distil-whisper-large-v3-en",
-      label: "Distil-Whisper English",
-      supportedLanguages: "English-only",
-      description:
-        "A distilled, or compressed, version of OpenAI's Whisper model, designed to provide faster, lower cost English speech recognition while maintaining comparable accuracy.",
-      costPerHour: 0.02,
-      translationSupport: false,
-      realTimeSpeedFactor: 250,
-      wordErrorRate: "13%"
-    ),
   ]
 }

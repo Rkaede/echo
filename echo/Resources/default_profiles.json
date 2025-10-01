@@ -16,7 +16,7 @@
     "isDefault": false,
     "isEnabled": true,
     "shortcut": null,
-    "transcriptionModel": "distil-whisper-large-v3-en",
+    "transcriptionModel": "whisper-large-v3-turbo",
     "postProcessingEnabled": false,
     "postProcessingPrompt": "{{TRANSCRIPTION}}",
     "postProcessingModel": null,

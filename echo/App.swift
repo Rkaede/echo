@@ -75,7 +75,6 @@ struct EchoApp: App {
               status: appState.status,
               showingProfileName: appState.showingProfileName,
               showingProfileIconName: appState.showingProfileIconName,
-              showingProfileColorToken: appState.showingProfileColorToken,
               currentInputDevice: appState.currentInputDevice,
               currentInputLevel: Float(appState.currentInputLevel),
               activeProfileIconName: profilesService.activeProfile?.iconName
@@ -135,6 +134,9 @@ struct EchoApp: App {
     }
     .onChange(of: historyManager.totalCount) {
       updateHistoryState()
+    }
+    .onChange(of: appState.status) {
+      updateRecordingStateInGlobalShortcutMonitor()
     }
   }
 
@@ -234,6 +236,11 @@ struct EchoApp: App {
   private func updateHistoryState() {
     appState.updateHistoryState(count: historyManager.totalCount, recent: historyManager.recentTranscriptions)
   }
+  
+  private func updateRecordingStateInGlobalShortcutMonitor() {
+    let isRecording = appState.status == .recording || appState.status == .processing || appState.status == .confirmingCancel
+    globalShortcutMonitor.setRecording(isRecording)
+  }
 
   @MainActor
   private func handleProfileSwitch(direction: ProfileSwitchDirection) {
@@ -272,14 +279,15 @@ struct EchoApp: App {
         window.styleMask = [.borderless, .nonactivatingPanel]
         
         // Use dynamic window level based on current system state
-        let optimalLevel = displayManager.getOptimalWindowLevel()
+        let displayManagerInstance = DisplayManager.shared
+        let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
 
         // Position window at bottom center of active screen
         let windowWidth: CGFloat = 300  // Increased for padding
         let windowHeight: CGFloat = 72
         
-        if let optimalPosition = displayManager.getOptimalOverlayPosition(
+        if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
           windowWidth: windowWidth, 
           windowHeight: windowHeight
         ) {
@@ -334,14 +342,15 @@ struct EchoApp: App {
           .ignoresCycle,
         ]
         
-        if let optimalPosition = self.displayManager.getOptimalOverlayPosition(
+        let displayManagerInstance = DisplayManager.shared
+        if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
           windowWidth: windowWidth,
           windowHeight: windowHeight
         ) {
           window.setFrame(optimalPosition, display: true)
           
           // Ensure window is visible on current space with dynamic level
-          let optimalLevel = self.displayManager.getOptimalWindowLevel()
+          let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
           window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
           
           // Force window to front with multiple strategies

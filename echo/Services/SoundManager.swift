@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import AppKit
 
@@ -102,32 +102,38 @@ class SoundManager: ObservableObject {
         guard settingsManager.soundEnabled && settingsManager.soundOnRecordingStart else {
             return
         }
-        
+
         guard let player = recordingStartPlayer else {
             print("SoundManager: Recording start player not available")
             return
         }
-        
-        // Reset to beginning and play
-        player.currentTime = 0
-        player.play()
-        print("SoundManager: Played recording start sound")
+
+        // Play sound on background thread to avoid blocking animations
+        DispatchQueue.global(qos: .userInitiated).async { [player] in
+            nonisolated(unsafe) let unsafePlayer = player
+            unsafePlayer.currentTime = 0
+            unsafePlayer.play()
+            print("SoundManager: Played recording start sound")
+        }
     }
     
     func playTranscriptionCompleteSound() {
         guard settingsManager.soundEnabled && settingsManager.soundOnTranscriptionComplete else {
             return
         }
-        
+
         guard let player = transcriptionCompletePlayer else {
             print("SoundManager: Transcription complete player not available")
             return
         }
-        
-        // Reset to beginning and play
-        player.currentTime = 0
-        player.play()
-        print("SoundManager: Played transcription complete sound")
+
+        // Play sound on background thread to avoid blocking animations
+        DispatchQueue.global(qos: .userInitiated).async { [player] in
+            nonisolated(unsafe) let unsafePlayer = player
+            unsafePlayer.currentTime = 0
+            unsafePlayer.play()
+            print("SoundManager: Played transcription complete sound")
+        }
     }
     
     // MARK: - Volume Control
@@ -152,50 +158,58 @@ class SoundManager: ObservableObject {
     
     func testRecordingStartSound() {
         let soundId = settingsManager.recordingStartSound
-        
+
         // Don't test if set to "none"
         guard soundId != "none" else {
             print("SoundManager: Cannot test - recording start sound is set to 'none'")
             return
         }
-        
+
         // If player is not loaded, load it temporarily for testing
         if recordingStartPlayer == nil {
             loadSound(forSoundId: soundId, forPlayer: .recordingStart)
         }
-        
+
         guard let player = recordingStartPlayer else {
             print("SoundManager: Recording start player not available for testing")
             return
         }
-        
-        player.currentTime = 0
-        player.play()
-        print("SoundManager: Testing recording start sound")
+
+        // Play sound on background thread to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async { [player] in
+            nonisolated(unsafe) let unsafePlayer = player
+            unsafePlayer.currentTime = 0
+            unsafePlayer.play()
+            print("SoundManager: Testing recording start sound")
+        }
     }
     
     func testTranscriptionCompleteSound() {
         let soundId = settingsManager.transcriptionCompleteSound
-        
+
         // Don't test if set to "none"
         guard soundId != "none" else {
             print("SoundManager: Cannot test - transcription complete sound is set to 'none'")
             return
         }
-        
+
         // If player is not loaded, load it temporarily for testing
         if transcriptionCompletePlayer == nil {
             loadSound(forSoundId: soundId, forPlayer: .transcriptionComplete)
         }
-        
+
         guard let player = transcriptionCompletePlayer else {
             print("SoundManager: Transcription complete player not available for testing")
             return
         }
 
-        player.currentTime = 0
-        player.play()
-        print("SoundManager: Testing transcription complete sound")
+        // Play sound on background thread to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async { [player] in
+            nonisolated(unsafe) let unsafePlayer = player
+            unsafePlayer.currentTime = 0
+            unsafePlayer.play()
+            print("SoundManager: Testing transcription complete sound")
+        }
     }
 
     // MARK: - Sound Selection Observer
@@ -208,18 +222,20 @@ class SoundManager: ObservableObject {
         ) { [weak self] _ in
             guard let self = self else { return }
 
-            // Check if recording start sound changed
-            let currentRecordingStartSound = self.settingsManager.recordingStartSound
-            if currentRecordingStartSound != self.currentlyLoadedRecordingStartSoundId {
-                print("SoundManager: Recording start sound changed to \(currentRecordingStartSound)")
-                self.loadRecordingStartSound()
-            }
+            MainActor.assumeIsolated {
+                // Check if recording start sound changed
+                let currentRecordingStartSound = self.settingsManager.recordingStartSound
+                if currentRecordingStartSound != self.currentlyLoadedRecordingStartSoundId {
+                    print("SoundManager: Recording start sound changed to \(currentRecordingStartSound)")
+                    self.loadRecordingStartSound()
+                }
 
-            // Check if transcription complete sound changed
-            let currentTranscriptionCompleteSound = self.settingsManager.transcriptionCompleteSound
-            if currentTranscriptionCompleteSound != self.currentlyLoadedTranscriptionCompleteSoundId {
-                print("SoundManager: Transcription complete sound changed to \(currentTranscriptionCompleteSound)")
-                self.loadTranscriptionCompleteSound()
+                // Check if transcription complete sound changed
+                let currentTranscriptionCompleteSound = self.settingsManager.transcriptionCompleteSound
+                if currentTranscriptionCompleteSound != self.currentlyLoadedTranscriptionCompleteSoundId {
+                    print("SoundManager: Transcription complete sound changed to \(currentTranscriptionCompleteSound)")
+                    self.loadTranscriptionCompleteSound()
+                }
             }
         }
     }

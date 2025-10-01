@@ -60,7 +60,6 @@ class DisplayManager: ObservableObject {
             self.shouldRepositionOverlay.toggle()
         }
     }
-  }
 
     /// Returns the screen that should be considered "active" for overlay positioning
     /// Priority: screen with mouse cursor > main screen > first available screen
@@ -158,3 +157,4 @@ class DisplayManager: ObservableObject {
         }
     }
 }
+

@@ -113,7 +113,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     audioRecorder = nil
 
     // Add a small delay to allow the audio system to reset
-    try await Task.sleep(nanoseconds: 100_000_000)
+    try await Task.sleep(nanoseconds: 10_000_000)
 
     let settings: [String: Any] = [
       AVFormatIDKey: Int(kAudioFormatLinearPCM),

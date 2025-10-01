@@ -31,7 +31,6 @@ struct FullHeightWindowConfigurator: NSViewRepresentable {
 
 enum SettingsSection: String, CaseIterable, Identifiable {
   case general = "General"
-  case transcription = "Transcription"
   case sound = "Sound"
   case profiles = "Profiles"
   case history = "History"
@@ -43,7 +42,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
   var icon: String {
     switch self {
     case .general: return "gearshape"
-    case .transcription: return "waveform"
     case .sound: return "speaker.2"
     case .profiles: return "person.crop.square"
     case .history: return "clock.arrow.circlepath"
@@ -105,8 +103,6 @@ struct SettingsView: View {
     switch section {
     case .general:
       GeneralSettingsView()
-    case .transcription:
-      TranscriptionSettingsView()
     case .sound:
       SoundSettingsView()
     case .profiles:
@@ -120,6 +116,7 @@ struct SettingsView: View {
     }
   }
 }
+
 
 struct GeneralSettingsView: View {
   @EnvironmentObject private var updateManager: UpdateManager

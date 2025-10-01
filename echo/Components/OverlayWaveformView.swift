@@ -6,13 +6,15 @@ struct OverlayWaveformView: View {
   let color: Color
 
   private static let barCount = 10
-  private static let minHeight: CGFloat = 4
+  private static let minHeight: CGFloat = 0.1
   private static let maxHeight: CGFloat = 24
-  private static let idleHeight: CGFloat = 4
+  private static let idleHeight: CGFloat = 0
   private static let barWidth: CGFloat = 1.5
   private static let spacing: CGFloat = 1.5
   private static let updateInterval: TimeInterval = 0.05
-  private static let silenceThreshold: CGFloat = 0.01
+  private static let noiseFloor: CGFloat = 0.5
+  private static let responseExponent: CGFloat = 1.6
+  private static let silenceThreshold: CGFloat = Self.noiseFloor
 
   @State private var barHeights: [CGFloat]
   private let timer = Timer.publish(every: Self.updateInterval, on: .main, in: .common)
@@ -39,8 +41,8 @@ struct OverlayWaveformView: View {
     .onAppear {
       updateBars(with: level)
     }
-    .onChange(of: level) { newValue in
-      updateBars(with: newValue)
+    .onChange(of: level) {
+      updateBars(with: level)
     }
     .onReceive(timer) { _ in
       updateBars(with: level)
@@ -75,12 +77,14 @@ struct OverlayWaveformView: View {
 
   private func generateHeight(for level: CGFloat) -> CGFloat {
     let dynamicRange = Self.maxHeight - Self.minHeight
-    // Amplify the input level by 1.5x to make it more visible
-    let amplifiedLevel = min(level * 1.5, 1.0)
-    let base = Self.minHeight + dynamicRange * amplifiedLevel
 
-    // Reduce variance for low levels to minimize jitter during silence
-    let varianceScale = amplifiedLevel < 0.1 ? 0.05 : 0.25
+    // Suppress readings near the noise floor before shaping the curve
+    let normalized = max(level - Self.noiseFloor, 0) / (1 - Self.noiseFloor)
+    let eased = CGFloat(pow(Double(normalized), Double(Self.responseExponent)))
+    let base = Self.minHeight + dynamicRange * eased
+
+    // Keep jitter minimal while still allowing subtle motion
+    let varianceScale = eased < 0.25 ? 0.015 : 0.04
     let variance = dynamicRange * varianceScale
     let randomOffset = CGFloat.random(in: -variance...variance)
     let candidate = base + randomOffset

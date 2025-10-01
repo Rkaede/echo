@@ -6,6 +6,7 @@ class GlobalShortcutMonitor: ObservableObject {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isFnKeyPressed = false
+    private var isRecording = false
     
     @Published var shouldStartPushToTalk = false
     @Published var shouldStopPushToTalk = false
@@ -30,8 +31,7 @@ class GlobalShortcutMonitor: ObservableObject {
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                 // Get the GlobalKeyboardMonitor instance
                 let monitor = Unmanaged<GlobalShortcutMonitor>.fromOpaque(refcon!).takeUnretainedValue()
-                monitor.handleEvent(event: event, type: type)
-                return Unmanaged.passUnretained(event)
+                return monitor.handleEvent(event: event, type: type)
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         ) else {
@@ -58,15 +58,16 @@ class GlobalShortcutMonitor: ObservableObject {
         }
     }
     
-    private func handleEvent(event: CGEvent, type: CGEventType) {
+    private func handleEvent(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
         switch type {
         case .flagsChanged:
             handleFlagsChanged(event: event)
         case .keyDown:
-            handleKeyDown(event: event)
+            return handleKeyDown(event: event)
         default:
             break
         }
+        return Unmanaged.passUnretained(event)
     }
     
     private func handleFlagsChanged(event: CGEvent) {
@@ -91,29 +92,48 @@ class GlobalShortcutMonitor: ObservableObject {
         }
     }
     
-    private func handleKeyDown(event: CGEvent) {
+    private func handleKeyDown(event: CGEvent) -> Unmanaged<CGEvent>? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         
         switch keyCode {
         case 53:
-            print("GlobalShortcutMonitor: Escape key pressed - requesting recording cancellation")
-            DispatchQueue.main.async {
-                self.shouldCancelRecording.toggle()
+            // Escape key - consume it if we're recording
+            if isRecording {
+                print("GlobalShortcutMonitor: Escape key pressed while recording - consuming event and requesting cancellation")
+                DispatchQueue.main.async {
+                    self.shouldCancelRecording.toggle()
+                }
+                return nil // Consume the event - don't let it reach other apps
+            } else {
+                print("GlobalShortcutMonitor: Escape key pressed but not recording - letting event pass through")
             }
         case 123:
             // Left arrow key
-            print("GlobalShortcutMonitor: Left arrow key pressed - requesting previous profile")
-            DispatchQueue.main.async {
-                self.shouldActivatePreviousProfile.toggle()
+            if isRecording {
+                print("GlobalShortcutMonitor: Left arrow key pressed while recording - requesting previous profile")
+                DispatchQueue.main.async {
+                    self.shouldActivatePreviousProfile.toggle()
+                }
             }
         case 124:
             // Right arrow key  
-            print("GlobalShortcutMonitor: Right arrow key pressed - requesting next profile")
-            DispatchQueue.main.async {
-                self.shouldActivateNextProfile.toggle()
+            if isRecording {
+                print("GlobalShortcutMonitor: Right arrow key pressed while recording - requesting next profile")
+                DispatchQueue.main.async {
+                    self.shouldActivateNextProfile.toggle()
+                }
             }
         default:
             break
         }
+        
+        // Let all other events (or non-recording Escape) pass through
+        return Unmanaged.passUnretained(event)
+    }
+    
+    // Methods to update recording state
+    func setRecording(_ isRecording: Bool) {
+        self.isRecording = isRecording
+        print("GlobalShortcutMonitor: Recording state updated to: \(isRecording)")
     }
 }
