@@ -7,12 +7,14 @@ class GlobalShortcutMonitor: ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private var isFnKeyPressed = false
     private var isRecording = false
-    
+    private var isToggleHotkeySuspended = false
+
     @Published var shouldStartPushToTalk = false
     @Published var shouldStopPushToTalk = false
     @Published var shouldCancelRecording = false
     @Published var shouldActivateNextProfile = false
     @Published var shouldActivatePreviousProfile = false
+    @Published var shouldTriggerRecording = false
 
     init() {
         startMonitoring()
@@ -94,8 +96,18 @@ class GlobalShortcutMonitor: ObservableObject {
     
     private func handleKeyDown(event: CGEvent) -> Unmanaged<CGEvent>? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        
+        let flags = event.flags
+
         switch keyCode {
+        case 49:
+            // Space key - check for Option modifier for toggle mode
+            if flags.contains(.maskAlternate) && !isToggleHotkeySuspended {
+                print("GlobalShortcutMonitor: Option+Space pressed - triggering toggle")
+                DispatchQueue.main.async {
+                    self.shouldTriggerRecording.toggle()
+                }
+                return nil // Consume the event
+            }
         case 53:
             // Escape key - consume it if we're recording
             if isRecording {
@@ -116,7 +128,7 @@ class GlobalShortcutMonitor: ObservableObject {
                 }
             }
         case 124:
-            // Right arrow key  
+            // Right arrow key
             if isRecording {
                 print("GlobalShortcutMonitor: Right arrow key pressed while recording - requesting next profile")
                 DispatchQueue.main.async {
@@ -126,7 +138,7 @@ class GlobalShortcutMonitor: ObservableObject {
         default:
             break
         }
-        
+
         // Let all other events (or non-recording Escape) pass through
         return Unmanaged.passUnretained(event)
     }
@@ -135,5 +147,17 @@ class GlobalShortcutMonitor: ObservableObject {
     func setRecording(_ isRecording: Bool) {
         self.isRecording = isRecording
         print("GlobalShortcutMonitor: Recording state updated to: \(isRecording)")
+    }
+
+    func suspendToggleHotkey() {
+        guard !isToggleHotkeySuspended else { return }
+        print("GlobalShortcutMonitor: Suspending toggle hotkey")
+        isToggleHotkeySuspended = true
+    }
+
+    func resumeToggleHotkey() {
+        guard isToggleHotkeySuspended else { return }
+        print("GlobalShortcutMonitor: Resuming toggle hotkey")
+        isToggleHotkeySuspended = false
     }
 }

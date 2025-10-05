@@ -254,5 +254,48 @@ actor DatabaseService {
             setUserVersion(version)
             print("DatabaseService: Migrated to schema v4 (profile enable flag)")
         }
+
+        if version < 5 {
+            // v5: Add error tracking columns to transcription_history table
+            var didFailExists = false
+            var errorMessageExists = false
+            var errorCategoryExists = false
+
+            var infoStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "PRAGMA table_info(transcription_history);", -1, &infoStmt, nil) == SQLITE_OK {
+                while sqlite3_step(infoStmt) == SQLITE_ROW {
+                    if let namePtr = sqlite3_column_text(infoStmt, 1) {
+                        let name = String(cString: namePtr)
+                        if name == "did_fail" {
+                            didFailExists = true
+                        } else if name == "error_message" {
+                            errorMessageExists = true
+                        } else if name == "error_category" {
+                            errorCategoryExists = true
+                        }
+                    }
+                }
+            }
+            sqlite3_finalize(infoStmt)
+
+            if !didFailExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN did_fail INTEGER NOT NULL DEFAULT 0;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            if !errorMessageExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN error_message TEXT;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            if !errorCategoryExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN error_category TEXT;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            version = 5
+            setUserVersion(version)
+            print("DatabaseService: Migrated to schema v5 (error tracking)")
+        }
     }
 }

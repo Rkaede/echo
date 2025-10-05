@@ -139,51 +139,65 @@ actor HistoryDatabaseActor {
     
     func saveTranscription(_ transcription: TranscriptionHistory) async -> Bool {
         let insertSQL = """
-            INSERT INTO transcription_history 
-            (id, timestamp, transcribed_text, duration, audio_file_reference, language_detected, 
-             model_used, word_count, application_context, upload_time, groq_processing_time, 
-             total_transcription_time, confidence) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO transcription_history
+            (id, timestamp, transcribed_text, duration, audio_file_reference, language_detected,
+             model_used, word_count, application_context, upload_time, groq_processing_time,
+             total_transcription_time, confidence, did_fail, error_message, error_category)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
-        
+
         var statement: OpaquePointer?
         var success = false
-        
+
         if sqlite3_prepare_v2(db, insertSQL, -1, &statement, nil) == SQLITE_OK {
             sqlite3_bind_text(statement, 1, (transcription.id.uuidString as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(statement, 2, transcription.timestamp.timeIntervalSince1970)
             sqlite3_bind_text(statement, 3, (transcription.transcribedText as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_double(statement, 4, transcription.duration)
-            
+
             if let audioRef = transcription.audioFileReference {
                 sqlite3_bind_text(statement, 5, (audioRef as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(statement, 5)
             }
-            
+
             if let language = transcription.languageDetected {
                 sqlite3_bind_text(statement, 6, (language as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(statement, 6)
             }
-            
+
             sqlite3_bind_text(statement, 7, (transcription.modelUsed as NSString).utf8String, -1, SQLITE_TRANSIENT)
             sqlite3_bind_int(statement, 8, Int32(transcription.wordCount))
-            
+
             if let appContext = transcription.applicationContext {
                 sqlite3_bind_text(statement, 9, (appContext as NSString).utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 sqlite3_bind_null(statement, 9)
             }
-            
+
             sqlite3_bind_double(statement, 10, transcription.uploadTime)
             sqlite3_bind_double(statement, 11, transcription.groqProcessingTime)
             sqlite3_bind_double(statement, 12, transcription.totalTranscriptionTime)
-            
+
             if let confidence = transcription.confidence {
                 sqlite3_bind_double(statement, 13, confidence)
             } else {
                 sqlite3_bind_null(statement, 13)
+            }
+
+            sqlite3_bind_int(statement, 14, transcription.didFail ? 1 : 0)
+
+            if let errorMessage = transcription.errorMessage {
+                sqlite3_bind_text(statement, 15, (errorMessage as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            } else {
+                sqlite3_bind_null(statement, 15)
+            }
+
+            if let errorCategory = transcription.errorCategory {
+                sqlite3_bind_text(statement, 16, (errorCategory as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            } else {
+                sqlite3_bind_null(statement, 16)
             }
             
             if sqlite3_step(statement) == SQLITE_DONE {
@@ -221,7 +235,7 @@ actor HistoryDatabaseActor {
             
             while sqlite3_step(statement) == SQLITE_ROW {
                 if let transcription = parseTranscriptionFromRow(statement) {
-                    let snippet = String(cString: sqlite3_column_text(statement, 13))
+                    let snippet = String(cString: sqlite3_column_text(statement, 16))
                     results.append((transcription, snippet))
                 }
             }
@@ -374,7 +388,28 @@ actor HistoryDatabaseActor {
             }
             return sqlite3_column_double(statement, 12)
         }()
-        
+
+        let didFail: Bool = {
+            if sqlite3_column_type(statement, 13) == SQLITE_NULL {
+                return false
+            }
+            return sqlite3_column_int(statement, 13) == 1
+        }()
+
+        let errorMessage: String? = {
+            if sqlite3_column_type(statement, 14) == SQLITE_NULL {
+                return nil
+            }
+            return String(cString: sqlite3_column_text(statement, 14))
+        }()
+
+        let errorCategory: String? = {
+            if sqlite3_column_type(statement, 15) == SQLITE_NULL {
+                return nil
+            }
+            return String(cString: sqlite3_column_text(statement, 15))
+        }()
+
         return TranscriptionHistory(
             id: id,
             timestamp: timestamp,
@@ -389,7 +424,10 @@ actor HistoryDatabaseActor {
             groqProcessingTime: groqProcessingTime,
             totalTranscriptionTime: totalTranscriptionTime,
             confidence: confidence,
-            searchSnippet: nil
+            searchSnippet: nil,
+            didFail: didFail,
+            errorMessage: errorMessage,
+            errorCategory: errorCategory
         )
     }
 }

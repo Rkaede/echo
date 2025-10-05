@@ -1,11 +1,9 @@
 import AppKit
-import HotKey
 import SwiftUI
 
 @main
 struct EchoApp: App {
   @Environment(\.openWindow) private var openWindow
-  @StateObject private var hotkeyManager = HotkeyManager.shared
   @StateObject private var globalShortcutMonitor = GlobalShortcutMonitor.shared
   @StateObject private var appState: AppState
   @StateObject private var viewModel: TranscriptionViewModel
@@ -77,7 +75,8 @@ struct EchoApp: App {
               showingProfileIconName: appState.showingProfileIconName,
               currentInputDevice: appState.currentInputDevice,
               currentInputLevel: Float(appState.currentInputLevel),
-              activeProfileIconName: profilesService.activeProfile?.iconName
+              activeProfileIconName: profilesService.activeProfile?.iconName,
+              errorCategory: appState.errorCategory
             )
           } else {
             OverlayView(status: appState.status)
@@ -105,7 +104,7 @@ struct EchoApp: App {
       menuContent
     }
     .menuBarExtraStyle(.menu)
-    .onChange(of: hotkeyManager.shouldTriggerRecording) {
+    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) {
       handleHotkeyToggle()
     }
     .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) {

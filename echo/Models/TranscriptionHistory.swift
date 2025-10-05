@@ -18,6 +18,9 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
     let totalTranscriptionTime: TimeInterval
     let confidence: Double?
     let searchSnippet: String?
+    let didFail: Bool                      // Whether the transcription failed
+    let errorMessage: String?              // Error message if transcription failed
+    let errorCategory: String?             // Error category if transcription failed
     
     init(
         id: UUID = UUID(),
@@ -36,7 +39,10 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
         groqProcessingTime: TimeInterval = 0,
         totalTranscriptionTime: TimeInterval = 0,
         confidence: Double? = nil,
-        searchSnippet: String? = nil
+        searchSnippet: String? = nil,
+        didFail: Bool = false,
+        errorMessage: String? = nil,
+        errorCategory: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -55,6 +61,9 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
         self.totalTranscriptionTime = totalTranscriptionTime
         self.confidence = confidence
         self.searchSnippet = searchSnippet
+        self.didFail = didFail
+        self.errorMessage = errorMessage
+        self.errorCategory = errorCategory
     }
 }
 

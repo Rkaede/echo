@@ -14,6 +14,34 @@ enum RecordingStatus: String {
     case error
 }
 
+enum ErrorCategory: String {
+    case network = "Network"
+    case apiKey = "API Key"
+    case permission = "Permission"
+    case audio = "Audio"
+    case unknown = "Unknown"
+
+    static func categorize(from errorMessage: String) -> ErrorCategory {
+        let lowercased = errorMessage.lowercased()
+
+        if lowercased.contains("network") || lowercased.contains("connection") ||
+           lowercased.contains("timeout") || lowercased.contains("unreachable") {
+            return .network
+        } else if lowercased.contains("api key") || lowercased.contains("unauthorized") ||
+                  lowercased.contains("authentication") || lowercased.contains("401") {
+            return .apiKey
+        } else if lowercased.contains("permission") || lowercased.contains("access denied") ||
+                  lowercased.contains("microphone") || lowercased.contains("accessibility") {
+            return .permission
+        } else if lowercased.contains("audio") || lowercased.contains("recording") ||
+                  lowercased.contains("microphone") {
+            return .audio
+        } else {
+            return .unknown
+        }
+    }
+}
+
 enum RecordingMode {
     case toggle      // Option+Space
     case pushToTalk  // Fn key hold
@@ -21,10 +49,11 @@ enum RecordingMode {
 
 @MainActor
 class AppState: ObservableObject {
-    
+
     @Published var status: RecordingStatus = .idle
     @Published var transcriptionText: String = ""
     @Published var errorMessage: String = ""
+    @Published var errorCategory: ErrorCategory? = nil
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
     @Published var currentInputLevel: CGFloat = 0
@@ -48,26 +77,34 @@ class AppState: ObservableObject {
             print("AppState: Ignoring state change from cancelled to \(newStatus)")
             return
         }
-        
+
         // Clear confirmation timeout if transitioning away from confirmation
         if status == .confirmingCancel && newStatus != .confirmingCancel {
             confirmationTimeoutTask?.cancel()
             confirmationTimeoutTask = nil
             _previousStatusBeforeConfirmation = nil
         }
-        
-        // Clear error message when transitioning away from error state
+
+        // Clear error message and category when transitioning away from error state
         if status == .error && newStatus != .error {
             errorMessage = ""
+            errorCategory = nil
         }
-        
+
         print("AppState: Status changing from \(status) to \(newStatus)")
         status = newStatus
-        
-        // If status is inserted or cancelled, automatically return to idle after 2 seconds
+
+        // If status is inserted, cancelled, or error, automatically return to idle after delay
         if newStatus == .inserted || newStatus == .cancelled {
             Task {
                 try await Task.sleep(nanoseconds: 2_000_000_000)
+                self.status = .idle
+                self.recordingMode = nil
+            }
+        } else if newStatus == .error {
+            // Auto-dismiss errors after 3.5 seconds (longer than success states)
+            Task {
+                try await Task.sleep(nanoseconds: 3_500_000_000)
                 self.status = .idle
                 self.recordingMode = nil
             }
@@ -80,14 +117,17 @@ class AppState: ObservableObject {
             print("AppState: Ignoring error '\(message)' due to cancelled state")
             return
         }
-        
+
         print("AppState: Setting error: \(message)")
         errorMessage = message
+        errorCategory = ErrorCategory.categorize(from: message)
         status = .error
+        print("AppState: Error categorized as: \(errorCategory?.rawValue ?? "Unknown")")
     }
-    
+
     func clearError() {
         errorMessage = ""
+        errorCategory = nil
         if status == .error {
             status = .idle
         }
@@ -150,6 +190,7 @@ class AppState: ObservableObject {
         profileDisplayTimeoutTask = nil
         _previousStatusBeforeConfirmation = nil
         errorMessage = ""
+        errorCategory = nil
         status = .idle
         recordingMode = nil
         showingProfileName = nil

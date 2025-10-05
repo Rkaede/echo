@@ -52,7 +52,7 @@ struct ShortcutRecorderView: View {
     .onDisappear {
       #if os(macOS)
         if isRecording {
-          HotkeyManager.shared.resumeToggleHotkey()
+          GlobalShortcutMonitor.shared.resumeToggleHotkey()
         }
       #endif
     }
@@ -112,7 +112,7 @@ struct ShortcutRecorderView: View {
 
   private func beginRecording() {
     #if os(macOS)
-      HotkeyManager.shared.suspendToggleHotkey()
+      GlobalShortcutMonitor.shared.suspendToggleHotkey()
       isRecording = true
     #endif
   }
@@ -124,7 +124,7 @@ struct ShortcutRecorderView: View {
 
   private func cancelRecording() {
     #if os(macOS)
-      HotkeyManager.shared.resumeToggleHotkey()
+      GlobalShortcutMonitor.shared.resumeToggleHotkey()
     #endif
     shortcut = nil
     isRecording = false
@@ -132,7 +132,7 @@ struct ShortcutRecorderView: View {
 
   private func recordShortcut(_ shortcutText: String) {
     #if os(macOS)
-      HotkeyManager.shared.resumeToggleHotkey()
+      GlobalShortcutMonitor.shared.resumeToggleHotkey()
     #endif
     shortcut = ShortcutUtils.normalize(shortcutText)
     isRecording = false

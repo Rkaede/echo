@@ -20,6 +20,7 @@ struct OverlayViewV2: View {
   let currentInputDevice: String
   let currentInputLevel: Float
   let activeProfileIconName: String?
+  let errorCategory: ErrorCategory?
 
   // Animation configuration
   private let containerAnimation = Animation.smooth(duration: 0.3)
@@ -38,7 +39,8 @@ struct OverlayViewV2: View {
     showingProfileIconName: String? = nil,
     currentInputDevice: String = "",
     currentInputLevel: Float = 0.0,
-    activeProfileIconName: String? = nil
+    activeProfileIconName: String? = nil,
+    errorCategory: ErrorCategory? = nil
   ) {
     self.status = status
     self.showingProfileName = showingProfileName
@@ -46,6 +48,7 @@ struct OverlayViewV2: View {
     self.currentInputDevice = currentInputDevice
     self.currentInputLevel = currentInputLevel
     self.activeProfileIconName = activeProfileIconName
+    self.errorCategory = errorCategory
     // Initialize internal state to match current status without animating on first render
     _isExpanded = State(initialValue: status != .idle)
     _showContent = State(initialValue: status != .idle)
@@ -99,6 +102,24 @@ struct OverlayViewV2: View {
             .frame(maxWidth: .infinity, alignment: .center)
             .animation(nil, value: showingProfileName)
             .animation(nil, value: showingProfileIconName)
+          } else if status == .error && errorCategory != nil {
+            // Error state with category subtitle
+            VStack(spacing: 2) {
+              Text(displayText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(OverlayColors.text)
+                .lineLimit(1)
+
+              if let category = errorCategory {
+                Text(category.rawValue)
+                  .font(.system(size: 10, weight: .regular))
+                  .foregroundColor(OverlayColors.text.opacity(0.7))
+                  .lineLimit(1)
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            .animation(.easeInOut(duration: 0.3), value: displayText)
           } else {
             Text(displayText)
               .font(.system(size: 12, weight: .medium))
@@ -501,7 +522,7 @@ private struct OverlayViewV2ProfilePreview: View {
         Spacer()
         HStack {
           Spacer()
-          OverlayViewV2ProfilePreview(profileName: "Code Review", iconName: "curlybraces.circle.fill")
+          OverlayViewV2ProfilePreview(profileName: "Code Review", iconName: "eye.circle.fill")
           Spacer()
         }
       }

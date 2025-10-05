@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0478A3322E2D83ED0025F57D /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 0478A3312E2D83ED0025F57D /* HotKey */; };
 		049C83B82E383A6500B262D9 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 049C83B72E383A6500B262D9 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -41,7 +40,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0478A3322E2D83ED0025F57D /* HotKey in Frameworks */,
 				049C83B82E383A6500B262D9 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -85,7 +83,6 @@
 			);
 			name = Echo;
 			packageProductDependencies = (
-				0478A3312E2D83ED0025F57D /* HotKey */,
 				049C83B72E383A6500B262D9 /* Sparkle */,
 			);
 			productName = echo;
@@ -117,7 +114,6 @@
 			mainGroup = 04EF512E2E2A4FAC00C95CA1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				0478A3302E2D83ED0025F57D /* XCRemoteSwiftPackageReference "HotKey" */,
 				049C83B62E383A6500B262D9 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -366,14 +362,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		0478A3302E2D83ED0025F57D /* XCRemoteSwiftPackageReference "HotKey" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/soffes/HotKey";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		049C83B62E383A6500B262D9 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -385,11 +373,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		0478A3312E2D83ED0025F57D /* HotKey */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 0478A3302E2D83ED0025F57D /* XCRemoteSwiftPackageReference "HotKey" */;
-			productName = HotKey;
-		};
 		049C83B72E383A6500B262D9 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 049C83B62E383A6500B262D9 /* XCRemoteSwiftPackageReference "Sparkle" */;
