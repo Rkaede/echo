@@ -20,7 +20,6 @@ class SettingsManager: ObservableObject {
   @AppStorage("restoreClipboard") var restoreClipboard = true
   @AppStorage("enableHistory") var enableHistory = false
   @AppStorage("saveAudioWithHistory") var saveAudioWithHistory = false
-  @AppStorage("useOverlayV2") var useOverlayV2 = true
   @AppStorage("audioStoragePath") var audioStoragePath = ""
   @AppStorage("audioStorageBookmark") var audioStorageBookmark = Data()
   @AppStorage("soundEnabled") var soundEnabled = true

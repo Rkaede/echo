@@ -8,6 +8,7 @@ class GlobalShortcutMonitor: ObservableObject {
     private var isFnKeyPressed = false
     private var isRecording = false
     private var isToggleHotkeySuspended = false
+    private var profileShortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
 
     @Published var shouldStartPushToTalk = false
     @Published var shouldStopPushToTalk = false
@@ -15,6 +16,7 @@ class GlobalShortcutMonitor: ObservableObject {
     @Published var shouldActivateNextProfile = false
     @Published var shouldActivatePreviousProfile = false
     @Published var shouldTriggerRecording = false
+    @Published var triggeredProfileId: String? = nil
 
     init() {
         startMonitoring()
@@ -98,6 +100,25 @@ class GlobalShortcutMonitor: ObservableObject {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
 
+        // Check for profile shortcuts first (only when not suspended)
+        if !isToggleHotkeySuspended {
+            for (profileId, parsed) in profileShortcuts {
+                if keyCode == parsed.keyCode && flags.contains(parsed.modifiers) {
+                    // Check that we have exactly the modifiers specified (no extra modifiers)
+                    let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+                    let currentModifiers = flags.intersection(relevantFlags)
+
+                    if currentModifiers == parsed.modifiers {
+                        print("GlobalShortcutMonitor: Profile shortcut matched for profile \(profileId)")
+                        DispatchQueue.main.async {
+                            self.triggeredProfileId = profileId
+                        }
+                        return nil // Consume the event
+                    }
+                }
+            }
+        }
+
         switch keyCode {
         case 49:
             // Space key - check for Option modifier for toggle mode
@@ -159,5 +180,24 @@ class GlobalShortcutMonitor: ObservableObject {
         guard isToggleHotkeySuspended else { return }
         print("GlobalShortcutMonitor: Resuming toggle hotkey")
         isToggleHotkeySuspended = false
+    }
+
+    func loadProfileShortcuts(from profiles: [Profile]) {
+        var shortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
+
+        for profile in profiles {
+            guard profile.isEnabled,
+                  let shortcutString = profile.shortcut,
+                  !shortcutString.isEmpty,
+                  let parsed = ShortcutUtils.parse(shortcutString) else {
+                continue
+            }
+
+            shortcuts.append((profileId: profile.id, parsed: parsed))
+            print("GlobalShortcutMonitor: Loaded shortcut for profile '\(profile.title)': \(shortcutString)")
+        }
+
+        profileShortcuts = shortcuts
+        print("GlobalShortcutMonitor: Loaded \(shortcuts.count) profile shortcuts")
     }
 }

@@ -12,7 +12,8 @@ struct IconPickerView: View {
 
       let tint = ProfileAppearancePalette.color(for: colorToken)
 
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 56), spacing: 10)], spacing: 10) {
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 56), spacing: 10)], spacing: 10)
+      {
         ForEach(ProfileAppearancePalette.iconOptions) { option in
           Button {
             iconName = option.symbol
@@ -25,13 +26,18 @@ struct IconPickerView: View {
               return iconName == symbol
             }()
 
-            let tileBackground = isSelected
-              ? (option.symbol != nil ? (tint?.opacity(0.22) ?? Color.secondary.opacity(0.16)) : Color.secondary.opacity(0.16))
+            let tileBackground =
+              isSelected
+              ? (option.symbol != nil
+                ? (tint?.opacity(0.22) ?? Color.secondary.opacity(0.16))
+                : Color.secondary.opacity(0.16))
               : Color.clear
-            let borderColor = isSelected
+            let borderColor =
+              isSelected
               ? (option.symbol != nil ? (tint ?? Color.accentColor) : Color.accentColor)
               : Color.secondary.opacity(0.18)
-            let iconColor = isSelected
+            let iconColor =
+              isSelected
               ? (option.symbol != nil ? (tint ?? Color.primary) : Color.primary)
               : (option.symbol != nil ? Color.primary : .secondary)
 

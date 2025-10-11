@@ -94,7 +94,6 @@ The codebase follows MVVM pattern with clear separation:
 
 4. **Services/** - External integrations and utilities
    - `GroqClient.swift` - Groq API transcription requests
-   - `HotkeyManager.swift` - Global hotkey (Option+Space) for toggle mode
    - `GlobalShortcutMonitor.swift` - Push-to-talk mode monitoring (Fn key)
    - `PasteService.swift` - Simulates Cmd+V for auto-pasting
    - `SettingsManager.swift` - UserDefaults for non-sensitive preferences
@@ -218,7 +217,6 @@ Overlay window configuration in `App.swift`:
 ## Dependencies
 
 ### Swift Package Manager
-- **HotKey** (0.2.1): Global hotkey registration
 - **Sparkle**: Automatic update framework
 
 Package resolution stored in `Package.resolved`.

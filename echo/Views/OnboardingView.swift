@@ -209,22 +209,7 @@ struct WelcomeStepView: View {
 struct PermissionsStepView: View {
   let onNext: () -> Void
   let onBack: () -> Void
-  @State private var microphonePermission: PermissionStatus = .unknown
-  @State private var accessibilityPermission: PermissionStatus = .unknown
-
-  enum PermissionStatus {
-    case unknown
-    case granted
-    case denied
-  }
-  
-  private func permissionStatusToAppStatus(_ status: PermissionStatus) -> AppPermissionStatus {
-    switch status {
-    case .unknown: return .unknown
-    case .granted: return .granted
-    case .denied: return .denied
-    }
-  }
+  @ObservedObject private var permissionManager = PermissionManager.shared
 
   var body: some View {
     VStack(spacing: 0) {
@@ -279,8 +264,8 @@ struct PermissionsStepView: View {
               description: "We need to borrow your mic to work our speech-to-text magic ✨",
               icon: "mic.fill",
               iconColor: .blue,
-              status: permissionStatusToAppStatus(microphonePermission),
-              onEnable: requestMicrophonePermission
+              status: permissionManager.microphoneStatus,
+              onEnable: permissionManager.requestMicrophonePermission
             )
 
             PermissionStatusView(
@@ -288,8 +273,8 @@ struct PermissionsStepView: View {
               description: "Allow us to place transcribed text straight into your apps.",
               icon: "accessibility",
               iconColor: .green,
-              status: permissionStatusToAppStatus(accessibilityPermission),
-              onEnable: requestAccessibilityPermission
+              status: permissionManager.accessibilityStatus,
+              onEnable: permissionManager.requestAccessibilityPermission
             )
           }
           .frame(maxWidth: 480)
@@ -324,7 +309,7 @@ struct PermissionsStepView: View {
               }
               .buttonStyle(.borderedProminent)
               .controlSize(.large)
-              .disabled(microphonePermission != .granted || accessibilityPermission != .granted)
+              .disabled(!permissionManager.allPermissionsGranted)
             }
           }
           .padding(.bottom, 30)
@@ -333,53 +318,7 @@ struct PermissionsStepView: View {
       }
     }
     .onAppear {
-      checkPermissions()
-    }
-  }
-
-  private func checkPermissions() {
-    checkMicrophonePermission()
-    checkAccessibilityPermission()
-  }
-
-  private func checkMicrophonePermission() {
-    switch AVCaptureDevice.authorizationStatus(for: .audio) {
-    case .authorized:
-      microphonePermission = .granted
-    case .denied, .restricted:
-      microphonePermission = .denied
-    case .notDetermined:
-      microphonePermission = .unknown
-    @unknown default:
-      microphonePermission = .unknown
-    }
-  }
-
-  private func checkAccessibilityPermission() {
-    accessibilityPermission = AXIsProcessTrusted() ? .granted : .denied
-  }
-
-  private func requestMicrophonePermission() {
-    AVCaptureDevice.requestAccess(for: .audio) { granted in
-      DispatchQueue.main.async {
-        microphonePermission = granted ? .granted : .denied
-      }
-    }
-  }
-
-  private func requestAccessibilityPermission() {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
-    _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-
-    // Start a timer to check periodically since there's no callback
-    Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-      let isTrusted = AXIsProcessTrusted()
-      if isTrusted {
-        DispatchQueue.main.async {
-          accessibilityPermission = .granted
-        }
-        timer.invalidate()
-      }
+      permissionManager.checkAllPermissions()
     }
   }
 }

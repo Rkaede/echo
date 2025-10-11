@@ -67,21 +67,15 @@ struct EchoApp: App {
     Window("Overlay", id: "overlay") {
       VStack {
         Spacer()
-        Group {
-          if settings.useOverlayV2 {
-            OverlayViewV2(
-              status: appState.status,
-              showingProfileName: appState.showingProfileName,
-              showingProfileIconName: appState.showingProfileIconName,
-              currentInputDevice: appState.currentInputDevice,
-              currentInputLevel: Float(appState.currentInputLevel),
-              activeProfileIconName: profilesService.activeProfile?.iconName,
-              errorCategory: appState.errorCategory
-            )
-          } else {
-            OverlayView(status: appState.status)
-          }
-        }
+        OverlayViewV2(
+          status: appState.status,
+          showingProfileName: appState.showingProfileName,
+          showingProfileIconName: appState.showingProfileIconName,
+          currentInputDevice: appState.currentInputDevice,
+          currentInputLevel: Float(appState.currentInputLevel),
+          activeProfileIconName: profilesService.activeProfile?.iconName,
+          errorCategory: appState.errorCategory
+        )
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
       }
@@ -136,6 +130,37 @@ struct EchoApp: App {
     }
     .onChange(of: appState.status) {
       updateRecordingStateInGlobalShortcutMonitor()
+    }
+    .onChange(of: profilesService.profiles) {
+      globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles)
+    }
+    .onChange(of: globalShortcutMonitor.triggeredProfileId) {
+      if let profileId = globalShortcutMonitor.triggeredProfileId {
+        handleProfileShortcut(profileId: profileId)
+      }
+    }
+  }
+
+  private func handleProfileShortcut(profileId: String) {
+    Task {
+      print("App: Profile shortcut triggered for profile \(profileId)")
+
+      // Reset the trigger to allow the same shortcut to fire again
+      globalShortcutMonitor.triggeredProfileId = nil
+
+      // Activate the profile
+      profilesService.activateProfile(id: profileId)
+
+      if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
+        print("App: Opening overlay window")
+        openWindow(id: "overlay")
+      } else {
+        print("App: Overlay window already open")
+        repositionOverlayWindow()
+      }
+
+      print("App: Triggering recording toggle for profile shortcut")
+      await viewModel.toggleRecording()
     }
   }
 
@@ -311,7 +336,10 @@ struct EchoApp: App {
         // Initialize TempFileManager for cleanup
         tempFileManager.performStartupCleanup()
         tempFileManager.startPeriodicCleanup()
-        
+
+        // Load profile shortcuts into GlobalShortcutMonitor
+        globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles)
+
         // Initialize UpdateManager after overlay window is fully configured
         // This delay ensures that the Sparkle framework's SPUStandardUpdaterController
         // doesn't interfere with the overlay window's level and fullscreen behavior.

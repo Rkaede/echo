@@ -139,6 +139,15 @@ class ProfilesService: ObservableObject {
         switchNextProfile(direction: -1)
     }
 
+    func activateProfile(id: String) {
+        guard let profile = profiles.first(where: { $0.id == id && $0.isEnabled }) else {
+            print("ProfilesService: Cannot activate profile with id \(id) - not found or disabled")
+            return
+        }
+        activeProfile = profile
+        print("ProfilesService: Activated profile '\(profile.title)' via shortcut")
+    }
+
     // MARK: - Validation
 
     private func validate(profile: Profile, ignoreId: String?) throws {

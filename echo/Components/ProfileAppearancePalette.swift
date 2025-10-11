@@ -14,7 +14,9 @@ enum ProfileAppearancePalette {
     let overlayColor: Color
     let isClear: Bool
 
-    init(label: String, token: String?, color: Color, overlayColor: Color? = nil, isClear: Bool = false) {
+    init(
+      label: String, token: String?, color: Color, overlayColor: Color? = nil, isClear: Bool = false
+    ) {
       self.label = label
       self.token = token
       self.color = color
@@ -30,33 +32,106 @@ enum ProfileAppearancePalette {
     let symbol: String?
     var id: String { label }
   }
+  // these icons are not available in the system symbol set
+  // umbrella.circle.fill
+  // paintbrush.circle.fill
+  // shield.circle.fill
+  // music.note.circle.fill
+  // globe.circle.fill
+  // wrench.circle.fill
+  // key.circle.fill
+  // sparkles.circle.fill
+  // building.circle.fill
+  // display.circle.fill
+  // scanner.circle.fill
+  // laptopcomputer.circle.fill
+  // ticket.circle.fill
+  // chart.bar.circle.fill
+  // chart.pie.circle.fill
+  // percent.circle.fill
+  // desktopcomputer.circle.fill
+  // printer.circle.fill
+  // powerplug.circle.fill
+  // server.rack.circle.fill
+
+  // do not add these icons:
+  // xmark.circle.fill
+  // pause.circle.fill
+  // stop.circle.fill
+  // battery.100.circle.fill
+  // forward.circle.fill
+  // backward.circle.fill
+  // multiply.circle.fill
+  // divide.circle.fill
+  // cart.circle.fill
+  // phone.circle.fill
+  // gearshape.circle.fill
+  // camera.circle.fill
+  // video.circle.fill
+  // folder.circle.fill
+  // bag.circle.fill
+  // link.circle.fill
+  // paperclip.circle.fill
 
   static let iconOptions: [IconOption] = [
     IconOption(label: "None", symbol: nil),
     IconOption(label: "Mic", symbol: "mic.circle.fill"),
     IconOption(label: "Wave", symbol: "waveform.circle.fill"),
-    IconOption(label: "Sparkles", symbol: "sparkles.circle.fill"),
     IconOption(label: "Bolt", symbol: "bolt.circle.fill"),
     IconOption(label: "Star", symbol: "star.circle.fill"),
-    IconOption(label: "Focus", symbol: "scope.circle.fill"),
-    IconOption(label: "Keyboard", symbol: "textformat.circle.fill"),
-    IconOption(label: "Hearing", symbol: "ear.circle.fill"),
     IconOption(label: "Record", symbol: "record.circle.fill"),
-    IconOption(label: "Magic", symbol: "wand.and.stars.circle.fill"),
-    IconOption(label: "Note", symbol: "doc.text.circle.fill"),
     IconOption(label: "Chat", symbol: "message.circle.fill"),
-    IconOption(label: "Globe", symbol: "globe.circle.fill"),
     IconOption(label: "Clock", symbol: "clock.circle.fill"),
     IconOption(label: "Lightbulb", symbol: "lightbulb.circle.fill"),
-    IconOption(label: "Gear", symbol: "gearshape.circle.fill"),
     IconOption(label: "Bookmark", symbol: "bookmark.circle.fill"),
     IconOption(label: "Clipboard", symbol: "doc.circle.fill"),
-    IconOption(label: "Laptop", symbol: "display.circle.fill"),
     IconOption(label: "Headphones", symbol: "headphones.circle.fill"),
     IconOption(label: "People", symbol: "person.2.circle.fill"),
-    IconOption(label: "Code", symbol: "curlybraces.circle.fill"),
     IconOption(label: "Flame", symbol: "flame.circle.fill"),
     IconOption(label: "Download", symbol: "arrow.down.circle.fill"),
+    IconOption(label: "Upload", symbol: "arrow.up.circle.fill"),
+    IconOption(label: "Heart", symbol: "heart.circle.fill"),
+    IconOption(label: "Bell", symbol: "bell.circle.fill"),
+    IconOption(label: "Flag", symbol: "flag.circle.fill"),
+    IconOption(label: "Tag", symbol: "tag.circle.fill"),
+    IconOption(label: "Pin", symbol: "pin.circle.fill"),
+    IconOption(label: "Map", symbol: "map.circle.fill"),
+    IconOption(label: "Compass", symbol: "location.circle.fill"),
+    IconOption(label: "Lock", symbol: "lock.circle.fill"),
+    IconOption(label: "Eye", symbol: "eye.circle.fill"),
+    IconOption(label: "Moon", symbol: "moon.circle.fill"),
+    IconOption(label: "Sun", symbol: "sun.max.circle.fill"),
+    IconOption(label: "Cloud", symbol: "cloud.circle.fill"),
+    IconOption(label: "Gift", symbol: "gift.circle.fill"),
+    IconOption(label: "Trophy", symbol: "trophy.circle.fill"),
+    IconOption(label: "Gamepad", symbol: "gamecontroller.circle.fill"),
+    IconOption(label: "Hammer", symbol: "hammer.circle.fill"),
+    IconOption(label: "Trash", symbol: "trash.circle.fill"),
+    IconOption(label: "Pencil", symbol: "pencil.circle.fill"),
+    IconOption(label: "Envelope", symbol: "envelope.circle.fill"),
+    IconOption(label: "Paperplane", symbol: "paperplane.circle.fill"),
+    IconOption(label: "Calendar", symbol: "calendar.circle.fill"),
+    IconOption(label: "Book", symbol: "book.circle.fill"),
+    IconOption(label: "Photo", symbol: "photo.circle.fill"),
+    IconOption(label: "Play", symbol: "play.circle.fill"),
+    IconOption(label: "Speaker", symbol: "speaker.circle.fill"),
+    IconOption(label: "Airplane", symbol: "airplane.circle.fill"),
+    IconOption(label: "Car", symbol: "car.circle.fill"),
+    IconOption(label: "Bicycle", symbol: "bicycle.circle.fill"),
+    IconOption(label: "House", symbol: "house.circle.fill"),
+    IconOption(label: "Tram", symbol: "tram.circle.fill"),
+    IconOption(label: "Wifi", symbol: "wifi.circle.fill"),
+    IconOption(label: "Antenna", symbol: "antenna.radiowaves.left.and.right.circle.fill"),
+    IconOption(label: "At", symbol: "at.circle.fill"),
+    IconOption(label: "Number", symbol: "number.circle.fill"),
+    IconOption(label: "Plus", symbol: "plus.circle.fill"),
+    IconOption(label: "Minus", symbol: "minus.circle.fill"),
+    IconOption(label: "Equal", symbol: "equal.circle.fill"),
+    IconOption(label: "Checkmark", symbol: "checkmark.circle.fill"),
+    IconOption(label: "Question", symbol: "questionmark.circle.fill"),
+    IconOption(label: "Exclamation", symbol: "exclamationmark.circle.fill"),
+    IconOption(label: "Info", symbol: "info.circle.fill"),
+    IconOption(label: "Ellipsis", symbol: "ellipsis.circle.fill"),
   ]
 
   static let colorOptions: [ColorOption] = [
@@ -213,7 +288,9 @@ enum ProfileAppearancePalette {
     )
   }
 
-  private static func colorComponents(from hex: String) -> (red: Double, green: Double, blue: Double, alpha: Double)? {
+  private static func colorComponents(from hex: String) -> (
+    red: Double, green: Double, blue: Double, alpha: Double
+  )? {
     var string = hex.trimmingCharacters(in: .whitespacesAndNewlines)
     if string.hasPrefix("#") { string.removeFirst() }
     guard string.count == 6 || string.count == 8 else { return nil }
@@ -257,11 +334,11 @@ enum ProfileAppearancePalette {
 
   private static func overlayVariant(color: Color) -> Color {
     guard let cgColor = color.cgColor,
-          let components = cgColor.components
+      let components = cgColor.components
     else { return color }
 
     switch components.count {
-    case 2: // grayscale + alpha
+    case 2:  // grayscale + alpha
       let gray = Double(components[0])
       let alpha = Double(components[1])
       return overlayVariant(red: gray, green: gray, blue: gray, alpha: alpha)

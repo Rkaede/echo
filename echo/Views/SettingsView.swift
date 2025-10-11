@@ -129,16 +129,6 @@ struct GeneralSettingsView: View {
         LaunchAtLogin.Toggle()
       }
 
-      Section("Overlay") {
-        Toggle("Use new overlay", isOn: $settings.useOverlayV2)
-
-        Text(
-          "Switch back to the classic overlay if you run into any issues with the new design."
-        )
-        .font(.caption)
-        .foregroundColor(.secondary)
-      }
-
       Section("API Configuration") {
         SecureField("Groq API Key", text: $settings.apiKey)
           .textFieldStyle(.roundedBorder)
