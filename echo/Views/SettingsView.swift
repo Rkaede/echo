@@ -1,6 +1,6 @@
+import AVFoundation
 import AppKit
 import SwiftUI
-import AVFoundation
 
 // Helper to configure NSWindow for full height content
 struct FullHeightWindowConfigurator: NSViewRepresentable {
@@ -117,7 +117,6 @@ struct SettingsView: View {
   }
 }
 
-
 struct GeneralSettingsView: View {
   @EnvironmentObject private var updateManager: UpdateManager
   @Environment(\.openWindow) private var openWindow
@@ -168,11 +167,9 @@ struct GeneralSettingsView: View {
           }
         }
 
-        Text(
-          "Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")"
-        )
-        .font(.caption)
-        .foregroundColor(.secondary)
+        Text("Version \(Bundle.main.appVersion)")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
 
     }
@@ -253,14 +250,6 @@ private let relativeDateFormatter: RelativeDateTimeFormatter = {
 struct AboutView: View {
   @EnvironmentObject private var updateManager: UpdateManager
 
-  var appVersion: String {
-    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
-  }
-
-  var buildNumber: String {
-    Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
-  }
-
   var body: some View {
     VStack(spacing: 20) {
       // App Icon and Name
@@ -277,7 +266,7 @@ struct AboutView: View {
 
       // Version Information
       VStack(spacing: 8) {
-        Text("Version \(appVersion)")
+        Text("Version \(Bundle.main.appVersion)")
           .font(.system(.body, design: .monospaced))
 
         if let lastCheckDate = updateManager.lastUpdateCheckDate {
@@ -295,21 +284,21 @@ struct AboutView: View {
         Link("Report an Issue", destination: URL(string: "https://github.com/Rkaede/echo/issues")!)
           .font(.body)
       }
-      
+
       // Attribution
       VStack(spacing: 8) {
         Divider()
-        
+
         VStack(spacing: 4) {
           Text("Acknowledgments")
             .font(.headline)
             .fontWeight(.semibold)
-          
+
           VStack(spacing: 2) {
             Text("Sound effects obtained from")
               .font(.caption)
               .foregroundColor(.secondary)
-            
+
             Link("Zapsplat", destination: URL(string: "https://www.zapsplat.com")!)
               .font(.caption)
               .foregroundColor(.accentColor)
@@ -509,29 +498,29 @@ struct HistorySettingsView: View {
 struct SoundSettingsView: View {
   @ObservedObject private var settings = SettingsManager.shared
   @StateObject private var soundManager = SoundManager.shared
-  
+
   var body: some View {
     Form {
       Section("Sound Options") {
         Toggle("Enable sound effects", isOn: $settings.soundEnabled)
-        
+
         Text("Play sounds when recording starts and transcription completes")
           .font(.caption)
           .foregroundColor(.secondary)
       }
-      
+
       if settings.soundEnabled {
         Section("Sounds") {
           HStack {
             Text("Recording start:")
-            
+
             Spacer()
-            
+
             SoundPickerMenu(
               selection: $settings.recordingStartSound,
               label: "Recording Start Sound"
             )
-            
+
             if settings.recordingStartSound != "none" {
               Button(action: {
                 soundManager.testRecordingStartSound()
@@ -542,17 +531,17 @@ struct SoundSettingsView: View {
               .buttonStyle(.plain)
             }
           }
-          
+
           HStack {
             Text("Transcription complete:")
-            
+
             Spacer()
-            
+
             SoundPickerMenu(
               selection: $settings.transcriptionCompleteSound,
               label: "Transcription Complete Sound"
             )
-            
+
             if settings.transcriptionCompleteSound != "none" {
               Button(action: {
                 soundManager.testTranscriptionCompleteSound()
@@ -578,11 +567,11 @@ struct SoundPickerMenu: View {
   @StateObject private var soundManager = SoundManager.shared
   @State private var previewPlayer: AVAudioPlayer?
   @State private var hoverTask: Task<Void, Never>?
-  
+
   private var selectedOption: SoundOption? {
     SoundOption.allOptions.first { $0.id == selection }
   }
-  
+
   var body: some View {
     Menu {
       ForEach(SoundOption.allOptions, id: \.id) { sound in
@@ -600,12 +589,12 @@ struct SoundPickerMenu: View {
         .onHover { isHovering in
           // Cancel any existing hover task
           hoverTask?.cancel()
-          
+
           if isHovering && sound.id != "none" {
             // Start a new task with 500ms delay
             hoverTask = Task {
-              try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-              
+              try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+
               // Check if task was cancelled (user moved mouse away)
               if !Task.isCancelled {
                 await MainActor.run {
@@ -628,26 +617,29 @@ struct SoundPickerMenu: View {
     .menuStyle(.borderlessButton)
     .fixedSize()
   }
-  
+
   private func playPreviewSound(for soundId: String) {
     // Find the sound option
     guard let soundOption = SoundOption.allOptions.first(where: { $0.id == soundId }),
-          !soundOption.fileName.isEmpty else { 
-      return 
-    }
-    
-    // Extract filename without extension
-    let fileNameWithoutExtension = (soundOption.fileName as NSString).deletingPathExtension
-    
-    // Load the sound file from the main Resources folder
-    guard let soundURL = Bundle.main.url(forResource: fileNameWithoutExtension, withExtension: "mp3") else {
+      !soundOption.fileName.isEmpty
+    else {
       return
     }
-    
+
+    // Extract filename without extension
+    let fileNameWithoutExtension = (soundOption.fileName as NSString).deletingPathExtension
+
+    // Load the sound file from the main Resources folder
+    guard
+      let soundURL = Bundle.main.url(forResource: fileNameWithoutExtension, withExtension: "mp3")
+    else {
+      return
+    }
+
     // Play the sound on main thread to maintain reference
     do {
       previewPlayer = try AVAudioPlayer(contentsOf: soundURL)
-      previewPlayer?.volume = 0.5 // Lower volume for preview
+      previewPlayer?.volume = 0.5  // Lower volume for preview
       previewPlayer?.play()
     } catch {
       // Silently fail if sound can't be played

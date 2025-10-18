@@ -3,19 +3,27 @@ import SwiftUI
 
 struct Constants {
   struct Overlay {
-    static let idleWidth: CGFloat = 40
-    static let idleHeight: CGFloat = 10
+    // Overlay window now uses constant size (no idle/active size transitions)
+    // Window visibility is managed by hiding/showing instead of resizing
     static let activeWidth: CGFloat = 220
     static let activeHeight: CGFloat = 32
     static let previewFrameHeight: CGFloat = 54
+
+    // Deprecated - window no longer resizes, these are kept for reference only
+    static let idleWidth: CGFloat = 40
+    static let idleHeight: CGFloat = 10
   }
 
   struct Colors {
     static let muted = Color.gray.opacity(0.8)
     static let muted2 = Color(hue: 0.12, saturation: 0.04, brightness: 0.9)
+
     // overlay colors
     static let red = Color(red: 1.0, green: 0.0, blue: 0.29, opacity: 1.0)
     static let green = Color(red: 0.463, green: 1.0, blue: 0.114, opacity: 1.0)
+    static let bg = Color(red: 1.0, green: 1.0, blue: 1.0, opacity: 1)
+    static let bg2 = Color(red: 1.0, green: 1.0, blue: 1.0, opacity: 0.9)
+    static let text = Color(red: 0.1, green: 0.1, blue: 0.1, opacity: 0.8)
   }
 
   struct Windows {
@@ -31,3 +39,16 @@ struct Constants {
   }
 
 }
+
+// MARK: - Bundle Extension for Version Access
+
+extension Bundle {
+  var appVersion: String {
+    object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+  }
+
+  var buildNumber: String {
+    object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+  }
+}
+

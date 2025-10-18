@@ -141,21 +141,7 @@ struct ShortcutRecorderView: View {
   static func displayText(for shortcut: String) -> String {
     let parts = shortcut.split(separator: "+")
     let mapped = parts.map { part -> String in
-      switch part.lowercased() {
-      case "cmd": return "⌘"
-      case "ctrl": return "⌃"
-      case "alt": return "⌥"
-      case "shift": return "⇧"
-      case "return": return "↩︎"
-      case "tab": return "⇥"
-      case "space": return "Space"
-      case "delete": return "⌫"
-      case "left": return "←"
-      case "right": return "→"
-      case "up": return "↑"
-      case "down": return "↓"
-      default: return part.uppercased()
-      }
+      KeyCodeMapping.displaySymbol(for: String(part))
     }
     return mapped.joined(separator: " ")
   }
@@ -243,20 +229,9 @@ struct ShortcutRecorderView: View {
     }
 
     private static func keyRepresentation(for event: NSEvent) -> String? {
-      switch event.keyCode {
-      case 36: return "return"
-      case 48: return "tab"
-      case 49: return "space"
-      case 51: return "delete"
-      case 123: return "left"
-      case 124: return "right"
-      case 125: return "down"
-      case 126: return "up"
-      case 122...135:
-        let index = Int(event.keyCode) - 121
-        return "f\(index)"
-      default:
-        break
+      // Use centralized key code mapping
+      if let key = KeyCodeMapping.keyString(from: event.keyCode) {
+        return key
       }
 
       guard let characters = event.charactersIgnoringModifiers, !characters.isEmpty else {

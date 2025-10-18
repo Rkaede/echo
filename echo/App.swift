@@ -35,10 +35,12 @@ struct EchoApp: App {
     }
     .restorationBehavior(.disabled)
     .windowLevel(.floating)
-    .defaultSize(width: Constants.Windows.onboardingWidth, height: Constants.Windows.onboardingHeight)
+    .defaultSize(
+      width: Constants.Windows.onboardingWidth, height: Constants.Windows.onboardingHeight
+    )
     .defaultLaunchBehavior(settings.hasCompletedOnboarding ? .suppressed : .presented)
   }
-  
+
   private var settingsWindow: some Scene {
     Window("Settings", id: "settings") {
       SettingsView()
@@ -52,7 +54,7 @@ struct EchoApp: App {
     .defaultLaunchBehavior(.suppressed)
     .windowStyle(.hiddenTitleBar)
   }
-  
+
   private var historyWindow: some Scene {
     Window("Echo History", id: "history") {
       HistoryView()
@@ -62,12 +64,12 @@ struct EchoApp: App {
     .defaultSize(width: 900, height: 600)
     .defaultLaunchBehavior(.suppressed)
   }
-  
+
   private var overlayWindow: some Scene {
     Window("Overlay", id: "overlay") {
       VStack {
         Spacer()
-        OverlayViewV2(
+        OverlayView(
           status: appState.status,
           showingProfileName: appState.showingProfileName,
           showingProfileIconName: appState.showingProfileIconName,
@@ -85,6 +87,9 @@ struct EchoApp: App {
       .onAppear {
         configureOverlayWindow()
       }
+      .onChange(of: appState.status) { oldStatus, newStatus in
+        handleOverlayVisibility(oldStatus: oldStatus, newStatus: newStatus)
+      }
       .environmentObject(appState)
     }
     .windowStyle(.plain)
@@ -92,7 +97,7 @@ struct EchoApp: App {
     .defaultSize(width: 300, height: 72)
     .defaultLaunchBehavior(.presented)
   }
-  
+
   private var menuBarExtra: some Scene {
     MenuBarExtra("Echo", systemImage: "record.circle.fill") {
       menuContent
@@ -197,7 +202,7 @@ struct EchoApp: App {
       await viewModel.startRecordingOnly()
     }
   }
-  
+
   private func handlePushToTalkStop() {
     Task {
       print("App: Push-to-talk stop triggered via GlobalShortcutMonitor")
@@ -205,16 +210,16 @@ struct EchoApp: App {
       await viewModel.stopRecordingOnly()
     }
   }
-  
+
   private func handleCancelRecording() {
     Task {
       print("App: Escape key pressed - checking cancellation logic")
-      
+
       if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
         print("App: Opening overlay window for cancellation feedback")
         openWindow(id: "overlay")
       }
-      
+
       switch (appState.recordingMode, appState.status) {
       case (.toggle, .recording), (.toggle, .processing):
         if appState.status == .confirmingCancel {
@@ -232,22 +237,26 @@ struct EchoApp: App {
           print("App: Confirming cancellation")
           await viewModel.cancelRecording()
         } else {
-          print("App: Escape pressed but no applicable cancellation logic for mode: \(String(describing: appState.recordingMode)), status: \(appState.status)")
+          print(
+            "App: Escape pressed but no applicable cancellation logic for mode: \(String(describing: appState.recordingMode)), status: \(appState.status)"
+          )
         }
       }
     }
   }
-  
+
   private func handleSpaceChange() {
     print("App: Space changed - ensuring overlay window visibility")
-    
+
     // Wait a bit for space transition to complete, then reposition
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
       self.repositionOverlayWindow()
-      
+
       // Double-check that window is actually visible after repositioning
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-        if let window = self.overlayWindowRef ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
+        if let window = self.overlayWindowRef
+          ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
+        {
           if !window.isVisible {
             print("App: Overlay window not visible after space change - recreating")
             self.recreateOverlayWindow()
@@ -256,13 +265,16 @@ struct EchoApp: App {
       }
     }
   }
-  
+
   private func updateHistoryState() {
-    appState.updateHistoryState(count: historyManager.totalCount, recent: historyManager.recentTranscriptions)
+    appState.updateHistoryState(
+      count: historyManager.totalCount, recent: historyManager.recentTranscriptions)
   }
-  
+
   private func updateRecordingStateInGlobalShortcutMonitor() {
-    let isRecording = appState.status == .recording || appState.status == .processing || appState.status == .confirmingCancel
+    let isRecording =
+      appState.status == .recording || appState.status == .processing
+      || appState.status == .confirmingCancel
     globalShortcutMonitor.setRecording(isRecording)
   }
 
@@ -271,18 +283,51 @@ struct EchoApp: App {
     guard appState.status == .recording else { return }
 
     let previousProfile = profilesService.activeProfile
-    
+
     switch direction {
     case .next:
       profilesService.activateNextProfile()
     case .previous:
       profilesService.activatePreviousProfile()
     }
-    
+
     // Show profile switch feedback if profile changed
     if let newProfile = profilesService.activeProfile,
-       newProfile.id != previousProfile?.id {
+      newProfile.id != previousProfile?.id
+    {
       appState.showProfileSwitch(newProfile)
+    }
+  }
+
+  private func handleOverlayVisibility(oldStatus: RecordingStatus, newStatus: RecordingStatus) {
+    guard
+      let window = overlayWindowRef
+        ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
+    else {
+      return
+    }
+
+    if newStatus == .idle && oldStatus != .idle {
+      // Fade out to transparent when returning to idle (keep window visible)
+      print("App: Fading out overlay window to transparent")
+      NSAnimationContext.runAnimationGroup({ context in
+        context.duration = 0.3
+        window.animator().alphaValue = 0
+      })
+    } else if newStatus != .idle && oldStatus == .idle {
+      // Fade in and ensure proper window level for fullscreen compatibility
+      print("App: Showing overlay window with optimal level for fullscreen")
+
+      // Re-evaluate window level for fullscreen compatibility
+      let displayManagerInstance = DisplayManager.shared
+      let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
+      window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
+
+      NSAnimationContext.runAnimationGroup({ context in
+        context.duration = 0.2
+        window.animator().alphaValue = 1.0
+      })
+      repositionOverlayWindow()
     }
   }
 
@@ -301,7 +346,7 @@ struct EchoApp: App {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask = [.borderless, .nonactivatingPanel]
-        
+
         // Use dynamic window level based on current system state
         let displayManagerInstance = DisplayManager.shared
         let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
@@ -310,9 +355,9 @@ struct EchoApp: App {
         // Position window at bottom center of active screen
         let windowWidth: CGFloat = 300  // Increased for padding
         let windowHeight: CGFloat = 72
-        
+
         if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
-          windowWidth: windowWidth, 
+          windowWidth: windowWidth,
           windowHeight: windowHeight
         ) {
           window.setFrame(optimalPosition, display: true)
@@ -324,15 +369,23 @@ struct EchoApp: App {
         // Make window transparent
         window.isOpaque = false
         window.backgroundColor = NSColor.clear
-        
-        // Force window to front and ensure it's visible
-        window.orderFrontRegardless()
-        
+
         // Store reference to overlay window for repositioning
         self.overlayWindowRef = window
 
-        print("App: Configured overlay window")
-        
+        // Set initial opacity based on status, but keep window visible
+        // This ensures the window stays registered with macOS for fullscreen compatibility
+        if self.appState.status == .idle {
+          window.alphaValue = 0
+          print("App: Configured overlay window (transparent - status is idle)")
+        } else {
+          window.alphaValue = 1.0
+          print("App: Configured overlay window (visible - status is \(self.appState.status))")
+        }
+
+        // Always order window front to ensure proper level registration
+        window.orderFrontRegardless()
+
         // Initialize TempFileManager for cleanup
         tempFileManager.performStartupCleanup()
         tempFileManager.startPeriodicCleanup()
@@ -354,13 +407,15 @@ struct EchoApp: App {
       }
     }
   }
-  
+
   private func repositionOverlayWindow() {
     DispatchQueue.main.async {
-      if let window = self.overlayWindowRef ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
+      if let window = self.overlayWindowRef
+        ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
+      {
         let windowWidth: CGFloat = 300  // Increased for padding
         let windowHeight: CGFloat = 72
-        
+
         // Force re-application of collection behavior to ensure window joins new spaces
         window.collectionBehavior = [
           .canJoinAllSpaces,
@@ -368,23 +423,24 @@ struct EchoApp: App {
           .stationary,
           .ignoresCycle,
         ]
-        
+
         let displayManagerInstance = DisplayManager.shared
         if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
           windowWidth: windowWidth,
           windowHeight: windowHeight
         ) {
           window.setFrame(optimalPosition, display: true)
-          
+
           // Ensure window is visible on current space with dynamic level
           let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
           window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
-          
+
           // Force window to front with multiple strategies
           window.orderFrontRegardless()
           window.makeKeyAndOrderFront(nil)
-          
-          print("App: Repositioned overlay window to: \(optimalPosition) with level: \(optimalLevel)")
+
+          print(
+            "App: Repositioned overlay window to: \(optimalPosition) with level: \(optimalLevel)")
         } else {
           print("App: Warning - Could not determine optimal position for repositioning")
         }
@@ -395,39 +451,38 @@ struct EchoApp: App {
       }
     }
   }
-  
+
   private func recreateOverlayWindow() {
     print("App: Recreating overlay window to ensure visibility")
-    
+
     // Close existing overlay window if it exists
     if let existingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
       existingWindow.close()
       overlayWindowRef = nil
     }
-    
+
     // Small delay to ensure window is properly closed
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
       // Recreate overlay window
       self.openWindow(id: "overlay")
     }
   }
-  
+
   private func copyToClipboard(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
   }
-  
+
   private var menuContent: some View {
     Group {
       Button("History...") {
         openHistoryWindow()
       }
-      
+
       Button("Settings...") {
         openSettingsWindow()
       }
       .keyboardShortcut(",", modifiers: .command)
-      
 
       Divider()
 
@@ -443,7 +498,7 @@ struct EchoApp: App {
       .keyboardShortcut("q", modifiers: .command)
     }
   }
-  
+
   private var recentTranscriptionsMenu: some View {
     Menu("Recent Transcriptions") {
       ForEach(appState.recentTranscriptions.prefix(5)) { transcription in
@@ -459,15 +514,15 @@ struct EchoApp: App {
           }
         }
       }
-      
+
       Divider()
-      
+
       Button("View All History...") {
         openHistoryWindow()
       }
     }
   }
-  
+
   private func openHistoryWindow() {
     openWindow(id: "history")
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -477,17 +532,18 @@ struct EchoApp: App {
       }
     }
   }
-  
+
   private func openSettingsWindow() {
     openWindow(id: "settings")
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      if let settingsWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "settings" }) {
+      if let settingsWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "settings" })
+      {
         settingsWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
       }
     }
   }
-  
+
   private func checkForUpdates() {
     if updateManager == nil {
       updateManager = UpdateManager()

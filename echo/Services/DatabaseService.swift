@@ -297,5 +297,97 @@ actor DatabaseService {
             setUserVersion(version)
             print("DatabaseService: Migrated to schema v5 (error tracking)")
         }
+
+        if version < 6 {
+            // v6: Create transcription_history table and FTS5 support
+            let createTableSQL = """
+            CREATE TABLE IF NOT EXISTS transcription_history(
+                id TEXT PRIMARY KEY,
+                timestamp REAL NOT NULL,
+                transcribed_text TEXT NOT NULL,
+                duration REAL NOT NULL,
+                audio_file_reference TEXT,
+                language_detected TEXT,
+                model_used TEXT NOT NULL,
+                word_count INTEGER NOT NULL,
+                application_context TEXT,
+                upload_time REAL NOT NULL,
+                groq_processing_time REAL NOT NULL,
+                total_transcription_time REAL NOT NULL,
+                confidence REAL,
+                did_fail INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                error_category TEXT
+            );
+            """
+            _ = sqlite3_exec(db, createTableSQL, nil, nil, nil)
+
+            let createIndexSQL = "CREATE INDEX IF NOT EXISTS idx_timestamp ON transcription_history(timestamp DESC);"
+            _ = sqlite3_exec(db, createIndexSQL, nil, nil, nil)
+
+            let createTextIndexSQL = "CREATE INDEX IF NOT EXISTS idx_text ON transcription_history(transcribed_text);"
+            _ = sqlite3_exec(db, createTextIndexSQL, nil, nil, nil)
+
+            // Create FTS5 virtual table for full-text search
+            let createFTSSQL = """
+            CREATE VIRTUAL TABLE IF NOT EXISTS transcription_fts USING fts5(
+                transcribed_text,
+                application_context,
+                content='transcription_history',
+                content_rowid='rowid'
+            );
+            """
+            if sqlite3_exec(db, createFTSSQL, nil, nil, nil) == SQLITE_OK {
+                print("DatabaseService: FTS5 table created successfully")
+            } else {
+                print("DatabaseService: FTS5 table could not be created: \(String(cString: sqlite3_errmsg(db)))")
+            }
+
+            // Create triggers to keep FTS table in sync
+            let createTriggers = """
+            CREATE TRIGGER IF NOT EXISTS transcription_fts_insert AFTER INSERT ON transcription_history BEGIN
+                INSERT INTO transcription_fts(rowid, transcribed_text, application_context)
+                VALUES (new.rowid, new.transcribed_text, new.application_context);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS transcription_fts_delete AFTER DELETE ON transcription_history BEGIN
+                INSERT INTO transcription_fts(transcription_fts, rowid, transcribed_text, application_context)
+                VALUES('delete', old.rowid, old.transcribed_text, old.application_context);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS transcription_fts_update AFTER UPDATE ON transcription_history BEGIN
+                INSERT INTO transcription_fts(transcription_fts, rowid, transcribed_text, application_context)
+                VALUES('delete', old.rowid, old.transcribed_text, old.application_context);
+                INSERT INTO transcription_fts(rowid, transcribed_text, application_context)
+                VALUES (new.rowid, new.transcribed_text, new.application_context);
+            END;
+            """
+            if sqlite3_exec(db, createTriggers, nil, nil, nil) == SQLITE_OK {
+                print("DatabaseService: FTS5 triggers created successfully")
+            } else {
+                print("DatabaseService: FTS5 triggers could not be created: \(String(cString: sqlite3_errmsg(db)))")
+            }
+
+            // Populate FTS table with existing data if it's empty
+            let checkFTSSQL = "SELECT COUNT(*) FROM transcription_fts;"
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, checkFTSSQL, -1, &stmt, nil) == SQLITE_OK,
+               sqlite3_step(stmt) == SQLITE_ROW {
+                let ftsCount = sqlite3_column_int(stmt, 0)
+                if ftsCount == 0 {
+                    let rebuildFTSSQL = "INSERT INTO transcription_fts(transcription_fts) VALUES('rebuild');"
+                    if sqlite3_exec(db, rebuildFTSSQL, nil, nil, nil) == SQLITE_OK {
+                        print("DatabaseService: FTS5 table populated with existing data")
+                    } else {
+                        print("DatabaseService: Failed to populate FTS5 table: \(String(cString: sqlite3_errmsg(db)))")
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+
+            version = 6
+            setUserVersion(version)
+            print("DatabaseService: Migrated to schema v6 (transcription history)")
+        }
     }
 }

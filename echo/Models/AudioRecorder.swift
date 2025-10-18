@@ -1,6 +1,6 @@
 import AVFoundation
-import Foundation
 import CoreGraphics
+import Foundation
 
 @MainActor
 class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
@@ -16,10 +16,10 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private var audioFileURL: URL {
     let tempDirectory = FileManager.default.temporaryDirectory
     let echoDirectory = tempDirectory.appendingPathComponent("echo")
-    
+
     // Create echo directory if it doesn't exist
     try? FileManager.default.createDirectory(at: echoDirectory, withIntermediateDirectories: true)
-    
+
     let timestamp = Date().timeIntervalSince1970
     return echoDirectory.appendingPathComponent("recording_\(timestamp).wav")
   }
@@ -27,8 +27,9 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   override init() {
     super.init()
     // Don't check permissions on init - wait until explicitly requested
+    setupAudioDeviceChangeNotification()
   }
-  
+
   deinit {
     // Clean up any remaining recording file when AudioRecorder is deallocated
     if let url = currentRecordingURL {
@@ -37,12 +38,15 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
     meterUpdateTimer?.invalidate()
     meterUpdateTimer = nil
+
+    // Remove audio device change observer
+    NotificationCenter.default.removeObserver(self)
   }
 
   // Check current permission status without requesting
   func checkPermissionStatus() {
     guard !hasCheckedPermission else { return }
-    
+
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
     case .authorized:
       hasPermission = true
@@ -53,10 +57,10 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     @unknown default:
       hasPermission = false
     }
-    
+
     hasCheckedPermission = true
   }
-  
+
   // Request permission explicitly (called from onboarding or when recording)
   func requestPermission() async -> Bool {
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -93,10 +97,11 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     return defaultDevice.localizedName
   }
 
+
   func startRecording() async throws {
     // Ensure we've checked permissions
     checkPermissionStatus()
-    
+
     guard hasPermission else {
       throw RecordingError.noPermission
     }
@@ -155,6 +160,18 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         throw RecordingError.failedToStartRecording
       }
 
+      // Wait briefly to verify the recording actually started
+      // This prevents setting isRecording = true if the underlying audio system fails
+      try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+
+      // Verify the recorder is still active and recording
+      guard let recorder = audioRecorder, recorder.isRecording else {
+        print("AudioRecorder: Verification failed - recorder not actually recording")
+        audioRecorder = nil
+        throw RecordingError.failedToStartRecording
+      }
+
+      print("AudioRecorder: Recording verified as active")
       startMetering()
       recordingStartTime = Date()
       isRecording = true
@@ -185,16 +202,16 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
     return recordingURL
   }
-  
+
   func cancelRecording() async {
     print("AudioRecorder: Cancelling recording (isRecording: \(isRecording))")
-    
+
     if isRecording {
       audioRecorder?.stop()
       // Add a small delay to ensure the recording is properly finalized
       try? await Task.sleep(nanoseconds: 100_000_000)
     }
-    
+
     // Always clean up state, regardless of whether we were actually recording
     audioRecorder = nil
     isRecording = false
@@ -207,7 +224,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
     // Delete any recording file that might exist
     deleteRecording()
-    
+
     print("AudioRecorder: Recording cancellation completed")
   }
 
@@ -222,7 +239,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       currentRecordingURL = nil
     }
   }
-  
+
   private func cleanupFailedRecording() {
     if let url = currentRecordingURL {
       do {
@@ -238,7 +255,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private func startMetering() {
     audioRecorder?.isMeteringEnabled = true
     meterUpdateTimer?.invalidate()
-    meterUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+    meterUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
+      [weak self] _ in
       Task { @MainActor in
         guard let self else { return }
         guard let recorder = self.audioRecorder else {
@@ -267,11 +285,11 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private func normalizedLevel(from decibels: Float) -> CGFloat {
     let minDb: Float = -60  // Changed from -80 to -60 for better sensitivity
     let maxDb: Float = -10  // Cap at -10dB instead of 0dB for normal speech levels
-    
+
     if decibels <= minDb {
       return 0
     }
-    
+
     let clamped = min(max(decibels, minDb), maxDb)
     let normalized = (clamped - minDb) / (maxDb - minDb)
     return CGFloat(max(0, min(1, normalized)))
@@ -282,13 +300,13 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private func configureAudioSession() throws {
     // On macOS, AVAudioRecorder handles most audio configuration automatically.
     // However, we can perform basic validation to ensure the audio system is ready.
-    
+
     // Verify we have an available audio input device
     guard AVCaptureDevice.default(for: .audio) != nil else {
       print("No audio input device available")
       throw RecordingError.audioSessionConfigurationFailed
     }
-    
+
     // Additional macOS-specific audio setup could go here if needed
     // For now, we rely on AVAudioRecorder's built-in configuration
   }
@@ -296,6 +314,49 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private func deactivateAudioSession() {
     // On macOS, audio session cleanup is typically handled automatically
     // by AVAudioRecorder when it's deallocated. No explicit deactivation needed.
+  }
+
+  // MARK: - Audio Device Change Monitoring
+
+  private func setupAudioDeviceChangeNotification() {
+    // Monitor for audio input device changes (e.g., AirPods connecting/disconnecting)
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAudioDeviceChange),
+      name: AVCaptureDevice.wasConnectedNotification,
+      object: nil
+    )
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAudioDeviceChange),
+      name: AVCaptureDevice.wasDisconnectedNotification,
+      object: nil
+    )
+  }
+
+  @objc private func handleAudioDeviceChange(_ notification: Notification) {
+    Task { @MainActor in
+      // Only log device changes if we're actively recording
+      guard isRecording else { return }
+
+      if notification.name == AVCaptureDevice.wasDisconnectedNotification {
+        print("AudioRecorder: Audio input device was disconnected during recording")
+        // The recording will likely fail, but AVAudioRecorder will handle the error
+        // via audioRecorderEncodeErrorDidOccur delegate method
+      } else if notification.name == AVCaptureDevice.wasConnectedNotification {
+        print("AudioRecorder: New audio input device connected during recording")
+        // Continue with current recording - device changes mid-recording are rare
+        // and AVAudioRecorder should handle it gracefully
+      }
+
+      // Update the current device name in case it changed
+      if let device = notification.object as? AVCaptureDevice,
+        device.hasMediaType(.audio)
+      {
+        print("AudioRecorder: Device change: \(device.localizedName)")
+      }
+    }
   }
 
   // MARK: - AVAudioRecorderDelegate

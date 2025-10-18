@@ -1,2 +1,6 @@
 - do not to commit code unless asked
 - run xcodebuild to validate any changes
+
+
+- This is a MacOS app. Avoid iOS only api's such as the following:
+    - AVAudioSession

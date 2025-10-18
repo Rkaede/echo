@@ -85,8 +85,7 @@ The codebase follows MVVM pattern with clear separation:
    - `TranscriptionViewModel.swift` - Main workflow controller that coordinates recording, API calls, and pasting
 
 3. **Views/** - SwiftUI interfaces
-   - `OverlayView.swift` - Original floating status window (300x60 with padding for animations)
-   - `OverlayViewV2.swift` - New redesigned overlay with profile display and animations
+   - `OverlayView.swift` - Floating status window (300x60 with padding for animations)
    - `SettingsView.swift` - Main settings interface with tabs for API, profiles, and preferences
    - `ProfilesSettingsView.swift` - Profile management interface
    - `OnboardingView.swift` - First-time setup flow for permissions and API key
