@@ -4,31 +4,43 @@ import SwiftUI
 
 class UpdateManager: ObservableObject {
     private let updaterController: SPUStandardUpdaterController
-    
+    private var hasStarted = false
+
     @Published var automaticChecksEnabled: Bool {
         didSet {
             updaterController.updater.automaticallyChecksForUpdates = automaticChecksEnabled
         }
     }
-    
+
     @Published var canCheckForUpdates: Bool = false
-    
+
     var updater: SPUUpdater {
         updaterController.updater
     }
-    
-    init() {
+
+    init(startImmediately: Bool = false) {
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: startImmediately,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        
+
         self.automaticChecksEnabled = updaterController.updater.automaticallyChecksForUpdates
-        
+        self.hasStarted = startImmediately
+
         // Update canCheckForUpdates based on updater state
         Task { @MainActor in
             self.canCheckForUpdates = updaterController.updater.canCheckForUpdates
+        }
+    }
+
+    func startUpdater() {
+        guard !hasStarted else { return }
+        hasStarted = true
+        do {
+            try updaterController.updater.start()
+        } catch {
+            print("UpdateManager: Failed to start updater: \(error)")
         }
     }
     

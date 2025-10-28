@@ -49,6 +49,7 @@ enum RecordingMode {
 
 @MainActor
 class AppState: ObservableObject {
+    private let loggerCategory = "AppState"
 
     @Published var status: RecordingStatus = .idle
     @Published var transcriptionText: String = ""
@@ -60,21 +61,21 @@ class AppState: ObservableObject {
     @Published var showingProfileName: String? = nil
     @Published var showingProfileIconName: String? = nil
     @Published var showingProfileColorToken: String? = nil
-    
+
     @Published var isHistoryWindowOpen: Bool = false
     @Published var historyCount: Int = 0
     @Published var recentTranscriptions: [TranscriptionHistory] = []
-    
+
     private var confirmationTimeoutTask: Task<Void, Never>?
     private var _previousStatusBeforeConfirmation: RecordingStatus?
     private var profileDisplayTimeoutTask: Task<Void, Never>?
-    
+
     init() {}
     
     func updateStatus(_ newStatus: RecordingStatus) {
         // Prevent overwriting cancelled state unless transitioning to idle
         if status == .cancelled && newStatus != .idle {
-            print("AppState: Ignoring state change from cancelled to \(newStatus)")
+            log("Ignoring state change from cancelled to \(newStatus)", category: loggerCategory, level: .debug)
             return
         }
 
@@ -91,7 +92,7 @@ class AppState: ObservableObject {
             errorCategory = nil
         }
 
-        print("AppState: Status changing from \(status) to \(newStatus)")
+        log("Status changing from \(status) to \(newStatus)", category: loggerCategory, level: .info)
         status = newStatus
 
         // If status is inserted, cancelled, or error, automatically return to idle after delay
@@ -114,15 +115,15 @@ class AppState: ObservableObject {
     func setError(_ message: String) {
         // Prevent overwriting cancelled state with error
         if status == .cancelled {
-            print("AppState: Ignoring error '\(message)' due to cancelled state")
+            log("Ignoring error '\(message)' due to cancelled state", category: loggerCategory, level: .warning)
             return
         }
 
-        print("AppState: Setting error: \(message)")
+        log("Setting error: \(message)", category: loggerCategory, level: .error)
         errorMessage = message
         errorCategory = ErrorCategory.categorize(from: message)
         status = .error
-        print("AppState: Error categorized as: \(errorCategory?.rawValue ?? "Unknown")")
+        log("Error categorized as: \(errorCategory?.rawValue ?? "Unknown")", category: loggerCategory, level: .debug)
     }
 
     func clearError() {
@@ -136,14 +137,14 @@ class AppState: ObservableObject {
     func startConfirmingCancel() {
         // Only start confirmation if currently recording or processing in toggle mode
         guard recordingMode == .toggle && (status == .recording || status == .processing) else {
-            print("AppState: Cannot start confirmation - not in toggle mode or invalid status: \(status)")
+            log("Cannot start confirmation - not in toggle mode or invalid status: \(status)", category: loggerCategory, level: .debug)
             return
         }
-        
+
         _previousStatusBeforeConfirmation = status
         status = .confirmingCancel
-        
-        // Start 5-second timeout  
+
+        // Start 5-second timeout
         confirmationTimeoutTask = Task {
             do {
                 try await Task.sleep(nanoseconds: 5_000_000_000)
@@ -152,30 +153,30 @@ class AppState: ObservableObject {
                 // Task was cancelled, which is expected
             }
         }
-        
-        print("AppState: Started cancellation confirmation (5 second timeout)")
+
+        log("Started cancellation confirmation (5 second timeout)", category: loggerCategory, level: .info)
     }
-    
+
     func returnFromConfirmation() {
         guard status == .confirmingCancel else { return }
-        
+
         confirmationTimeoutTask?.cancel()
         confirmationTimeoutTask = nil
-        
+
         if let previousStatus = _previousStatusBeforeConfirmation {
-            print("AppState: Confirmation timed out, returning to \(previousStatus)")
+            log("Confirmation timed out, returning to \(previousStatus)", category: loggerCategory, level: .info)
             status = previousStatus
         } else {
-            print("AppState: Confirmation timed out, returning to recording")
+            log("Confirmation timed out, returning to recording", category: loggerCategory, level: .info)
             status = .recording
         }
-        
+
         _previousStatusBeforeConfirmation = nil
     }
-    
+
     func setRecordingMode(_ mode: RecordingMode) {
         recordingMode = mode
-        print("AppState: Recording mode set to \(mode)")
+        log("Recording mode set to \(mode)", category: loggerCategory, level: .info)
     }
     
     var previousStatusBeforeConfirmation: RecordingStatus? {
@@ -183,7 +184,7 @@ class AppState: ObservableObject {
     }
     
     func resetToIdle() {
-        print("AppState: Force resetting to idle state")
+        log("Force resetting to idle state", category: loggerCategory, level: .info)
         confirmationTimeoutTask?.cancel()
         confirmationTimeoutTask = nil
         profileDisplayTimeoutTask?.cancel()
@@ -211,15 +212,15 @@ class AppState: ObservableObject {
     func showProfileSwitch(_ profile: Profile) {
         // Cancel any existing profile display timeout
         profileDisplayTimeoutTask?.cancel()
-        
+
         // Show the profile name with a smooth transition
         withAnimation(.easeInOut(duration: 0.2)) {
             showingProfileName = profile.title
             showingProfileIconName = profile.iconName
             showingProfileColorToken = profile.iconColor
         }
-        print("AppState: Showing profile switch to: \(profile.title)")
-        
+        log("Showing profile switch to: \(profile.title)", category: loggerCategory, level: .info)
+
         // Set timeout to fade back to recording device after 2 seconds
         profileDisplayTimeoutTask = Task {
             do {
@@ -230,7 +231,7 @@ class AppState: ObservableObject {
                         self.showingProfileIconName = nil
                         self.showingProfileColorToken = nil
                     }
-                    print("AppState: Profile display timeout - returning to recording device")
+                    log("Profile display timeout - returning to recording device", category: self.loggerCategory, level: .debug)
                 }
             } catch {
                 // Task was cancelled, which is expected

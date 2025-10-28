@@ -102,12 +102,22 @@ struct OverlayView: View {
 
           // Waveform indicator - only show during recording and idle states when content is visible
           if shouldShowWaveform && showContent {
-            OverlayWaveformView(level: CGFloat(currentInputLevel))
-              .frame(width: 36, alignment: .trailing)
-              .padding(.trailing, 10)
+            HStack(spacing: 4) {
+              OverlayWaveformView(level: CGFloat(currentInputLevel))
+              #if DEBUG
+              // Temporary debug display - remove after testing
+              Text(String(format: "%.2f", currentInputLevel))
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.7))
+              #endif
+            }
+            .frame(width: 36, alignment: .trailing)
+            .background(Color.white.opacity(0.08))  // Faint background for testing visibility
+            .padding(.trailing, 10)
           } else {
             Spacer()
               .frame(width: 36, alignment: .trailing)
+              .background(Color.red)
               .padding(.trailing, 10)
           }
         }

@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct EchoApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
   @Environment(\.openWindow) private var openWindow
   @StateObject private var globalShortcutMonitor = GlobalShortcutMonitor.shared
   @StateObject private var appState: AppState
@@ -12,20 +13,20 @@ struct EchoApp: App {
   @StateObject private var tempFileManager = TempFileManager.shared
   @StateObject private var historyManager = HistoryManager.shared
   @StateObject private var profilesService = ProfilesService.shared
-  @State private var updateManager: UpdateManager?
-  @State private var overlayWindowRef: NSWindow?
+  @StateObject private var updateManager: UpdateManager
+  private var overlayPanel: OverlayPanel?
 
   init() {
     let appState = AppState()
     _appState = StateObject(wrappedValue: appState)
     _viewModel = StateObject(wrappedValue: TranscriptionViewModel(appState: appState))
+    _updateManager = StateObject(wrappedValue: UpdateManager(startImmediately: false))
   }
 
   var body: some Scene {
     onboardingWindow
     settingsWindow
     historyWindow
-    overlayWindow
     menuBarExtra
   }
 
@@ -44,15 +45,38 @@ struct EchoApp: App {
   private var settingsWindow: some Scene {
     Window("Settings", id: "settings") {
       SettingsView()
-        .environmentObject(updateManager ?? UpdateManager())
+        .environmentObject(updateManager)
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .onAppear {
+          createOverlayPanel()
+        }
     }
     .restorationBehavior(.disabled)
     .windowLevel(.floating)
     .defaultSize(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
     .defaultLaunchBehavior(.suppressed)
     .windowStyle(.hiddenTitleBar)
+    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) { _ in handleHotkeyToggle() }
+    .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) { _ in handlePushToTalkStart() }
+    .onChange(of: globalShortcutMonitor.shouldStopPushToTalk) { _ in handlePushToTalkStop() }
+    .onChange(of: displayManager.shouldRepositionOverlay) { _ in repositionOverlayPanel() }
+    .onChange(of: displayManager.spaceDidChange) { _ in handleSpaceChange() }
+    .onChange(of: globalShortcutMonitor.shouldCancelRecording) { _ in handleCancelRecording() }
+    .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) { _ in handleProfileSwitch(direction: .next) }
+    .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) { _ in handleProfileSwitch(direction: .previous) }
+    .onChange(of: historyManager.recentTranscriptions) { _ in updateHistoryState() }
+    .onChange(of: historyManager.totalCount) { _ in updateHistoryState() }
+    .onChange(of: appState.status) { old, new in
+      updateRecordingStateInGlobalShortcutMonitor()
+      handleOverlayVisibility(oldStatus: old, newStatus: new)
+    }
+    .onChange(of: profilesService.profiles) { _ in globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles) }
+    .onChange(of: globalShortcutMonitor.triggeredProfileId) { _, new in
+      if let profileId = new {
+        handleProfileShortcut(profileId: profileId)
+      }
+    }
   }
 
   private var historyWindow: some Scene {
@@ -65,88 +89,67 @@ struct EchoApp: App {
     .defaultLaunchBehavior(.suppressed)
   }
 
-  private var overlayWindow: some Scene {
-    Window("Overlay", id: "overlay") {
-      VStack {
-        Spacer()
-        OverlayView(
-          status: appState.status,
-          showingProfileName: appState.showingProfileName,
-          showingProfileIconName: appState.showingProfileIconName,
-          currentInputDevice: appState.currentInputDevice,
-          currentInputLevel: Float(appState.currentInputLevel),
-          activeProfileIconName: profilesService.activeProfile?.iconName,
-          errorCategory: appState.errorCategory
-        )
-        .padding(.horizontal, 20)
-        .padding(.bottom, 12)
-      }
-      .frame(width: 300, height: 72)
-      .background(Color.clear)
-      .ignoresSafeArea()
-      .onAppear {
-        configureOverlayWindow()
-      }
-      .onChange(of: appState.status) { oldStatus, newStatus in
-        handleOverlayVisibility(oldStatus: oldStatus, newStatus: newStatus)
-      }
-      .environmentObject(appState)
-    }
-    .windowStyle(.plain)
-    .windowLevel(.floating)
-    .defaultSize(width: 300, height: 72)
-    .defaultLaunchBehavior(.presented)
-  }
-
   private var menuBarExtra: some Scene {
     MenuBarExtra("Echo", systemImage: "record.circle.fill") {
       menuContent
     }
     .menuBarExtraStyle(.menu)
-    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) {
-      handleHotkeyToggle()
-    }
-    .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) {
-      handlePushToTalkStart()
-    }
-    .onChange(of: globalShortcutMonitor.shouldStopPushToTalk) {
-      handlePushToTalkStop()
-    }
-    .onChange(of: displayManager.shouldRepositionOverlay) {
-      repositionOverlayWindow()
-    }
-    .onChange(of: displayManager.spaceDidChange) {
-      handleSpaceChange()
-    }
-    .onChange(of: globalShortcutMonitor.shouldCancelRecording) {
-      handleCancelRecording()
-    }
-    .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) {
-      handleProfileSwitch(direction: .next)
-    }
-    .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) {
-      handleProfileSwitch(direction: .previous)
-    }
-    .onChange(of: historyManager.recentTranscriptions) {
-      updateHistoryState()
-    }
-    .onChange(of: historyManager.totalCount) {
-      updateHistoryState()
-    }
-    .onChange(of: appState.status) {
-      updateRecordingStateInGlobalShortcutMonitor()
-    }
-    .onChange(of: profilesService.profiles) {
-      globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles)
-    }
-    .onChange(of: globalShortcutMonitor.triggeredProfileId) {
-      if let profileId = globalShortcutMonitor.triggeredProfileId {
-        handleProfileShortcut(profileId: profileId)
+  }
+
+  // MARK: - Overlay Panel Management
+
+  private func createOverlayPanel() {
+    DispatchQueue.main.async {
+      // Create panel if it doesn't exist
+      if self.appDelegate.overlayPanel == nil {
+        print("App: Creating overlay panel programmatically for fullscreen compatibility")
+
+        let windowWidth: CGFloat = 300
+        let windowHeight: CGFloat = 72
+
+        // Get optimal position for overlay
+        let displayManagerInstance = DisplayManager.shared
+        let contentRect = displayManagerInstance.getOptimalOverlayPosition(
+          windowWidth: windowWidth,
+          windowHeight: windowHeight
+        ) ?? NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight)
+
+        // Create the overlay panel with SwiftUI content wrapper
+        let panel = OverlayPanel(contentRect: contentRect) {
+          OverlayContentView()
+            .environmentObject(self.appState)
+            .environmentObject(self.profilesService)
+        }
+
+        // Set initial opacity based on status
+        panel.alphaValue = self.appState.status == .idle ? 0 : 1.0
+
+        // Show the panel
+        panel.orderFrontRegardless()
+
+        // Store reference
+        self.appDelegate.overlayPanel = panel
+
+        print("App: Overlay panel created successfully with level \(panel.level.rawValue)")
+
+        // Initialize services after panel is created
+        self.tempFileManager.performStartupCleanup()
+        self.tempFileManager.startPeriodicCleanup()
+        self.globalShortcutMonitor.loadProfileShortcuts(from: self.profilesService.profiles)
+
+        // Start UpdateManager after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+          print("App: Starting UpdateManager's updater after overlay panel setup")
+          self.updateManager.startUpdater()
+        }
       }
     }
   }
 
   private func handleProfileShortcut(profileId: String) {
+    let startTime = Date()
+    print("App: [PERF] Profile shortcut handler started at \(startTime)")
+
     Task {
       print("App: Profile shortcut triggered for profile \(profileId)")
 
@@ -156,16 +159,17 @@ struct EchoApp: App {
       // Activate the profile
       profilesService.activateProfile(id: profileId)
 
-      if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
-        print("App: Opening overlay window")
-        openWindow(id: "overlay")
-      } else {
-        print("App: Overlay window already open")
-        repositionOverlayWindow()
-      }
+      // Ensure overlay panel is created
+      createOverlayPanel()
 
       print("App: Triggering recording toggle for profile shortcut")
+      let toggleStart = Date()
       await viewModel.toggleRecording()
+      let toggleDuration = Date().timeIntervalSince(toggleStart)
+      print("App: [PERF] toggleRecording took \(toggleDuration * 1000)ms")
+
+      let totalDuration = Date().timeIntervalSince(startTime)
+      print("App: [PERF] Profile shortcut handler total duration: \(totalDuration * 1000)ms")
     }
   }
 
@@ -173,13 +177,8 @@ struct EchoApp: App {
     Task {
       print("App: Toggle hotkey triggered - shouldTriggerRecording changed")
 
-      if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
-        print("App: Opening overlay window")
-        openWindow(id: "overlay")
-      } else {
-        print("App: Overlay window already open")
-        repositionOverlayWindow()
-      }
+      // Ensure overlay panel is created
+      createOverlayPanel()
 
       print("App: Triggering recording toggle")
       await viewModel.toggleRecording()
@@ -190,13 +189,8 @@ struct EchoApp: App {
     Task {
       print("App: Push-to-talk start triggered via GlobalShortcutMonitor")
 
-      if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
-        print("App: Opening overlay window for push-to-talk")
-        openWindow(id: "overlay")
-      } else {
-        print("App: Overlay window already open")
-        repositionOverlayWindow()
-      }
+      // Ensure overlay panel is created
+      createOverlayPanel()
 
       print("App: Starting push-to-talk recording")
       await viewModel.startRecordingOnly()
@@ -215,10 +209,8 @@ struct EchoApp: App {
     Task {
       print("App: Escape key pressed - checking cancellation logic")
 
-      if NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) == nil {
-        print("App: Opening overlay window for cancellation feedback")
-        openWindow(id: "overlay")
-      }
+      // Ensure overlay panel is created
+      createOverlayPanel()
 
       switch (appState.recordingMode, appState.status) {
       case (.toggle, .recording), (.toggle, .processing):
@@ -246,20 +238,19 @@ struct EchoApp: App {
   }
 
   private func handleSpaceChange() {
-    print("App: Space changed - ensuring overlay window visibility")
+    print("App: Space changed - ensuring overlay panel visibility")
 
     // Wait a bit for space transition to complete, then reposition
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-      self.repositionOverlayWindow()
+      self.repositionOverlayPanel()
 
-      // Double-check that window is actually visible after repositioning
+      // Double-check that panel is actually visible after repositioning
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-        if let window = self.overlayWindowRef
-          ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
-        {
-          if !window.isVisible {
-            print("App: Overlay window not visible after space change - recreating")
-            self.recreateOverlayWindow()
+        if let panel = self.appDelegate.overlayPanel {
+          if !panel.isVisible {
+            print("App: Overlay panel not visible after space change - recreating")
+            self.appDelegate.overlayPanel = nil
+            self.createOverlayPanel()
           }
         }
       }
@@ -300,171 +291,62 @@ struct EchoApp: App {
   }
 
   private func handleOverlayVisibility(oldStatus: RecordingStatus, newStatus: RecordingStatus) {
-    guard
-      let window = overlayWindowRef
-        ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
-    else {
+    let startTime = Date()
+    print("App: [PERF] handleOverlayVisibility started - oldStatus: \(oldStatus), newStatus: \(newStatus)")
+
+    guard let panel = appDelegate.overlayPanel else {
       return
     }
 
     if newStatus == .idle && oldStatus != .idle {
-      // Fade out to transparent when returning to idle (keep window visible)
-      print("App: Fading out overlay window to transparent")
+      // Fade out to transparent when returning to idle (keep panel visible for fullscreen)
+      print("App: Fading out overlay panel to transparent")
       NSAnimationContext.runAnimationGroup({ context in
         context.duration = 0.3
-        window.animator().alphaValue = 0
+        panel.animator().alphaValue = 0
       })
+      let duration = Date().timeIntervalSince(startTime)
+      print("App: [PERF] handleOverlayVisibility (fade out) took \(duration * 1000)ms")
     } else if newStatus != .idle && oldStatus == .idle {
-      // Fade in and ensure proper window level for fullscreen compatibility
-      print("App: Showing overlay window with optimal level for fullscreen")
-
-      // Re-evaluate window level for fullscreen compatibility
-      let displayManagerInstance = DisplayManager.shared
-      let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
-      window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
+      // Fade in - panel level is already set correctly
+      print("App: Showing overlay panel")
 
       NSAnimationContext.runAnimationGroup({ context in
         context.duration = 0.2
-        window.animator().alphaValue = 1.0
+        panel.animator().alphaValue = 1.0
       })
-      repositionOverlayWindow()
+
+      // Ensure panel is front
+      panel.orderFrontRegardless()
+
+      let totalDuration = Date().timeIntervalSince(startTime)
+      print("App: [PERF] handleOverlayVisibility (fade in) took \(totalDuration * 1000)ms")
     }
   }
 
-  private func configureOverlayWindow() {
+  private func repositionOverlayPanel() {
     DispatchQueue.main.async {
-      if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
-        // Essential: Set collection behavior for fullscreen and space support
-        window.collectionBehavior = [
-          .canJoinAllSpaces,
-          .fullScreenAuxiliary,
-          .stationary,
-          .ignoresCycle,
-        ]
-
-        // Remove title bar and make non-resizable
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask = [.borderless, .nonactivatingPanel]
-
-        // Use dynamic window level based on current system state
-        let displayManagerInstance = DisplayManager.shared
-        let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
-
-        // Position window at bottom center of active screen
-        let windowWidth: CGFloat = 300  // Increased for padding
-        let windowHeight: CGFloat = 72
-
-        if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
-          windowWidth: windowWidth,
-          windowHeight: windowHeight
-        ) {
-          window.setFrame(optimalPosition, display: true)
-          print("App: Positioned overlay window at optimal location: \(optimalPosition)")
-        } else {
-          print("App: Warning - Could not determine optimal overlay position")
-        }
-
-        // Make window transparent
-        window.isOpaque = false
-        window.backgroundColor = NSColor.clear
-
-        // Store reference to overlay window for repositioning
-        self.overlayWindowRef = window
-
-        // Set initial opacity based on status, but keep window visible
-        // This ensures the window stays registered with macOS for fullscreen compatibility
-        if self.appState.status == .idle {
-          window.alphaValue = 0
-          print("App: Configured overlay window (transparent - status is idle)")
-        } else {
-          window.alphaValue = 1.0
-          print("App: Configured overlay window (visible - status is \(self.appState.status))")
-        }
-
-        // Always order window front to ensure proper level registration
-        window.orderFrontRegardless()
-
-        // Initialize TempFileManager for cleanup
-        tempFileManager.performStartupCleanup()
-        tempFileManager.startPeriodicCleanup()
-
-        // Load profile shortcuts into GlobalShortcutMonitor
-        globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles)
-
-        // Initialize UpdateManager after overlay window is fully configured
-        // This delay ensures that the Sparkle framework's SPUStandardUpdaterController
-        // doesn't interfere with the overlay window's level and fullscreen behavior.
-        // When Sparkle initializes with startingUpdater: true, it can modify window
-        // management behaviors that prevent our overlay from appearing above fullscreen apps.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-          if self.updateManager == nil {
-            print("App: Initializing UpdateManager after overlay window setup")
-            self.updateManager = UpdateManager()
-          }
-        }
+      guard let panel = self.appDelegate.overlayPanel else {
+        print("App: Warning - Overlay panel not found for repositioning, creating it")
+        self.createOverlayPanel()
+        return
       }
-    }
-  }
 
-  private func repositionOverlayWindow() {
-    DispatchQueue.main.async {
-      if let window = self.overlayWindowRef
-        ?? NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" })
-      {
-        let windowWidth: CGFloat = 300  // Increased for padding
-        let windowHeight: CGFloat = 72
+      let windowWidth: CGFloat = 300
+      let windowHeight: CGFloat = 72
 
-        // Force re-application of collection behavior to ensure window joins new spaces
-        window.collectionBehavior = [
-          .canJoinAllSpaces,
-          .fullScreenAuxiliary,
-          .stationary,
-          .ignoresCycle,
-        ]
+      let displayManagerInstance = DisplayManager.shared
+      if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
+        windowWidth: windowWidth,
+        windowHeight: windowHeight
+      ) {
+        panel.setFrame(optimalPosition, display: true)
+        panel.orderFrontRegardless()
 
-        let displayManagerInstance = DisplayManager.shared
-        if let optimalPosition = displayManagerInstance.getOptimalOverlayPosition(
-          windowWidth: windowWidth,
-          windowHeight: windowHeight
-        ) {
-          window.setFrame(optimalPosition, display: true)
-
-          // Ensure window is visible on current space with dynamic level
-          let optimalLevel = displayManagerInstance.getOptimalWindowLevel()
-          window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(optimalLevel)))
-
-          // Force window to front with multiple strategies
-          window.orderFrontRegardless()
-          window.makeKeyAndOrderFront(nil)
-
-          print(
-            "App: Repositioned overlay window to: \(optimalPosition) with level: \(optimalLevel)")
-        } else {
-          print("App: Warning - Could not determine optimal position for repositioning")
-        }
+        print("App: Repositioned overlay panel to: \(optimalPosition)")
       } else {
-        print("App: Warning - Overlay window not found for repositioning")
-        // If window is not found, try to recreate it
-        self.recreateOverlayWindow()
+        print("App: Warning - Could not determine optimal position for repositioning")
       }
-    }
-  }
-
-  private func recreateOverlayWindow() {
-    print("App: Recreating overlay window to ensure visibility")
-
-    // Close existing overlay window if it exists
-    if let existingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "overlay" }) {
-      existingWindow.close()
-      overlayWindowRef = nil
-    }
-
-    // Small delay to ensure window is properly closed
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      // Recreate overlay window
-      self.openWindow(id: "overlay")
     }
   }
 
@@ -545,10 +427,7 @@ struct EchoApp: App {
   }
 
   private func checkForUpdates() {
-    if updateManager == nil {
-      updateManager = UpdateManager()
-    }
-    updateManager?.checkForUpdates()
+    updateManager.checkForUpdates()
   }
 
 }

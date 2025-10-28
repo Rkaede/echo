@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 class TranscriptionService: ObservableObject {
   private let settingsManager = SettingsManager.shared
-  private let audioRecorder = AudioRecorder()
+  private let audioRecorder = AudioRecorderAdapter()
   private let apiClient = GroqAPIClient.shared
   private let profilesService = ProfilesService.shared
   private let postProcessor = PostProcessingService.shared
@@ -13,6 +13,7 @@ class TranscriptionService: ObservableObject {
   private let pasteService = PasteService.shared
   private let historyManager = HistoryManager.shared
   private let soundManager = SoundManager.shared
+  private let loggerCategory = "TranscriptionService"
 
   private var cancellables = Set<AnyCancellable>()
   private var isCancelled = false
@@ -29,12 +30,24 @@ class TranscriptionService: ObservableObject {
         self?.appState.currentInputLevel = level
       }
       .store(in: &cancellables)
+    
+    // Monitor initiating state changes
+    audioRecorder.$isInitiating
+      .sink { [weak self] isInitiating in
+        guard let self = self else { return }
+        // Update app state when transitioning to/from initiating
+        if isInitiating && self.appState.status != .initiatingRecording {
+          self.appState.updateStatus(.initiatingRecording)
+        }
+      }
+      .store(in: &cancellables)
   }
 
   // MARK: - Public Interface
 
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
-    print("TranscriptionService: startRecording called with mode: \(mode)")
+    log("------------------------------------------------------", category: loggerCategory, level: .info)
+    log("startRecording called with mode: \(mode)", category: loggerCategory, level: .info)
 
     // Reset cancellation flag for new recording
     isCancelled = false
@@ -47,32 +60,32 @@ class TranscriptionService: ObservableObject {
     appState.transcriptionText = ""
 
     // Ensure API key is loaded before starting recording
-    print("TranscriptionService: Ensuring API key is loaded...")
+    log("Ensuring API key is loaded...", category: loggerCategory, level: .debug)
     settingsManager.ensureAPIKeyLoaded()
 
     // Check if we have an API key after loading
     guard settingsManager.hasAPIKey else {
-      print("TranscriptionService: No API key found! Please configure in Settings.")
+      log("No API key found! Please configure in Settings.", category: loggerCategory, level: .error)
       let error = TranscriptionError.noAPIKey
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
-    print("TranscriptionService: API key found, proceeding with recording...")
+    log("API key found, proceeding with recording...", category: loggerCategory, level: .debug)
 
     // Request microphone permission if needed
-    print("TranscriptionService: Requesting microphone permission...")
+    log("Requesting microphone permission...", category: loggerCategory, level: .debug)
     let hasAudioPermission = await audioRecorder.requestPermission()
-    print("TranscriptionService: Microphone permission result: \(hasAudioPermission)")
+    log("Microphone permission result: \(hasAudioPermission)", category: loggerCategory, level: .info)
 
     guard hasAudioPermission else {
-      print("TranscriptionService: No microphone permission, showing error")
+      log("No microphone permission, showing error", category: loggerCategory, level: .error)
       let error = TranscriptionError.noMicrophonePermission
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
 
     do {
-      print("TranscriptionService: Have permission, starting recording")
+      log("Have permission, starting recording", category: loggerCategory, level: .info)
 
       // Start recording FIRST (before playing any sounds)
       // This configures the audio device for input mode
@@ -82,7 +95,7 @@ class TranscriptionService: ObservableObject {
       // Update current input device in AppState
       appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
 
-      print("TranscriptionService: Recording started successfully")
+      log("Recording started successfully", category: loggerCategory, level: .info)
       appState.updateStatus(.recording)
 
       // Wait 200-300ms for Bluetooth device to stabilize in input mode
@@ -97,17 +110,17 @@ class TranscriptionService: ObservableObject {
       return .success(())
 
     } catch {
-      print("TranscriptionService: Failed to start recording: \(error)")
+      log("Failed to start recording: \(error)", category: loggerCategory, level: .error)
 
       // If we get an "already recording" error, try to clean up and reset
       if let recordingError = error as? RecordingError, recordingError == .alreadyRecording {
-        print("TranscriptionService: Already recording error detected, attempting cleanup")
+        log("Already recording error detected, attempting cleanup", category: loggerCategory, level: .warning)
         await audioRecorder.cancelRecording()
         appState.resetToIdle()
 
         // Try once more after cleanup
         do {
-          print("TranscriptionService: Retrying recording after cleanup")
+          log("Retrying recording after cleanup", category: loggerCategory, level: .info)
           recordingStartTime = Date()
           try await audioRecorder.startRecording()
           appState.currentInputDevice = audioRecorder.getCurrentInputDevice()
@@ -115,7 +128,7 @@ class TranscriptionService: ObservableObject {
 
           return .success(())
         } catch {
-          print("TranscriptionService: Retry also failed: \(error)")
+          log("Retry also failed: \(error)", category: loggerCategory, level: .error)
         }
       }
 
@@ -126,17 +139,17 @@ class TranscriptionService: ObservableObject {
   }
 
   func stopRecordingAndTranscribe() async -> TranscriptionServiceResult {
-    print("TranscriptionService: Stopping recording")
+    log("Stopping recording", category: loggerCategory, level: .info)
     let recordingEndTime = Date()
 
     guard let audioFileURL = await audioRecorder.stopRecording() else {
-      print("TranscriptionService: Failed to stop recording")
+      log("Failed to stop recording", category: loggerCategory, level: .error)
       let error = TranscriptionError.recordingStopFailed
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
 
-    print("TranscriptionService: Recording stopped, file at: \(audioFileURL)")
+    log("Recording stopped, file at: \(audioFileURL)", category: loggerCategory, level: .info)
     appState.updateStatus(.processing)
 
     // Calculate recording duration
@@ -151,7 +164,7 @@ class TranscriptionService: ObservableObject {
     }
 
     do {
-      print("TranscriptionService: Starting transcription")
+      log("Starting transcription", category: loggerCategory, level: .info)
       transcriptionStartTime = Date()
       let uploadStartTime = Date()
 
@@ -172,13 +185,14 @@ class TranscriptionService: ObservableObject {
       // Legacy uploadTime calculation (for backward compatibility)
       let legacyUploadTime = transcriptionEndTime.timeIntervalSince(uploadStartTime)
 
-      print(
-        "TranscriptionService: Transcription completed: '\(resultWithTiming.result.text.prefix(50))...'"
+      log(
+        "Transcription completed: '\(resultWithTiming.result.text.prefix(50))...'",
+        category: loggerCategory, level: .info
       )
 
       // Check if cancelled after API call completes
       if isCancelled {
-        print("TranscriptionService: Ignoring transcription result due to cancellation")
+        log("Ignoring transcription result due to cancellation", category: loggerCategory, level: .warning)
         return .success(())
       }
 
@@ -187,7 +201,7 @@ class TranscriptionService: ObservableObject {
 
       // Save successful transcription to history if enabled
       if !transcribedText.isEmpty && settingsManager.enableHistory {
-        print("TranscriptionService: Preparing to save transcription to history")
+        log("Preparing to save transcription to history", category: loggerCategory, level: .debug)
 
         // Generate ID for this history entry
         let historyEntryId = UUID()
@@ -199,9 +213,9 @@ class TranscriptionService: ObservableObject {
             from: audioFileURL, transcriptionId: historyEntryId)
 
           if audioFileReference != nil {
-            print("TranscriptionService: Saved audio file for history entry")
+            log("Saved audio file for history entry", category: loggerCategory, level: .debug)
           } else {
-            print("TranscriptionService: Failed to save audio file, continuing without audio")
+            log("Failed to save audio file, continuing without audio", category: loggerCategory, level: .warning)
           }
         }
 
@@ -222,18 +236,20 @@ class TranscriptionService: ObservableObject {
         )
 
         historyManager.saveTranscription(historyEntry)
-        print(
-          "TranscriptionService: Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")"
+        log(
+          "Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")",
+          category: loggerCategory, level: .info
         )
       } else {
-        print(
-          "TranscriptionService: History save skipped - isEmpty: \(!transcribedText.isEmpty), enableHistory: \(settingsManager.enableHistory)"
+        log(
+          "History save skipped - isEmpty: \(!transcribedText.isEmpty), enableHistory: \(settingsManager.enableHistory)",
+          category: loggerCategory, level: .debug
         )
       }
 
       // Check cancellation before auto-paste
       if isCancelled {
-        print("TranscriptionService: Skipping auto-paste due to cancellation")
+        log("Skipping auto-paste due to cancellation", category: loggerCategory, level: .warning)
         return .success(())
       }
 
@@ -258,7 +274,7 @@ class TranscriptionService: ObservableObject {
             appState.transcriptionText = processed
           }
         } catch {
-          print("TranscriptionService: Post-processing failed: \(error)")
+          log("Post-processing failed: \(error)", category: loggerCategory, level: .warning)
           // Fall back to raw text; proceed without blocking
         }
       }
@@ -267,28 +283,29 @@ class TranscriptionService: ObservableObject {
       if !finalText.isEmpty {
         let pasteSuccess = await performAutoPaste(text: finalText)
         if !pasteSuccess {
-          print("TranscriptionService: Auto-paste failed, but transcription succeeded")
+          log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
         } else {
           // Play completion sound only if paste was successful
           soundManager.playTranscriptionCompleteSound()
         }
       } else {
-        print("TranscriptionService: No text to paste (empty result)")
+        log("No text to paste (empty result)", category: loggerCategory, level: .warning)
       }
 
       // Final check before marking as inserted
       if isCancelled {
-        print("TranscriptionService: Skipping completion status due to cancellation")
+        log("Skipping completion status due to cancellation", category: loggerCategory, level: .warning)
         return .success(())
       }
 
       appState.updateStatus(.inserted)
-      print("TranscriptionService: Transcription workflow completed")
+      log("Transcription workflow completed", category: loggerCategory, level: .info)
+      log("------------------------------------------------------", category: loggerCategory, level: .info)
 
       return .success(())
 
     } catch {
-      print("TranscriptionService: Transcription failed: \(error)")
+      log("Transcription failed: \(error)", category: loggerCategory, level: .error)
       let transcriptionError = TranscriptionError.transcriptionFailed(error)
       appState.setError(transcriptionError.localizedDescription)
       return .failure(transcriptionError)
@@ -296,7 +313,7 @@ class TranscriptionService: ObservableObject {
   }
 
   func cancelRecording() async -> TranscriptionServiceResult {
-    print("TranscriptionService: Cancelling recording")
+    log("Cancelling recording", category: loggerCategory, level: .info)
 
     // Mark as cancelled to prevent completion of ongoing operations
     isCancelled = true
@@ -305,39 +322,40 @@ class TranscriptionService: ObservableObject {
     case .recording:
       // Cancel active recording
       await audioRecorder.cancelRecording()
-      print("TranscriptionService: Active recording cancelled")
+      log("Active recording cancelled", category: loggerCategory, level: .info)
 
     case .processing:
       // For processing state, we can't cancel the API call, but we'll ignore the result
-      print("TranscriptionService: Cannot cancel API transcription in progress, will ignore result")
+      log("Cannot cancel API transcription in progress, will ignore result", category: loggerCategory, level: .warning)
 
     case .confirmingCancel:
       // For confirming cancel, we need to check what the previous state was
       if let previousStatus = appState.previousStatusBeforeConfirmation {
-        print(
-          "TranscriptionService: Cancelling from confirmation, previous state was: \(previousStatus)"
+        log(
+          "Cancelling from confirmation, previous state was: \(previousStatus)",
+          category: loggerCategory, level: .debug
         )
         if previousStatus == .recording {
           // We were recording, so cancel the recording
           await audioRecorder.cancelRecording()
-          print("TranscriptionService: Cancelled active recording from confirmation")
+          log("Cancelled active recording from confirmation", category: loggerCategory, level: .info)
         } else {
           // We were processing, just mark as cancelled
-          print("TranscriptionService: Cancelled processing from confirmation")
+          log("Cancelled processing from confirmation", category: loggerCategory, level: .info)
         }
       } else {
         // Fallback: assume we were recording and try to cancel
-        print("TranscriptionService: No previous status found, assuming recording state")
+        log("No previous status found, assuming recording state", category: loggerCategory, level: .warning)
         await audioRecorder.cancelRecording()
       }
 
     default:
-      print("TranscriptionService: No active recording to cancel (status: \(appState.status))")
+      log("No active recording to cancel (status: \(appState.status))", category: loggerCategory, level: .debug)
     }
 
     // Update app state to cancelled
     appState.updateStatus(.cancelled)
-    print("TranscriptionService: Recording cancelled")
+    log("Recording cancelled", category: loggerCategory, level: .info)
 
     return .success(())
   }
@@ -352,32 +370,32 @@ class TranscriptionService: ObservableObject {
   }
 
   private func performAutoPaste(text: String) async -> Bool {
-    print("TranscriptionService: Attempting to paste transcribed text")
+    log("Attempting to paste transcribed text", category: loggerCategory, level: .debug)
 
     // Check and request accessibility permissions if needed
     if !pasteService.checkAccessibilityPermissions() {
-      print("TranscriptionService: No accessibility permissions, requesting...")
+      log("No accessibility permissions, requesting...", category: loggerCategory, level: .warning)
       // Request permission - this should show the system prompt
       let granted = pasteService.promptForAccessibilityPermission()
       if !granted {
-        print("TranscriptionService: Accessibility permission denied")
+        log("Accessibility permission denied", category: loggerCategory, level: .error)
         appState.setError(
           "Please grant accessibility permissions in System Settings to enable auto-paste")
         // Also open the preferences to make it easier
         pasteService.openAccessibilityPreferences()
         return false
       } else {
-        print("TranscriptionService: Accessibility permission granted, attempting paste")
+        log("Accessibility permission granted, attempting paste", category: loggerCategory, level: .info)
         let success = await pasteService.pasteToFocusedApp(
           text, restoreClipboard: settingsManager.restoreClipboard)
-        print("TranscriptionService: Paste success: \(success)")
+        log("Paste success: \(success)", category: loggerCategory, level: .info)
         return success
       }
     } else {
-      print("TranscriptionService: Accessibility permissions already granted, pasting")
+      log("Accessibility permissions already granted, pasting", category: loggerCategory, level: .debug)
       let success = await pasteService.pasteToFocusedApp(
         text, restoreClipboard: settingsManager.restoreClipboard)
-      print("TranscriptionService: Paste success: \(success)")
+      log("Paste success: \(success)", category: loggerCategory, level: .info)
       return success
     }
   }

@@ -4,38 +4,39 @@ import Foundation
 
 class PasteService {
   static let shared = PasteService()
-  
+  private let loggerCategory = "PasteService"
+
   private var savedClipboardContent: String?
 
   private init() {}
 
   func pasteToFocusedApp(_ text: String, restoreClipboard: Bool = true) async -> Bool {
-    print("PasteService: Attempting to paste text: '\(text.prefix(50))...'")
+    log("Attempting to paste text: '\(text.prefix(50))...'", category: loggerCategory, level: .debug)
 
     // Check for accessibility permissions
     guard checkAccessibilityPermissions() else {
-      print("PasteService: Accessibility permissions not granted")
+      log("Accessibility permissions not granted", category: loggerCategory, level: .error)
       return false
     }
 
-    print("PasteService: Accessibility permissions confirmed")
+    log("Accessibility permissions confirmed", category: loggerCategory, level: .debug)
 
     // Save current clipboard content if restoration is enabled
     if restoreClipboard {
       savedClipboardContent = NSPasteboard.general.string(forType: .string)
-      print("PasteService: Saved clipboard content for restoration")
+      log("Saved clipboard content for restoration", category: loggerCategory, level: .debug)
     }
 
     // Copy text to clipboard
     NSPasteboard.general.clearContents()
     let success = NSPasteboard.general.setString(text, forType: .string)
-    print("PasteService: Clipboard set successfully: \(success)")
+    log("Clipboard set successfully: \(success)", category: loggerCategory, level: .debug)
 
     // Small delay to ensure clipboard is ready
     try? await Task.sleep(nanoseconds: 100_000_000)
 
     // Simulate paste
-    print("PasteService: Simulating Cmd+V paste")
+    log("Simulating Cmd+V paste", category: loggerCategory, level: .info)
     await simulatePaste()
 
     // Restore clipboard if enabled and we have saved content
@@ -45,18 +46,18 @@ class PasteService {
       await restoreSavedClipboard()
     }
 
-    print("PasteService: Paste operation completed")
+    log("Paste operation completed", category: loggerCategory, level: .info)
     return true
   }
 
   private func simulatePaste() async {
-    print("PasteService: Creating event source")
+    log("Creating event source", category: loggerCategory, level: .debug)
     guard let source = CGEventSource(stateID: .combinedSessionState) else {
-      print("PasteService: Failed to create event source")
+      log("Failed to create event source", category: loggerCategory, level: .error)
       return
     }
 
-    print("PasteService: Creating key down event")
+    log("Creating key down event", category: loggerCategory, level: .debug)
     // Key down event for 'v' with Cmd modifier
     guard
       let keyDown = CGEvent(
@@ -64,12 +65,12 @@ class PasteService {
         virtualKey: 0x09,  // 'v' key code
         keyDown: true)
     else {
-      print("PasteService: Failed to create key down event")
+      log("Failed to create key down event", category: loggerCategory, level: .error)
       return
     }
     keyDown.flags = .maskCommand
 
-    print("PasteService: Creating key up event")
+    log("Creating key up event", category: loggerCategory, level: .debug)
     // Key up event for 'v' with Cmd modifier
     guard
       let keyUp = CGEvent(
@@ -77,57 +78,57 @@ class PasteService {
         virtualKey: 0x09,  // 'v' key code
         keyDown: false)
     else {
-      print("PasteService: Failed to create key up event")
+      log("Failed to create key up event", category: loggerCategory, level: .error)
       return
     }
     keyUp.flags = .maskCommand
 
     // Post the events
-    print("PasteService: Posting key down event")
+    log("Posting key down event", category: loggerCategory, level: .debug)
     keyDown.post(tap: .cghidEventTap)
     try? await Task.sleep(nanoseconds: 10_000_000)
-    print("PasteService: Posting key up event")
+    log("Posting key up event", category: loggerCategory, level: .debug)
     keyUp.post(tap: .cghidEventTap)
-    print("PasteService: Key events posted successfully")
+    log("Key events posted successfully", category: loggerCategory, level: .debug)
   }
 
   func checkAccessibilityPermissions() -> Bool {
     let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): false]
     let hasPermission = AXIsProcessTrustedWithOptions(options)
-    print("PasteService: Accessibility permission status: \(hasPermission)")
+    log("Accessibility permission status: \(hasPermission)", category: loggerCategory, level: .debug)
     return hasPermission
   }
 
   func promptForAccessibilityPermission() -> Bool {
-    print("PasteService: Prompting for accessibility permission")
+    log("Prompting for accessibility permission", category: loggerCategory, level: .info)
     let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
     let hasPermission = AXIsProcessTrustedWithOptions(options)
-    print("PasteService: Accessibility permission after prompt: \(hasPermission)")
+    log("Accessibility permission after prompt: \(hasPermission)", category: loggerCategory, level: .info)
     return hasPermission
   }
 
   func openAccessibilityPreferences() {
-    print("PasteService: Opening accessibility preferences")
+    log("Opening accessibility preferences", category: loggerCategory, level: .info)
     if let url = URL(
       string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
     {
       NSWorkspace.shared.open(url)
-      print("PasteService: Successfully opened accessibility preferences")
+      log("Successfully opened accessibility preferences", category: loggerCategory, level: .debug)
     } else {
-      print("PasteService: Failed to create URL for accessibility preferences")
+      log("Failed to create URL for accessibility preferences", category: loggerCategory, level: .error)
     }
   }
-  
+
   private func restoreSavedClipboard() async {
     guard let savedContent = savedClipboardContent else {
-      print("PasteService: No saved clipboard content to restore")
+      log("No saved clipboard content to restore", category: loggerCategory, level: .debug)
       return
     }
-    
+
     NSPasteboard.general.clearContents()
     let success = NSPasteboard.general.setString(savedContent, forType: .string)
-    print("PasteService: Clipboard restored successfully: \(success)")
-    
+    log("Clipboard restored successfully: \(success)", category: loggerCategory, level: .debug)
+
     // Clear the saved content after restoration
     savedClipboardContent = nil
   }

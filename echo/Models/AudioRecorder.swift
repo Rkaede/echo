@@ -1,13 +1,14 @@
 import AVFoundation
+import Combine
 import CoreGraphics
 import Foundation
 
 @MainActor
-class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
-  private var audioRecorder: AVAudioRecorder?
+class AudioRecorder: NSObject, ObservableObject {
+  private let unifiedEngine = UnifiedAudioEngine.shared
   private var recordingStartTime: Date?
   private var hasCheckedPermission = false
-  private var meterUpdateTimer: Timer?
+  private var cancellables = Set<AnyCancellable>()
 
   @Published var isRecording = false
   @Published var hasPermission = false
@@ -28,19 +29,20 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     super.init()
     // Don't check permissions on init - wait until explicitly requested
     setupAudioDeviceChangeNotification()
+
+    // Subscribe to unified engine's level updates
+    unifiedEngine.$currentInputLevel
+      .sink { [weak self] level in
+        self?.currentLevel = level
+      }
+      .store(in: &cancellables)
   }
 
   deinit {
-    // Clean up any remaining recording file when AudioRecorder is deallocated
-    if let url = currentRecordingURL {
-      try? FileManager.default.removeItem(at: url)
-      print("AudioRecorder: Cleaned up recording file in deinit: \(url)")
-    }
-    meterUpdateTimer?.invalidate()
-    meterUpdateTimer = nil
-
     // Remove audio device change observer
     NotificationCenter.default.removeObserver(self)
+
+    // Note: Can't call async methods in deinit, so cleanup is handled by UnifiedAudioEngine
   }
 
   // Check current permission status without requesting
@@ -99,6 +101,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
 
   func startRecording() async throws {
+    print("AudioRecorder: Starting recording via UnifiedAudioEngine")
+
     // Ensure we've checked permissions
     checkPermissionStatus()
 
@@ -113,91 +117,42 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     // Configure audio session for recording
     try configureAudioSession()
 
-    // Stop any existing recorder first
-    audioRecorder?.stop()
-    audioRecorder = nil
-
-    // Add a small delay to allow the audio system to reset
-    try await Task.sleep(nanoseconds: 10_000_000)
-
-    let settings: [String: Any] = [
-      AVFormatIDKey: Int(kAudioFormatLinearPCM),
-      AVSampleRateKey: 16000.0,
-      AVNumberOfChannelsKey: 1,
-      AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-      AVLinearPCMBitDepthKey: 16,
-      AVLinearPCMIsFloatKey: false,
-      AVLinearPCMIsBigEndianKey: false,
-      AVLinearPCMIsNonInterleaved: false,
-    ]
-
     currentRecordingURL = audioFileURL
 
     guard let recordingURL = currentRecordingURL else {
       throw RecordingError.failedToCreateFile
     }
 
-    // Ensure cleanup happens on any failure after this point
-    defer {
-      if !isRecording {
-        // If we failed to start recording, clean up the file
-        cleanupFailedRecording()
-      }
-    }
-
     do {
-      audioRecorder = try AVAudioRecorder(url: recordingURL, settings: settings)
-      audioRecorder?.delegate = self
-      audioRecorder?.isMeteringEnabled = true
-
-      // Prepare to record with retry logic
-      if audioRecorder?.prepareToRecord() != true {
-        print("Warning: prepareToRecord failed, attempting to continue")
-      }
-
-      guard audioRecorder?.record() == true else {
-        audioRecorder = nil
-        throw RecordingError.failedToStartRecording
-      }
+      // Start recording via unified engine
+      try unifiedEngine.startRecording(to: recordingURL)
 
       // Wait briefly to verify the recording actually started
-      // This prevents setting isRecording = true if the underlying audio system fails
       try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
 
-      // Verify the recorder is still active and recording
-      guard let recorder = audioRecorder, recorder.isRecording else {
-        print("AudioRecorder: Verification failed - recorder not actually recording")
-        audioRecorder = nil
-        throw RecordingError.failedToStartRecording
-      }
-
-      print("AudioRecorder: Recording verified as active")
-      startMetering()
       recordingStartTime = Date()
       isRecording = true
 
+      print("AudioRecorder: Recording started successfully via UnifiedAudioEngine")
+
     } catch {
-      audioRecorder = nil
-      print("Audio recording setup error: \(error)")
+      currentRecordingURL = nil
+      print("AudioRecorder: Failed to start recording: \(error)")
       throw RecordingError.failedToStartRecording
     }
   }
 
   func stopRecording() async -> URL? {
+    print("AudioRecorder: Stopping recording")
     guard isRecording else { return nil }
 
-    let recordingURL = currentRecordingURL
+    let recordingURL = await unifiedEngine.stopRecording()
 
-    audioRecorder?.stop()
-    // Add a small delay to ensure the recording is properly finalized
-    try? await Task.sleep(nanoseconds: 100_000_000)
-    audioRecorder = nil
     isRecording = false
     recordingStartTime = nil
+    currentRecordingURL = nil
 
-    stopMetering()
-
-    // Audio cleanup is handled automatically by AVAudioRecorder on macOS
+    // Audio cleanup is handled by UnifiedAudioEngine
     deactivateAudioSession()
 
     return recordingURL
@@ -207,23 +162,16 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     print("AudioRecorder: Cancelling recording (isRecording: \(isRecording))")
 
     if isRecording {
-      audioRecorder?.stop()
-      // Add a small delay to ensure the recording is properly finalized
-      try? await Task.sleep(nanoseconds: 100_000_000)
+      await unifiedEngine.cancelRecording()
     }
 
-    // Always clean up state, regardless of whether we were actually recording
-    audioRecorder = nil
+    // Always clean up state
     isRecording = false
     recordingStartTime = nil
+    currentRecordingURL = nil
 
-    stopMetering()
-
-    // Audio cleanup is handled automatically by AVAudioRecorder on macOS
+    // Audio cleanup is handled by UnifiedAudioEngine
     deactivateAudioSession()
-
-    // Delete any recording file that might exist
-    deleteRecording()
 
     print("AudioRecorder: Recording cancellation completed")
   }
@@ -252,48 +200,6 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
   }
 
-  private func startMetering() {
-    audioRecorder?.isMeteringEnabled = true
-    meterUpdateTimer?.invalidate()
-    meterUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
-      [weak self] _ in
-      Task { @MainActor in
-        guard let self else { return }
-        guard let recorder = self.audioRecorder else {
-          self.currentLevel = 0
-          return
-        }
-        recorder.updateMeters()
-        let averagePower = recorder.averagePower(forChannel: 0)
-        let normalized = self.normalizedLevel(from: averagePower)
-        let smoothing: CGFloat = 0.2
-        let smoothed = smoothing * normalized + (1 - smoothing) * self.currentLevel
-        self.currentLevel = smoothed.isNaN ? 0 : smoothed
-      }
-    }
-    if let timer = meterUpdateTimer {
-      RunLoop.main.add(timer, forMode: .common)
-    }
-  }
-
-  private func stopMetering() {
-    meterUpdateTimer?.invalidate()
-    meterUpdateTimer = nil
-    currentLevel = 0
-  }
-
-  private func normalizedLevel(from decibels: Float) -> CGFloat {
-    let minDb: Float = -60  // Changed from -80 to -60 for better sensitivity
-    let maxDb: Float = -10  // Cap at -10dB instead of 0dB for normal speech levels
-
-    if decibels <= minDb {
-      return 0
-    }
-
-    let clamped = min(max(decibels, minDb), maxDb)
-    let normalized = (clamped - minDb) / (maxDb - minDb)
-    return CGFloat(max(0, min(1, normalized)))
-  }
 
   // MARK: - Audio Configuration
 
@@ -359,33 +265,6 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
   }
 
-  // MARK: - AVAudioRecorderDelegate
-
-  nonisolated func audioRecorderDidFinishRecording(
-    _ recorder: AVAudioRecorder,
-    successfully flag: Bool
-  ) {
-    Task { @MainActor in
-      if !flag {
-        isRecording = false
-        recordingStartTime = nil
-      }
-    }
-  }
-
-  nonisolated func audioRecorderEncodeErrorDidOccur(
-    _ recorder: AVAudioRecorder,
-    error: Error?
-  ) {
-    Task { @MainActor in
-      isRecording = false
-      recordingStartTime = nil
-      stopMetering()
-      if let error = error {
-        print("Recording encode error: \(error)")
-      }
-    }
-  }
 }
 
 enum RecordingError: LocalizedError {

@@ -54,9 +54,89 @@ xcodebuild -scheme Echo test
 
 ## Testing
 
-Tests are configured using Swift Testing framework (Apple's new testing framework) but not yet implemented. Test targets exist:
-- `EchoTests` - Unit tests
-- `EchoUITests` - UI tests
+The project uses **Swift Testing framework** (Apple's modern testing framework introduced in Swift 5.9+). Tests are implemented for core logic and state management.
+
+### Test Structure
+
+**Test Targets:**
+- `EchoTests` - Unit tests for business logic and state management
+- `EchoUITests` - UI tests (not yet implemented)
+
+**Current Test Coverage:**
+- `UnifiedAudioEngineTests.swift` - Comprehensive tests for the audio engine
+  - Error enum descriptions and LocalizedError conformance
+  - Sound type enum validation
+  - State management (singleton, recording state, invalid inputs)
+  - Buffer calculation logic (frame capacity, safety margins)
+  - File cleanup operations
+  - Thread safety validation (basic concurrent access)
+  - Audio format validation (16kHz mono PCM)
+  - Level monitoring calculations (RMS to dB conversion, normalization)
+
+**Setup Instructions:**
+See `EchoTests/README.md` for detailed setup instructions for adding the test target to Xcode.
+
+### Running Tests
+
+**Command Line:**
+```bash
+# Run all tests
+xcodebuild -scheme Echo test
+
+# Run with code coverage
+xcodebuild -scheme Echo test -enableCodeCoverage YES
+
+# Run specific test suite
+xcodebuild -scheme Echo test -only-testing:EchoTests/UnifiedAudioEngineTests
+```
+
+**Xcode:**
+- Press `Cmd + U` to run all tests
+- Click the diamond icon next to individual tests to run them
+- View results in Test Navigator (`Cmd + 6`)
+
+### Testing Limitations
+
+The current tests focus on **testable logic without hardware dependencies**:
+
+✅ **What IS Tested:**
+- Pure logic (calculations, state management, error handling)
+- Public API behavior (error cases, state validation)
+- Thread safety at a basic level
+
+❌ **What is NOT Tested** (requires hardware/mocking):
+- Actual audio recording/playback with AVAudioEngine
+- Microphone permission flows
+- Audio tap callbacks (run on separate threads)
+- Real-time format conversion
+- Bluetooth device switching
+- Live audio level monitoring accuracy
+
+### Future Testing Improvements
+
+To test hardware-dependent features, the codebase would need:
+1. **Protocol-based dependency injection** for AVAudioEngine
+2. **Mock implementations** of audio components
+3. **Integration test environment** with microphone permissions
+4. **UI tests** for end-to-end recording workflows
+
+### Adding New Tests
+
+Follow the Swift Testing framework conventions:
+
+```swift
+import Testing
+@testable import Echo
+
+@MainActor
+@Suite("My Test Suite")
+struct MyTests {
+  @Test("Description of what this tests")
+  func myTest() async throws {
+    #expect(actualValue == expectedValue)
+  }
+}
+```
 
 Run tests with Cmd+U in Xcode or `xcodebuild -scheme Echo test`.
 
@@ -98,6 +178,7 @@ The codebase follows MVVM pattern with clear separation:
    - `SettingsManager.swift` - UserDefaults for non-sensitive preferences
    - `KeychainManager.swift` - Secure API key storage in macOS Keychain
    - `TranscriptionService.swift` - Coordinates recording and transcription
+   - `UnifiedAudioEngine.swift` - Production-ready audio engine with thread-safe recording/playback (fully tested)
    - `DisplayManager.swift` - Multi-monitor support and overlay positioning
    - `UpdateManager.swift` - Sparkle framework integration for auto-updates
    - `TempFileManager.swift` - Manages temporary audio file cleanup and periodic maintenance
@@ -257,6 +338,17 @@ Package resolution stored in `Package.resolved`.
 3. Update `HistoryView.swift` for UI enhancements
 4. Consider `AudioStorageManager.swift` for audio-related features
 
+### To add tests:
+1. Create test file in `EchoTests/` directory (e.g., `MyServiceTests.swift`)
+2. Use Swift Testing framework with `@Test` and `#expect()`
+3. Mark test classes/structs with `@Suite("Test Suite Name")`
+4. Use `@MainActor` for tests that need main actor isolation
+5. Import module with `@testable import Echo`
+6. Add test file to EchoTests target in Xcode
+7. Run tests with `Cmd+U` or `xcodebuild -scheme Echo test`
+
+See `EchoTests/UnifiedAudioEngineTests.swift` for a comprehensive example.
+
 ### To release a new version:
 1. Update version in `Info.plist` (`CFBundleShortVersionString` and `CFBundleVersion`)
 2. Run automated release script: `./scripts/release.sh`
@@ -274,3 +366,4 @@ The `scripts/release.sh` script automates the complete release workflow:
 - DMG creation and signing
 - Sparkle appcast XML generation
 - GitHub release creation with artifacts
+

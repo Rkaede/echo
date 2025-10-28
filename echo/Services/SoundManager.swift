@@ -20,8 +20,7 @@ struct SoundOption {
 class SoundManager: ObservableObject {
   static let shared = SoundManager()
 
-  private var recordingStartPlayer: AVAudioPlayer?
-  private var transcriptionCompletePlayer: AVAudioPlayer?
+  private let unifiedEngine = UnifiedAudioEngine.shared
   private let settingsManager = SettingsManager.shared
 
   // Track currently loaded sounds
@@ -64,14 +63,16 @@ class SoundManager: ObservableObject {
       return
     }
 
-    // Handle "none" option by clearing the player
+    // Handle "none" option by clearing the sound
     if soundId == "none" {
+      let engineType: SoundType
       switch playerType {
       case .recordingStart:
-        recordingStartPlayer = nil
+        engineType = .recordingStart
       case .transcriptionComplete:
-        transcriptionCompletePlayer = nil
+        engineType = .transcriptionComplete
       }
+      unifiedEngine.clearSound(type: engineType)
       return
     }
 
@@ -89,7 +90,16 @@ class SoundManager: ObservableObject {
     print(
       "SoundManager: Loading sound \(soundOption.label) for \(playerType == .recordingStart ? "recording start" : "transcription complete") from: \(soundURL)"
     )
-    loadPlayerFromURL(soundURL, forPlayer: playerType)
+
+    // Preload sound into unified engine
+    let engineType: SoundType
+    switch playerType {
+    case .recordingStart:
+      engineType = .recordingStart
+    case .transcriptionComplete:
+      engineType = .transcriptionComplete
+    }
+    unifiedEngine.preloadSound(from: soundURL, for: engineType)
 
     // Update the currently loaded sound ID
     switch playerType {
@@ -109,29 +119,16 @@ class SoundManager: ObservableObject {
       return nil
     }
 
-    guard let player = recordingStartPlayer else {
-      print("SoundManager: Recording start player not available")
+    print("SoundManager: Playing recording start sound via UnifiedAudioEngine")
+
+    // Play sound via unified engine
+    unifiedEngine.playSound(type: .recordingStart) {
       completion?()
-      return nil
     }
 
-    let duration = player.duration
-
-    // Play sound on main thread (AVAudioPlayer is not thread-safe)
-    player.currentTime = 0
-    player.play()
-    print("SoundManager: Played recording start sound (duration: \(duration)s)")
-
-    // Call completion callback if provided
-    if let completion = completion {
-      // Schedule completion after sound finishes
-      Task { @MainActor in
-        try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-        completion()
-      }
-    }
-
-    return duration
+    // Return approximate duration (we can't get exact duration from buffer easily)
+    // For short notification sounds, this is typically 0.1-0.3 seconds
+    return 0.2
   }
 
   func playTranscriptionCompleteSound() {
@@ -139,33 +136,30 @@ class SoundManager: ObservableObject {
       return
     }
 
-    guard let player = transcriptionCompletePlayer else {
-      print("SoundManager: Transcription complete player not available")
-      return
-    }
+    print("SoundManager: Playing transcription complete sound via UnifiedAudioEngine")
 
-    // Play sound on main thread (AVAudioPlayer is not thread-safe)
-    player.currentTime = 0
-    player.play()
-    print("SoundManager: Played transcription complete sound")
+    // Play sound via unified engine
+    unifiedEngine.playSound(type: .transcriptionComplete)
   }
 
   // MARK: - Volume Control
+  // Note: Volume control is currently not implemented for UnifiedAudioEngine
+  // The AVAudioPlayerNode in the engine plays at the system volume level
+  // Future enhancement: Use AVAudioUnitEQ or AVAudioMixerNode for volume control
 
   func setVolume(_ volume: Float) {
-    let clampedVolume = max(0.0, min(1.0, volume))
-    recordingStartPlayer?.volume = clampedVolume
-    transcriptionCompletePlayer?.volume = clampedVolume
+    // TODO: Implement volume control via AVAudioMixerNode or AVAudioUnitEQ
+    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
   }
 
   func setRecordingStartVolume(_ volume: Float) {
-    let clampedVolume = max(0.0, min(1.0, volume))
-    recordingStartPlayer?.volume = clampedVolume
+    // TODO: Implement volume control
+    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
   }
 
   func setTranscriptionCompleteVolume(_ volume: Float) {
-    let clampedVolume = max(0.0, min(1.0, volume))
-    transcriptionCompletePlayer?.volume = clampedVolume
+    // TODO: Implement volume control
+    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
   }
 
   // MARK: - Testing
@@ -179,20 +173,8 @@ class SoundManager: ObservableObject {
       return
     }
 
-    // If player is not loaded, load it temporarily for testing
-    if recordingStartPlayer == nil {
-      loadSound(forSoundId: soundId, forPlayer: .recordingStart)
-    }
-
-    guard let player = recordingStartPlayer else {
-      print("SoundManager: Recording start player not available for testing")
-      return
-    }
-
-    // Play sound on main thread (AVAudioPlayer is not thread-safe)
-    player.currentTime = 0
-    player.play()
-    print("SoundManager: Testing recording start sound")
+    print("SoundManager: Testing recording start sound via UnifiedAudioEngine")
+    unifiedEngine.playSound(type: .recordingStart)
   }
 
   func testTranscriptionCompleteSound() {
@@ -204,20 +186,8 @@ class SoundManager: ObservableObject {
       return
     }
 
-    // If player is not loaded, load it temporarily for testing
-    if transcriptionCompletePlayer == nil {
-      loadSound(forSoundId: soundId, forPlayer: .transcriptionComplete)
-    }
-
-    guard let player = transcriptionCompletePlayer else {
-      print("SoundManager: Transcription complete player not available for testing")
-      return
-    }
-
-    // Play sound on main thread (AVAudioPlayer is not thread-safe)
-    player.currentTime = 0
-    player.play()
-    print("SoundManager: Testing transcription complete sound")
+    print("SoundManager: Testing transcription complete sound via UnifiedAudioEngine")
+    unifiedEngine.playSound(type: .transcriptionComplete)
   }
 
   // MARK: - Sound Selection Observer
@@ -250,25 +220,4 @@ class SoundManager: ObservableObject {
     }
   }
 
-  // Load a specific player from URL
-  private func loadPlayerFromURL(_ soundURL: URL, forPlayer playerType: PlayerType) {
-    do {
-      let player = try AVAudioPlayer(contentsOf: soundURL)
-      player.prepareToPlay()
-      player.volume = 0.6
-
-      switch playerType {
-      case .recordingStart:
-        recordingStartPlayer = player
-      case .transcriptionComplete:
-        transcriptionCompletePlayer = player
-      }
-
-      print(
-        "SoundManager: Successfully loaded \(playerType == .recordingStart ? "recording start" : "transcription complete") sound"
-      )
-    } catch {
-      print("SoundManager: Failed to load sound: \(error)")
-    }
-  }
 }
