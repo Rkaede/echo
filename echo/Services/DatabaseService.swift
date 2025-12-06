@@ -317,7 +317,10 @@ actor DatabaseService {
                 confidence REAL,
                 did_fail INTEGER NOT NULL DEFAULT 0,
                 error_message TEXT,
-                error_category TEXT
+                error_category TEXT,
+                pure_upload_time REAL NOT NULL DEFAULT 0,
+                download_time REAL NOT NULL DEFAULT 0,
+                total_network_time REAL NOT NULL DEFAULT 0
             );
             """
             _ = sqlite3_exec(db, createTableSQL, nil, nil, nil)
@@ -388,6 +391,49 @@ actor DatabaseService {
             version = 6
             setUserVersion(version)
             print("DatabaseService: Migrated to schema v6 (transcription history)")
+        }
+
+        if version < 7 {
+            // v7: Add network timing columns to transcription_history table
+            var pureUploadTimeExists = false
+            var downloadTimeExists = false
+            var totalNetworkTimeExists = false
+
+            var infoStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "PRAGMA table_info(transcription_history);", -1, &infoStmt, nil) == SQLITE_OK {
+                while sqlite3_step(infoStmt) == SQLITE_ROW {
+                    if let namePtr = sqlite3_column_text(infoStmt, 1) {
+                        let name = String(cString: namePtr)
+                        if name == "pure_upload_time" {
+                            pureUploadTimeExists = true
+                        } else if name == "download_time" {
+                            downloadTimeExists = true
+                        } else if name == "total_network_time" {
+                            totalNetworkTimeExists = true
+                        }
+                    }
+                }
+            }
+            sqlite3_finalize(infoStmt)
+
+            if !pureUploadTimeExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN pure_upload_time REAL NOT NULL DEFAULT 0;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            if !downloadTimeExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN download_time REAL NOT NULL DEFAULT 0;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            if !totalNetworkTimeExists {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN total_network_time REAL NOT NULL DEFAULT 0;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+
+            version = 7
+            setUserVersion(version)
+            print("DatabaseService: Migrated to schema v7 (network timing fields)")
         }
     }
 }

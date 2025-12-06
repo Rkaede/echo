@@ -19,14 +19,15 @@ class AudioStorageManager: ObservableObject {
     }
     
     /// Returns the currently configured storage directory
+    /// - Note: For security-scoped bookmark URLs, caller must manage access with withSecurityScopedStorageAccess()
     func getCurrentStorageDirectory() -> URL {
         let settingsManager = SettingsManager.shared
-        
-        // Try to resolve security-scoped bookmark first
+
+        // Try to resolve security-scoped bookmark first (does not start accessing)
         if let bookmarkURL = settingsManager.resolveAudioStorageDirectory() {
             return bookmarkURL
         }
-        
+
         // Fallback to path-based access (for existing installations or non-sandboxed)
         if !settingsManager.audioStoragePath.isEmpty {
             let customURL = URL(fileURLWithPath: settingsManager.audioStoragePath)
@@ -34,21 +35,41 @@ class AudioStorageManager: ObservableObject {
                 return customURL
             }
         }
-        
+
         return defaultStorageDirectory
+    }
+
+    /// Executes an operation with proper security-scoped access to the storage directory
+    /// - Parameter operation: The closure to execute with the storage directory URL
+    /// - Returns: The result of the operation
+    /// - Note: Automatically handles security-scoped resource access when using bookmark-based custom directory
+    private func withSecurityScopedStorageAccess<T>(_ operation: (URL) throws -> T) rethrows -> T {
+        let settingsManager = SettingsManager.shared
+
+        // If we have a security-scoped bookmark, use it with proper access management
+        if !settingsManager.audioStorageBookmark.isEmpty {
+            if let result = try settingsManager.withSecurityScopedAccess(operation) {
+                return result
+            }
+            // If bookmark access failed, fall through to default directory
+        }
+
+        // Otherwise, use the current directory (default or path-based) directly
+        let directory = getCurrentStorageDirectory()
+        return try operation(directory)
     }
     
     /// Creates the storage directory if it doesn't exist
     private func ensureStorageDirectoryExists() throws {
-        let storageDirectory = getCurrentStorageDirectory()
-        
-        if !FileManager.default.fileExists(atPath: storageDirectory.path) {
-            try FileManager.default.createDirectory(
-                at: storageDirectory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o755]
-            )
-            print("AudioStorageManager: Created storage directory at \(storageDirectory.path)")
+        try withSecurityScopedStorageAccess { storageDirectory in
+            if !FileManager.default.fileExists(atPath: storageDirectory.path) {
+                try FileManager.default.createDirectory(
+                    at: storageDirectory,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o755]
+                )
+                print("AudioStorageManager: Created storage directory at \(storageDirectory.path)")
+            }
         }
     }
     
@@ -62,18 +83,19 @@ class AudioStorageManager: ObservableObject {
     func saveAudioFile(from tempURL: URL, transcriptionId: UUID) -> String? {
         do {
             try ensureStorageDirectoryExists()
-            
-            let storageDirectory = getCurrentStorageDirectory()
-            let timestamp = Date().timeIntervalSince1970
-            let filename = "\(transcriptionId.uuidString)_\(Int(timestamp)).wav"
-            let permanentURL = storageDirectory.appendingPathComponent(filename)
-            
-            // Copy file from temp to permanent location
-            try FileManager.default.copyItem(at: tempURL, to: permanentURL)
-            
-            print("AudioStorageManager: Saved audio file to \(permanentURL.path)")
-            return filename // Return relative path for storage in database
-            
+
+            return try withSecurityScopedStorageAccess { storageDirectory in
+                let timestamp = Date().timeIntervalSince1970
+                let filename = "\(transcriptionId.uuidString)_\(Int(timestamp)).wav"
+                let permanentURL = storageDirectory.appendingPathComponent(filename)
+
+                // Copy file from temp to permanent location
+                try FileManager.default.copyItem(at: tempURL, to: permanentURL)
+
+                print("AudioStorageManager: Saved audio file to \(permanentURL.path)")
+                return filename // Return relative path for storage in database
+            }
+
         } catch {
             print("AudioStorageManager: Failed to save audio file: \(error)")
             return nil
@@ -85,33 +107,35 @@ class AudioStorageManager: ObservableObject {
     /// - Returns: The full URL to the audio file, or nil if file doesn't exist
     func getAudioFileURL(for relativePath: String) -> URL? {
         guard !relativePath.isEmpty else { return nil }
-        
-        let storageDirectory = getCurrentStorageDirectory()
-        let fullURL = storageDirectory.appendingPathComponent(relativePath)
-        
-        guard FileManager.default.fileExists(atPath: fullURL.path) else {
-            print("AudioStorageManager: Audio file not found at \(fullURL.path)")
-            return nil
+
+        return withSecurityScopedStorageAccess { storageDirectory in
+            let fullURL = storageDirectory.appendingPathComponent(relativePath)
+
+            guard FileManager.default.fileExists(atPath: fullURL.path) else {
+                print("AudioStorageManager: Audio file not found at \(fullURL.path)")
+                return nil as URL?
+            }
+
+            return fullURL
         }
-        
-        return fullURL
     }
     
     /// Deletes an audio file
     /// - Parameter relativePath: The relative path of the audio file to delete
     func deleteAudioFile(at relativePath: String) {
         guard !relativePath.isEmpty else { return }
-        
-        let storageDirectory = getCurrentStorageDirectory()
-        let fileURL = storageDirectory.appendingPathComponent(relativePath)
-        
+
         do {
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
-                print("AudioStorageManager: Deleted audio file at \(fileURL.path)")
+            try withSecurityScopedStorageAccess { storageDirectory in
+                let fileURL = storageDirectory.appendingPathComponent(relativePath)
+
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    try FileManager.default.removeItem(at: fileURL)
+                    print("AudioStorageManager: Deleted audio file at \(fileURL.path)")
+                }
             }
         } catch {
-            print("AudioStorageManager: Failed to delete audio file at \(fileURL.path): \(error)")
+            print("AudioStorageManager: Failed to delete audio file: \(error)")
         }
     }
     
@@ -120,24 +144,24 @@ class AudioStorageManager: ObservableObject {
     /// Calculates the total storage space used by audio files
     /// - Returns: Total size in bytes
     func calculateStorageUsage() -> Int64 {
-        let storageDirectory = getCurrentStorageDirectory()
-        
         do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: storageDirectory,
-                includingPropertiesForKeys: [.fileSizeKey],
-                options: []
-            )
-            
-            let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
-            
-            var totalSize: Int64 = 0
-            for fileURL in audioFiles {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-                totalSize += Int64(resourceValues.fileSize ?? 0)
+            return try withSecurityScopedStorageAccess { storageDirectory in
+                let contents = try FileManager.default.contentsOfDirectory(
+                    at: storageDirectory,
+                    includingPropertiesForKeys: [.fileSizeKey],
+                    options: []
+                )
+
+                let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
+
+                var totalSize: Int64 = 0
+                for fileURL in audioFiles {
+                    let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+                    totalSize += Int64(resourceValues.fileSize ?? 0)
+                }
+
+                return totalSize
             }
-            
-            return totalSize
         } catch {
             print("AudioStorageManager: Failed to calculate storage usage: \(error)")
             return 0
@@ -165,16 +189,16 @@ class AudioStorageManager: ObservableObject {
     
     /// Returns the number of audio files in storage
     func getAudioFileCount() -> Int {
-        let storageDirectory = getCurrentStorageDirectory()
-        
         do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: storageDirectory,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            
-            return contents.filter { $0.pathExtension.lowercased() == "wav" }.count
+            return try withSecurityScopedStorageAccess { storageDirectory in
+                let contents = try FileManager.default.contentsOfDirectory(
+                    at: storageDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                )
+
+                return contents.filter { $0.pathExtension.lowercased() == "wav" }.count
+            }
         } catch {
             print("AudioStorageManager: Failed to count audio files: \(error)")
             return 0
@@ -186,34 +210,34 @@ class AudioStorageManager: ObservableObject {
     /// Removes audio files that don't have corresponding history entries
     /// - Parameter validPaths: Set of relative paths that should be kept
     func cleanupOrphanedAudioFiles(validPaths: Set<String>) {
-        let storageDirectory = getCurrentStorageDirectory()
-        
         do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: storageDirectory,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            
-            let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
-            var removedCount = 0
-            
-            for fileURL in audioFiles {
-                let filename = fileURL.lastPathComponent
-                
-                if !validPaths.contains(filename) {
-                    do {
-                        try FileManager.default.removeItem(at: fileURL)
-                        removedCount += 1
-                        print("AudioStorageManager: Removed orphaned audio file: \(filename)")
-                    } catch {
-                        print("AudioStorageManager: Failed to remove orphaned file \(filename): \(error)")
+            try withSecurityScopedStorageAccess { storageDirectory in
+                let contents = try FileManager.default.contentsOfDirectory(
+                    at: storageDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                )
+
+                let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
+                var removedCount = 0
+
+                for fileURL in audioFiles {
+                    let filename = fileURL.lastPathComponent
+
+                    if !validPaths.contains(filename) {
+                        do {
+                            try FileManager.default.removeItem(at: fileURL)
+                            removedCount += 1
+                            print("AudioStorageManager: Removed orphaned audio file: \(filename)")
+                        } catch {
+                            print("AudioStorageManager: Failed to remove orphaned file \(filename): \(error)")
+                        }
                     }
                 }
-            }
-            
-            if removedCount > 0 {
-                print("AudioStorageManager: Cleaned up \(removedCount) orphaned audio files")
+
+                if removedCount > 0 {
+                    print("AudioStorageManager: Cleaned up \(removedCount) orphaned audio files")
+                }
             }
         } catch {
             print("AudioStorageManager: Failed to cleanup orphaned files: \(error)")
@@ -222,28 +246,28 @@ class AudioStorageManager: ObservableObject {
     
     /// Deletes all audio files in the storage directory
     func deleteAllAudioFiles() {
-        let storageDirectory = getCurrentStorageDirectory()
-        
         do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: storageDirectory,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            
-            let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
-            var deletedCount = 0
-            
-            for fileURL in audioFiles {
-                do {
-                    try FileManager.default.removeItem(at: fileURL)
-                    deletedCount += 1
-                } catch {
-                    print("AudioStorageManager: Failed to delete \(fileURL.lastPathComponent): \(error)")
+            try withSecurityScopedStorageAccess { storageDirectory in
+                let contents = try FileManager.default.contentsOfDirectory(
+                    at: storageDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                )
+
+                let audioFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
+                var deletedCount = 0
+
+                for fileURL in audioFiles {
+                    do {
+                        try FileManager.default.removeItem(at: fileURL)
+                        deletedCount += 1
+                    } catch {
+                        print("AudioStorageManager: Failed to delete \(fileURL.lastPathComponent): \(error)")
+                    }
                 }
+
+                print("AudioStorageManager: Deleted \(deletedCount) audio files")
             }
-            
-            print("AudioStorageManager: Deleted \(deletedCount) audio files")
         } catch {
             print("AudioStorageManager: Failed to delete all audio files: \(error)")
         }
@@ -253,12 +277,12 @@ class AudioStorageManager: ObservableObject {
     
     /// Opens the audio storage directory in Finder
     func openStorageDirectory() {
-        let storageDirectory = getCurrentStorageDirectory()
-        
-        // Ensure directory exists before opening
         do {
             try ensureStorageDirectoryExists()
-            NSWorkspace.shared.open(storageDirectory)
+
+            _ = withSecurityScopedStorageAccess { storageDirectory in
+                NSWorkspace.shared.open(storageDirectory)
+            }
         } catch {
             print("AudioStorageManager: Failed to open storage directory: \(error)")
         }

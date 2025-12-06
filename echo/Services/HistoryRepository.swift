@@ -29,8 +29,9 @@ class HistoryRepository {
           INSERT INTO transcription_history
           (id, timestamp, transcribed_text, duration, audio_file_reference, language_detected,
            model_used, word_count, application_context, upload_time, groq_processing_time,
-           total_transcription_time, confidence, did_fail, error_message, error_category)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+           total_transcription_time, confidence, did_fail, error_message, error_category,
+           pure_upload_time, download_time, total_network_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       """
 
     var statement: OpaquePointer?
@@ -99,6 +100,10 @@ class HistoryRepository {
         sqlite3_bind_null(statement, 16)
       }
 
+      sqlite3_bind_double(statement, 17, transcription.pureUploadTime)
+      sqlite3_bind_double(statement, 18, transcription.downloadTime)
+      sqlite3_bind_double(statement, 19, transcription.totalNetworkTime)
+
       if sqlite3_step(statement) == SQLITE_DONE {
         print("Transcription saved successfully")
         success = true
@@ -142,7 +147,7 @@ class HistoryRepository {
 
       while sqlite3_step(statement) == SQLITE_ROW {
         if let transcription = parseTranscriptionFromRow(statement) {
-          let snippet = String(cString: sqlite3_column_text(statement, 16))
+          let snippet = String(cString: sqlite3_column_text(statement, 19))
           results.append((transcription, snippet))
         }
       }
@@ -350,6 +355,10 @@ class HistoryRepository {
       return String(cString: sqlite3_column_text(statement, 15))
     }()
 
+    let pureUploadTime = sqlite3_column_double(statement, 16)
+    let downloadTime = sqlite3_column_double(statement, 17)
+    let totalNetworkTime = sqlite3_column_double(statement, 18)
+
     return TranscriptionHistory(
       id: id,
       timestamp: timestamp,
@@ -361,6 +370,9 @@ class HistoryRepository {
       wordCount: wordCount,
       applicationContext: applicationContext,
       uploadTime: uploadTime,
+      pureUploadTime: pureUploadTime,
+      downloadTime: downloadTime,
+      totalNetworkTime: totalNetworkTime,
       groqProcessingTime: groqProcessingTime,
       totalTranscriptionTime: totalTranscriptionTime,
       confidence: confidence,

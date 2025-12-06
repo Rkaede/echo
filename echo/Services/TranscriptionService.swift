@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 class TranscriptionService: ObservableObject {
   private let settingsManager = SettingsManager.shared
-  private let audioRecorder = AudioRecorderAdapter()
+  private let audioRecorder = AudioRecorder()
   private let apiClient = GroqAPIClient.shared
   private let profilesService = ProfilesService.shared
   private let postProcessor = PostProcessingService.shared
@@ -28,17 +28,6 @@ class TranscriptionService: ObservableObject {
     audioRecorder.$currentLevel
       .sink { [weak self] level in
         self?.appState.currentInputLevel = level
-      }
-      .store(in: &cancellables)
-    
-    // Monitor initiating state changes
-    audioRecorder.$isInitiating
-      .sink { [weak self] isInitiating in
-        guard let self = self else { return }
-        // Update app state when transitioning to/from initiating
-        if isInitiating && self.appState.status != .initiatingRecording {
-          self.appState.updateStatus(.initiatingRecording)
-        }
       }
       .store(in: &cancellables)
   }

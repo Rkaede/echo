@@ -263,6 +263,19 @@ class UnifiedAudioEngine: ObservableObject {
   }
 
   private func setupRecordingTap(to url: URL) throws {
+    let inputNode = engine.inputNode
+
+    // CRITICAL: Query input format BEFORE stopping the engine
+    // After stopping, the inputNode may return stale/incorrect format info
+    // (e.g., 16000 Hz instead of the actual hardware format like 48000 Hz)
+    let inputFormat = inputNode.outputFormat(forBus: 0)
+
+    log(
+      "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
     // CRITICAL: Stop the engine before modifying graph
     // According to Apple docs, you must configure nodes before starting the engine
     if engine.isRunning {
@@ -273,15 +286,6 @@ class UnifiedAudioEngine: ObservableObject {
       )
       engine.stop()
     }
-
-    let inputNode = engine.inputNode
-    let inputFormat = inputNode.outputFormat(forBus: 0)
-
-    log(
-      "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount)",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
 
     // Create output format (16kHz mono 16-bit PCM)
     guard

@@ -25,6 +25,10 @@ class GlobalShortcutMonitor: ObservableObject {
     startMonitoring()
   }
 
+  deinit {
+    stopMonitoring()
+  }
+
   func startMonitoring() {
     // Create event mask for the events we want to monitor
     let eventMask =
@@ -91,9 +95,11 @@ class GlobalShortcutMonitor: ObservableObject {
   func stopMonitoring() {
     if let eventTap = eventTap {
       CGEvent.tapEnable(tap: eventTap, enable: false)
+      self.eventTap = nil
     }
     if let runLoopSource = runLoopSource {
       CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+      self.runLoopSource = nil
     }
   }
 

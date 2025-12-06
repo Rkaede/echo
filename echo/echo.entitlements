@@ -1,26 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-    <dict>
-        <key>com.apple.security.app-sandbox</key>
-        <true />
-        <key>com.apple.security.network.client</key>
-        <true />
-        <key>com.apple.security.device.microphone</key>
-        <true />
-        <!-- audio-input was used in the previous versions. -->
-        <!-- device.microphone is preferred over device.audio-input. -->
-        <!-- We keep it here for backwards compatibility. -->
-        <key>com.apple.security.device.audio-input</key>
-        <true />
-        <key>com.apple.security.accessibility</key>
-        <true />
-        <key>com.apple.security.get-task-allow</key>
-        <true />
-        <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-        <array>
-            <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-            <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
-        </array>
-    </dict>
+<dict>
+	<key>com.apple.security.accessibility</key>
+	<true/>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+	</array>
+</dict>
 </plist>

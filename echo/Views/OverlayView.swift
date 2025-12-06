@@ -28,7 +28,6 @@ struct OverlayView: View {
   }
 
   var body: some View {
-    let isExpanded = status != .idle
     let showContent = status != .idle
 
     ZStack {

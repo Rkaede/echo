@@ -34,6 +34,11 @@ class GroqAPIClient {
     // Create URLSession with timing delegate
     let session = URLSession(configuration: .default, delegate: timingDelegate, delegateQueue: nil)
 
+    // Ensure session is invalidated after use to prevent memory leaks
+    defer {
+      session.finishTasksAndInvalidate()
+    }
+
     let (data, response) = try await session.data(for: request)
 
     guard let httpResponse = response as? HTTPURLResponse else {
@@ -136,8 +141,8 @@ class TimingSessionDelegate: NSObject, URLSessionDataDelegate {
     uploadEndTime = Date()
     downloadStartTime = Date()
 
-    if let uploadStart = uploadStartTime {
-      uploadTime = uploadEndTime!.timeIntervalSince(uploadStart)
+    if let uploadStart = uploadStartTime, let uploadEnd = uploadEndTime {
+      uploadTime = uploadEnd.timeIntervalSince(uploadStart)
     }
 
     completionHandler(.allow)
@@ -146,8 +151,8 @@ class TimingSessionDelegate: NSObject, URLSessionDataDelegate {
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     if downloadEndTime == nil {
       downloadEndTime = Date()
-      if let downloadStart = downloadStartTime {
-        downloadTime = downloadEndTime!.timeIntervalSince(downloadStart)
+      if let downloadStart = downloadStartTime, let downloadEnd = downloadEndTime {
+        downloadTime = downloadEnd.timeIntervalSince(downloadStart)
       }
     }
   }
@@ -155,12 +160,12 @@ class TimingSessionDelegate: NSObject, URLSessionDataDelegate {
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     downloadEndTime = downloadEndTime ?? Date()
 
-    if let downloadStart = downloadStartTime {
-      downloadTime = downloadEndTime!.timeIntervalSince(downloadStart)
+    if let downloadStart = downloadStartTime, let downloadEnd = downloadEndTime {
+      downloadTime = downloadEnd.timeIntervalSince(downloadStart)
     }
 
-    if let requestStart = requestStartTime {
-      totalNetworkTime = downloadEndTime!.timeIntervalSince(requestStart)
+    if let requestStart = requestStartTime, let downloadEnd = downloadEndTime {
+      totalNetworkTime = downloadEnd.timeIntervalSince(requestStart)
     }
   }
 }
