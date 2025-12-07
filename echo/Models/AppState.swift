@@ -58,6 +58,7 @@ class AppState: ObservableObject {
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
     @Published var currentInputLevel: CGFloat = 0
+    @Published var waveformSamples: [Float] = []
     @Published var showingProfileName: String? = nil
     @Published var showingProfileIconName: String? = nil
     @Published var showingProfileColorToken: String? = nil
@@ -196,6 +197,7 @@ class AppState: ObservableObject {
         recordingMode = nil
         showingProfileName = nil
         currentInputLevel = 0
+        waveformSamples = []
         showingProfileIconName = nil
         showingProfileColorToken = nil
     }

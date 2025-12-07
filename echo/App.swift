@@ -368,6 +368,15 @@ struct EchoApp: App {
 
       Divider()
 
+      #if DEBUG
+      Button("Waveform Debug...") {
+        openWaveformDebugWindow()
+      }
+      .keyboardShortcut("d", modifiers: [.command, .shift])
+
+      Divider()
+      #endif
+
       Button("Check for Updates...") {
         checkForUpdates()
       }
@@ -380,6 +389,22 @@ struct EchoApp: App {
       .keyboardShortcut("q", modifiers: .command)
     }
   }
+
+  #if DEBUG
+  private func openWaveformDebugWindow() {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+      styleMask: [.titled, .closable, .resizable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "Waveform Debug"
+    window.contentView = NSHostingView(rootView: WaveformDebugView())
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+  #endif
 
   private var recentTranscriptionsMenu: some View {
     Menu("Recent Transcriptions") {

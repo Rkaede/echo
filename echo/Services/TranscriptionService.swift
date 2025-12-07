@@ -27,7 +27,15 @@ class TranscriptionService: ObservableObject {
     // Monitor audio level changes for waveform visualization
     audioRecorder.$currentLevel
       .sink { [weak self] level in
+        print("[WAVEFORM DEBUG] TranscriptionService received level: \(level)")
         self?.appState.currentInputLevel = level
+      }
+      .store(in: &cancellables)
+
+    // Forward waveform samples to AppState
+    audioRecorder.$waveformSamples
+      .sink { [weak self] samples in
+        self?.appState.waveformSamples = samples
       }
       .store(in: &cancellables)
   }

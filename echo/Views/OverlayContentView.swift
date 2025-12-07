@@ -14,6 +14,7 @@ struct OverlayContentView: View {
         showingProfileIconName: appState.showingProfileIconName,
         currentInputDevice: appState.currentInputDevice,
         currentInputLevel: Float(appState.currentInputLevel),
+        waveformSamples: appState.waveformSamples,
         activeProfileIconName: profilesService.activeProfile?.iconName,
         errorCategory: appState.errorCategory
       )

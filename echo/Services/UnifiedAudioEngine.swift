@@ -45,8 +45,10 @@ class UnifiedAudioEngine: ObservableObject {
 
   // Metering
   @Published var currentInputLevel: CGFloat = 0
+  @Published var waveformSamples: [Float] = []
   nonisolated(unsafe) private var lastLevelUpdate: TimeInterval = 0
   private let levelUpdateThrottle: TimeInterval = 0.05  // 20Hz max (50ms)
+  private let waveformBarCount: Int = 12
 
   // Sound buffers (preloaded)
   private var recordingStartBuffer: AVAudioPCMBuffer?
@@ -750,8 +752,12 @@ class UnifiedAudioEngine: ObservableObject {
 
         // Calculate level from copied buffer and dispatch to main thread
         if let level = self.normalizedLevel(from: copiedBuffer) {
-          DispatchQueue.main.async { [weak self] in
+          // Also extract waveform samples for visualization
+          let samples = self.extractWaveformSamples(from: copiedBuffer)
+
+          Task { @MainActor [weak self] in
             self?.updateLevel(level)
+            self?.updateWaveformSamples(samples)
           }
         }
       }
@@ -918,8 +924,38 @@ class UnifiedAudioEngine: ObservableObject {
 
   /// Updates the published audio level on the main actor
   private func updateLevel(_ level: CGFloat) {
+    print("[WAVEFORM DEBUG] UnifiedAudioEngine.updateLevel: \(level)")
     currentInputLevel = level
     // Note: lastLevelUpdate is updated in the audio callback for performance
+  }
+
+  /// Extracts peak samples from the buffer for waveform visualization
+  nonisolated private func extractWaveformSamples(from buffer: AVAudioPCMBuffer) -> [Float] {
+    guard let channelData = buffer.floatChannelData?[0] else { return [] }
+    let frameLength = Int(buffer.frameLength)
+    let barCount = waveformBarCount
+
+    guard frameLength > 0 && barCount > 0 else { return [] }
+
+    let samplesPerBar = frameLength / barCount
+    guard samplesPerBar > 0 else { return [] }
+
+    var peaks: [Float] = []
+    for i in 0..<barCount {
+      let start = i * samplesPerBar
+      let end = min(start + samplesPerBar, frameLength)
+      var maxAbs: Float = 0
+      for j in start..<end {
+        maxAbs = max(maxAbs, abs(channelData[j]))
+      }
+      peaks.append(maxAbs)
+    }
+    return peaks
+  }
+
+  /// Updates the published waveform samples on the main actor
+  private func updateWaveformSamples(_ samples: [Float]) {
+    waveformSamples = samples
   }
 
   // MARK: - Sound Playback

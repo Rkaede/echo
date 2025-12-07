@@ -13,6 +13,7 @@ class AudioRecorder: NSObject, ObservableObject {
   @Published var isRecording = false
   @Published var hasPermission = false
   @Published var currentLevel: CGFloat = 0
+  @Published var waveformSamples: [Float] = []
 
   private var audioFileURL: URL {
     let tempDirectory = FileManager.default.temporaryDirectory
@@ -33,7 +34,15 @@ class AudioRecorder: NSObject, ObservableObject {
     // Subscribe to unified engine's level updates
     unifiedEngine.$currentInputLevel
       .sink { [weak self] level in
+        print("[WAVEFORM DEBUG] AudioRecorder received level: \(level)")
         self?.currentLevel = level
+      }
+      .store(in: &cancellables)
+
+    // Subscribe to unified engine's waveform samples
+    unifiedEngine.$waveformSamples
+      .sink { [weak self] samples in
+        self?.waveformSamples = samples
       }
       .store(in: &cancellables)
   }

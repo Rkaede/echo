@@ -6,6 +6,7 @@ struct OverlayView: View {
   let showingProfileIconName: String?
   let currentInputDevice: String
   let currentInputLevel: Float
+  let waveformSamples: [Float]
   let activeProfileIconName: String?
   let errorCategory: ErrorCategory?
 
@@ -15,6 +16,7 @@ struct OverlayView: View {
     showingProfileIconName: String? = nil,
     currentInputDevice: String = "",
     currentInputLevel: Float = 0.0,
+    waveformSamples: [Float] = [],
     activeProfileIconName: String? = nil,
     errorCategory: ErrorCategory? = nil
   ) {
@@ -23,6 +25,7 @@ struct OverlayView: View {
     self.showingProfileIconName = showingProfileIconName
     self.currentInputDevice = currentInputDevice
     self.currentInputLevel = currentInputLevel
+    self.waveformSamples = waveformSamples
     self.activeProfileIconName = activeProfileIconName
     self.errorCategory = errorCategory
   }
@@ -102,7 +105,7 @@ struct OverlayView: View {
           // Waveform indicator - only show during recording and idle states when content is visible
           if shouldShowWaveform && showContent {
             HStack(spacing: 4) {
-              OverlayWaveformView(level: CGFloat(currentInputLevel))
+              OverlayWaveformView(level: CGFloat(currentInputLevel), samples: waveformSamples)
               #if DEBUG
               // Temporary debug display - remove after testing
               Text(String(format: "%.2f", currentInputLevel))

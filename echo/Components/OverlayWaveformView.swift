@@ -3,92 +3,195 @@ import SwiftUI
 
 struct OverlayWaveformView: View {
   let level: CGFloat
+  let samples: [Float]
   let color: Color
 
-  private static let barCount = 10
-  private static let minHeight: CGFloat = 0.1
-  private static let maxHeight: CGFloat = 24
-  private static let idleHeight: CGFloat = 0
-  private static let barWidth: CGFloat = 1.5
-  private static let spacing: CGFloat = 1.5
-  private static let updateInterval: TimeInterval = 0.05
-  private static let noiseFloor: CGFloat = 0.5
-  private static let responseExponent: CGFloat = 1.6
-  private static let silenceThreshold: CGFloat = Self.noiseFloor
+  // Default values (used in RELEASE builds)
+  private static let defaultBarCount = 12
+  private static let defaultMinHeight: CGFloat = 1.25
+  private static let defaultMaxHeight: CGFloat = 28
+  private static let defaultIdleHeight: CGFloat = 0
+  private static let defaultBarWidth: CGFloat = 1.64
+  private static let defaultSpacing: CGFloat = 1.37
+  private static let defaultUpdateInterval: TimeInterval = 0.125
+  private static let defaultNoiseFloor: CGFloat = 0.06
+  private static let defaultResponseExponent: CGFloat = 0.56
+  private static let defaultSilenceThreshold: CGFloat = 0.008
+  private static let defaultDecayDuration: TimeInterval = 0.7
+  private static let defaultUpdateDuration: TimeInterval = 0.07
+
+  #if DEBUG
+  @ObservedObject private var settings = WaveformSettings.shared
+
+  private var barCount: Int { settings.barCount }
+  private var minHeight: CGFloat { settings.minHeight }
+  private var maxHeight: CGFloat { settings.maxHeight }
+  private var idleHeight: CGFloat { Self.defaultIdleHeight }
+  private var barWidth: CGFloat { settings.barWidth }
+  private var spacing: CGFloat { settings.spacing }
+  private var noiseFloor: CGFloat { settings.noiseFloor }
+  private var responseExponent: CGFloat { settings.responseExponent }
+  private var silenceThreshold: CGFloat { settings.silenceThreshold }
+  private var decayDuration: TimeInterval { settings.decayDuration }
+  private var updateDuration: TimeInterval { settings.updateDuration }
+  #else
+  private var barCount: Int { Self.defaultBarCount }
+  private var minHeight: CGFloat { Self.defaultMinHeight }
+  private var maxHeight: CGFloat { Self.defaultMaxHeight }
+  private var idleHeight: CGFloat { Self.defaultIdleHeight }
+  private var barWidth: CGFloat { Self.defaultBarWidth }
+  private var spacing: CGFloat { Self.defaultSpacing }
+  private var noiseFloor: CGFloat { Self.defaultNoiseFloor }
+  private var responseExponent: CGFloat { Self.defaultResponseExponent }
+  private var silenceThreshold: CGFloat { Self.defaultSilenceThreshold }
+  private var decayDuration: TimeInterval { Self.defaultDecayDuration }
+  private var updateDuration: TimeInterval { Self.defaultUpdateDuration }
+  #endif
 
   @State private var barHeights: [CGFloat]
-  private let timer = Timer.publish(every: Self.updateInterval, on: .main, in: .common)
+  private let timer = Timer.publish(every: Self.defaultUpdateInterval, on: .main, in: .common)
     .autoconnect()
 
   init(
-    level: CGFloat = 0, color: Color = Color(red: 0.882, green: 0.325, blue: 0.373, opacity: 1.0)
+    level: CGFloat = 0,
+    samples: [Float] = [],
+    color: Color = Color(red: 0.882, green: 0.325, blue: 0.373, opacity: 1.0)
   ) {
     self.level = level
+    self.samples = samples
     self.color = color
-    _barHeights = State(initialValue: Array(repeating: Self.idleHeight, count: Self.barCount))
+    _barHeights = State(initialValue: Array(repeating: Self.defaultIdleHeight, count: Self.defaultBarCount))
   }
 
   var body: some View {
-    HStack(alignment: .center, spacing: Self.spacing) {
-      ForEach(Array(barHeights.enumerated()), id: \.offset) { _, height in
+    HStack(alignment: .center, spacing: spacing) {
+      ForEach(0..<barCount, id: \.self) { index in
         Capsule()
           .fill(color)
-          .frame(width: Self.barWidth, height: height)
+          .frame(width: barWidth, height: index < barHeights.count ? barHeights[index] : idleHeight)
       }
     }
-    .frame(width: totalWidth, height: Self.maxHeight)
+    .frame(width: totalWidth, height: maxHeight)
     .accessibilityHidden(true)
     .onAppear {
-      updateBars(with: level)
+      ensureBarCount()
+      updateBarsFromSamples()
+    }
+    .onChange(of: samples) { _, _ in
+      updateBarsFromSamples()
     }
     .onChange(of: level) {
-      updateBars(with: level)
+      // Fallback to level-based if no samples
+      if samples.isEmpty {
+        updateBars(with: level)
+      }
     }
     .onReceive(timer) { _ in
-      updateBars(with: level)
+      ensureBarCount()
+      // Only use timer-based updates if no samples provided
+      if samples.isEmpty {
+        updateBars(with: level)
+      }
     }
+    #if DEBUG
+    .onChange(of: settings.barCount) { _, _ in
+      ensureBarCount()
+    }
+    #endif
   }
 
   private var totalWidth: CGFloat {
-    let count = CGFloat(Self.barCount)
-    return count * Self.barWidth + (count - 1) * Self.spacing
+    let count = CGFloat(barCount)
+    return count * barWidth + (count - 1) * spacing
+  }
+
+  private func ensureBarCount() {
+    if barHeights.count != barCount {
+      barHeights = Array(repeating: idleHeight, count: barCount)
+    }
+  }
+
+  private func updateBarsFromSamples() {
+    // If no samples, fall back to level-based rendering
+    guard !samples.isEmpty else {
+      updateBars(with: level)
+      return
+    }
+
+    // Check if all samples are below threshold (silence)
+    let maxSample = samples.max() ?? 0
+    if maxSample <= Float(silenceThreshold) {
+      withAnimation(.easeOut(duration: decayDuration)) {
+        barHeights = Array(repeating: idleHeight, count: barCount)
+      }
+      return
+    }
+
+    // Convert samples to bar heights
+    let dynamicRange = maxHeight - minHeight
+    var newHeights: [CGFloat] = []
+
+    for i in 0..<barCount {
+      // Get sample for this bar (with bounds checking)
+      let sampleValue: Float
+      if i < samples.count {
+        sampleValue = samples[i]
+      } else if !samples.isEmpty {
+        // Wrap around if we have fewer samples than bars
+        sampleValue = samples[i % samples.count]
+      } else {
+        sampleValue = 0
+      }
+
+      // Apply noise floor and response curve
+      let normalized = max(CGFloat(sampleValue) - noiseFloor, 0) / (1 - noiseFloor)
+      let eased = CGFloat(pow(Double(normalized), Double(responseExponent)))
+      let height = minHeight + dynamicRange * eased
+
+      // Clamp to valid range
+      newHeights.append(min(max(height, minHeight), maxHeight))
+    }
+
+    withAnimation(.easeOut(duration: updateDuration)) {
+      barHeights = newHeights
+    }
   }
 
   private func updateBars(with rawLevel: CGFloat) {
     let clamped = max(0, min(rawLevel, 1))
 
-    if clamped <= Self.silenceThreshold {
-      withAnimation(.easeOut(duration: 0.18)) {
-        barHeights = Array(repeating: Self.idleHeight, count: Self.barCount)
+    if clamped <= silenceThreshold {
+      withAnimation(.easeOut(duration: decayDuration)) {
+        barHeights = Array(repeating: idleHeight, count: barCount)
       }
       return
     }
 
-    var updated = barHeights
-    if updated.count >= Self.barCount {
-      updated.removeFirst()
+    // Update all bars in place with slight variations for natural look
+    var newHeights: [CGFloat] = []
+    for _ in 0..<barCount {
+      newHeights.append(generateHeight(for: clamped))
     }
-    updated.append(generateHeight(for: clamped))
 
-    withAnimation(.easeOut(duration: 0.18)) {
-      barHeights = updated
+    withAnimation(.easeOut(duration: updateDuration)) {
+      barHeights = newHeights
     }
   }
 
   private func generateHeight(for level: CGFloat) -> CGFloat {
-    let dynamicRange = Self.maxHeight - Self.minHeight
+    let dynamicRange = maxHeight - minHeight
 
     // Suppress readings near the noise floor before shaping the curve
-    let normalized = max(level - Self.noiseFloor, 0) / (1 - Self.noiseFloor)
-    let eased = CGFloat(pow(Double(normalized), Double(Self.responseExponent)))
-    let base = Self.minHeight + dynamicRange * eased
+    let normalized = max(level - noiseFloor, 0) / (1 - noiseFloor)
+    let eased = CGFloat(pow(Double(normalized), Double(responseExponent)))
+    let base = minHeight + dynamicRange * eased
 
     // Keep jitter minimal while still allowing subtle motion
     let varianceScale = eased < 0.25 ? 0.015 : 0.04
     let variance = dynamicRange * varianceScale
     let randomOffset = CGFloat.random(in: -variance...variance)
     let candidate = base + randomOffset
-    return min(max(candidate, Self.minHeight), Self.maxHeight)
+    return min(max(candidate, minHeight), maxHeight)
   }
 }
 
