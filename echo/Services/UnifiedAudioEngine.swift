@@ -20,6 +20,7 @@ class UnifiedAudioEngine: ObservableObject {
   private let engine = AVAudioEngine()
   private let playerNode = AVAudioPlayerNode()
   private var sinkNode: AVAudioSinkNode?
+  private var recordingMixerNode: AVAudioMixerNode?
 
   // Thread-safe queue for audio processing (access to shared state)
   private let audioProcessingQueue = DispatchQueue(
@@ -57,9 +58,14 @@ class UnifiedAudioEngine: ObservableObject {
   // Track engine initialization state
   private var hasAttemptedStart = false
   private var audioSessionConfigured = false
+  private var configurationChangeObserver: NSObjectProtocol?
+  private var needsConfigurationReset = false
+  private var lastKnownMixerSampleRate: Double?
+  private var lastKnownMixerChannelCount: AVAudioChannelCount?
 
   private init() {
     setupAudioEngine()
+    setupEngineConfigurationObserver()
     // Don't start engine immediately - wait until first use
     // This avoids Core Audio HAL errors before permissions are granted
   }
@@ -68,6 +74,9 @@ class UnifiedAudioEngine: ObservableObject {
     // Engine cleanup happens automatically when deallocated
     // Note: Can't call MainActor methods from deinit
     // The AVAudioEngine will stop itself when deallocated
+    if let observer = configurationChangeObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   // MARK: - Engine Lifecycle
@@ -112,6 +121,8 @@ class UnifiedAudioEngine: ObservableObject {
 
     // Connect player node to mixer with explicit format
     engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
+    lastKnownMixerSampleRate = mixerFormat.sampleRate
+    lastKnownMixerChannelCount = mixerFormat.channelCount
 
     log("Audio engine setup complete", category: unifiedAudioEngineLogCategory, level: .debug)
   }
@@ -121,6 +132,20 @@ class UnifiedAudioEngine: ObservableObject {
   private func ensureEngineStarted() {
     // Configure audio session before starting engine
     setupAudioSession()
+
+    if needsConfigurationReset && !isRecordingActive {
+      log(
+        "Engine configuration change pending - resetting before start",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      resetEngineForConfigurationChange()
+      needsConfigurationReset = false
+    }
+
+    if !engine.isRunning {
+      refreshPlaybackConnectionIfNeeded()
+    }
 
     // Check if engine is actually running, not just if we attempted to start it
     // This is important because the engine may be stopped/restarted during recording setup
@@ -170,6 +195,58 @@ class UnifiedAudioEngine: ObservableObject {
         return
       }
     }
+  }
+
+  private func setupEngineConfigurationObserver() {
+    configurationChangeObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange,
+      object: engine,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+
+      log(
+        "Audio engine configuration changed",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+
+      // Defer reset until we're idle to avoid disrupting an active recording.
+      if self.isRecordingActive {
+        self.needsConfigurationReset = true
+        return
+      }
+
+      self.resetEngineForConfigurationChange()
+    }
+  }
+
+  private func resetEngineForConfigurationChange() {
+    if engine.isRunning {
+      engine.stop()
+    }
+    engine.reset()
+    hasAttemptedStart = false
+    refreshPlaybackConnectionIfNeeded()
+  }
+
+  private func refreshPlaybackConnectionIfNeeded() {
+    let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+    let sampleRateChanged = lastKnownMixerSampleRate != mixerFormat.sampleRate
+    let channelCountChanged = lastKnownMixerChannelCount != mixerFormat.channelCount
+
+    guard sampleRateChanged || channelCountChanged else { return }
+
+    log(
+      "Mixer format changed - reconnecting player node (sampleRate: \(mixerFormat.sampleRate), channels: \(mixerFormat.channelCount))",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    engine.disconnectNodeOutput(playerNode)
+    engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
+    lastKnownMixerSampleRate = mixerFormat.sampleRate
+    lastKnownMixerChannelCount = mixerFormat.channelCount
   }
 
   // Note: We keep the engine always running for optimal performance
@@ -267,29 +344,45 @@ class UnifiedAudioEngine: ObservableObject {
   private func setupRecordingTap(to url: URL) throws {
     let inputNode = engine.inputNode
 
-    // CRITICAL: Query input format BEFORE stopping the engine
-    // After stopping, the inputNode may return stale/incorrect format info
-    // (e.g., 16000 Hz instead of the actual hardware format like 48000 Hz)
-    let inputFormat = inputNode.outputFormat(forBus: 0)
-
-    log(
-      "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount)",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-
     // CRITICAL: Stop the engine before modifying graph
     // According to Apple docs, you must configure nodes before starting the engine
     if engine.isRunning {
       log(
-        "[DEBUG] Stopping engine to setup sink node",
+        "[DEBUG] Stopping engine to setup recording graph",
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
       engine.stop()
     }
 
-    // Create output format (16kHz mono 16-bit PCM)
+    // Use the CURRENT input sample rate with mono as the stable intermediate format.
+    // This avoids kAudioUnitErr_FormatNotSupported (-10877) when Bluetooth devices
+    // switch between A2DP (48kHz) and HFP (16-24kHz) modes.
+    // The mixer still isolates the sink from hardware changes during this recording.
+    let inputFormat = inputNode.inputFormat(forBus: 0)
+    log(
+      "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount), commonFormat: \(inputFormat.commonFormat)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    guard let stableFormat = AVAudioFormat(
+      commonFormat: .pcmFormatFloat32,
+      sampleRate: inputFormat.sampleRate,
+      channels: 1,
+      interleaved: false
+    ) else {
+      resetRecordingState()
+      throw UnifiedAudioEngineError.invalidFormat
+    }
+
+    log(
+      "Using stable intermediate format - sampleRate: \(stableFormat.sampleRate), channels: \(stableFormat.channelCount)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    // Create output format (16kHz mono 16-bit PCM for Whisper API)
     guard
       let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
@@ -298,7 +391,6 @@ class UnifiedAudioEngine: ObservableObject {
         interleaved: true  // 16-bit PCM must be interleaved for WAV on macOS
       )
     else {
-      // Reset state on error
       resetRecordingState()
       throw UnifiedAudioEngineError.invalidFormat
     }
@@ -342,70 +434,72 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    // Create converter if formats differ
-    if inputFormat.sampleRate != fileFormat.sampleRate
-      || inputFormat.channelCount != fileFormat.channelCount
-      || inputFormat.commonFormat != fileFormat.commonFormat
-    {
-      guard let conv = AVAudioConverter(from: inputFormat, to: fileFormat) else {
-        resetRecordingState()
-        throw UnifiedAudioEngineError.converterCreationFailed
-      }
-
-      // In live capture we cannot provide priming frames, so disable priming latency.
-      conv.primeMethod = .none
-      conv.primeInfo = AVAudioConverterPrimeInfo(leadingFrames: 0, trailingFrames: 0)
-
-      // Thread-safe assignment
-      audioProcessingQueue.sync {
-        self.converter = conv
-      }
-
-      log(
-        "Created format converter (\(inputFormat.sampleRate)Hz \(inputFormat.channelCount)ch -> \(fileFormat.sampleRate)Hz \(fileFormat.channelCount)ch)",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-    } else {
-      audioProcessingQueue.sync {
-        self.converter = nil
-      }
-      log("No format conversion needed", category: unifiedAudioEngineLogCategory, level: .debug)
+    // Create converter from stable format to file format
+    // This always needs conversion since we're going from Float32 to Int16
+    guard let conv = AVAudioConverter(from: stableFormat, to: fileFormat) else {
+      resetRecordingState()
+      throw UnifiedAudioEngineError.converterCreationFailed
     }
+
+    // In live capture we cannot provide priming frames, so disable priming latency.
+    conv.primeMethod = .none
+    conv.primeInfo = AVAudioConverterPrimeInfo(leadingFrames: 0, trailingFrames: 0)
+
+    // Thread-safe assignment
+    audioProcessingQueue.sync {
+      self.converter = conv
+    }
+
+    log(
+      "Created format converter (\(stableFormat.sampleRate)Hz \(stableFormat.channelCount)ch -> \(fileFormat.sampleRate)Hz \(fileFormat.channelCount)ch)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    // Create mixer node to handle format conversion from inputNode's dynamic format
+    // The mixer automatically converts from whatever format the hardware provides
+    let recordingMixer = AVAudioMixerNode()
 
     // Create sink node for real-time recording (replaces installTap for better performance)
     // AVAudioSinkNode provides lower latency than installTap (can receive 512-frame buffers)
+    // The sink receives audio in our stable format (converted by the mixer)
     let sinkNode = AVAudioSinkNode { [weak self] timestamp, frameCount, audioBufferList in
       // CRITICAL: This callback runs on high-priority audio thread
       // Must return quickly (<1ms) to avoid audio glitches
       guard let self = self else { return 0 }
 
-      // Process the audio buffer
+      // Process the audio buffer (now in stable format)
       self.processRecordingBufferRealtime(
         timestamp: timestamp,
         frameCount: frameCount,
         bufferList: audioBufferList,
-        format: inputFormat
+        format: stableFormat
       )
 
       return 0  // Return 0 to indicate success
     }
 
-    // Attach and connect sink node to input
-    log("Attaching sink node for real-time recording", category: unifiedAudioEngineLogCategory, level: .debug)
+    // Attach nodes to engine
+    log("Attaching mixer and sink nodes for real-time recording", category: unifiedAudioEngineLogCategory, level: .debug)
+    engine.attach(recordingMixer)
     engine.attach(sinkNode)
-    engine.connect(inputNode, to: sinkNode, format: inputFormat)
 
-    // Store sink node reference for cleanup
+    // Connect the graph: inputNode → mixer (auto-converts) → sinkNode (stable format)
+    // Using nil format for inputNode connection lets the mixer auto-detect and convert
+    engine.connect(inputNode, to: recordingMixer, format: nil)
+    engine.connect(recordingMixer, to: sinkNode, format: stableFormat)
+
+    // Store references for cleanup
+    self.recordingMixerNode = recordingMixer
     self.sinkNode = sinkNode
 
     isRecordingActive = true
 
-    // Start the engine after configuring the sink node
+    // Start the engine after configuring the graph
     do {
       try engine.start()
       log(
-        "[DEBUG] Engine started successfully with sink node",
+        "[DEBUG] Engine started successfully with mixer → sink node graph",
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
@@ -416,16 +510,12 @@ class UnifiedAudioEngine: ObservableObject {
         level: .error
       )
       // Clean up on failure
-      if let sinkNode = self.sinkNode {
-        engine.detach(sinkNode)
-        self.sinkNode = nil
-      }
       resetRecordingState()
       throw UnifiedAudioEngineError.engineNotRunning
     }
 
     log(
-      "Recording sink node setup successfully, file ready at: \(url.path)",
+      "Recording graph setup successfully, file ready at: \(url.path)",
       category: unifiedAudioEngineLogCategory,
       level: .info
     )
@@ -445,10 +535,14 @@ class UnifiedAudioEngine: ObservableObject {
     pendingWriteCount = 0
     writeLock.unlock()
 
-    // Clean up sink node if it exists
+    // Clean up recording graph nodes if they exist
     if let sinkNode = sinkNode {
       engine.detach(sinkNode)
       self.sinkNode = nil
+    }
+    if let mixer = recordingMixerNode {
+      engine.detach(mixer)
+      self.recordingMixerNode = nil
     }
   }
 
@@ -466,15 +560,19 @@ class UnifiedAudioEngine: ObservableObject {
       return nil
     }
 
-    // Detach sink node first - no more data will be written
+    // Detach recording graph nodes first - no more data will be written
     let detachStart = Date()
     if let sinkNode = sinkNode {
       engine.detach(sinkNode)
       self.sinkNode = nil
     }
+    if let mixer = recordingMixerNode {
+      engine.detach(mixer)
+      self.recordingMixerNode = nil
+    }
     let detachDuration = Date().timeIntervalSince(detachStart)
     log(
-      "[PERF] detach sink node took \(detachDuration * 1000)ms",
+      "[PERF] detach recording nodes took \(detachDuration * 1000)ms",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )

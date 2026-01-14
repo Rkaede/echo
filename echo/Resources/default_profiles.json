@@ -6,7 +6,7 @@
     "shortcut": "alt+space",
     "transcriptionModel": null,
     "postProcessingEnabled": false,
-    "postProcessingPrompt": "{{TRANSCRIPTION}}",
+    "postProcessingPrompt": "Cleanup the following text. Check for correct grammar and punctuation. Do not change the tone. Use as much of the original text as possible.\n\nHere is the transcription:\n\n<transcription>\n{{TRANSCRIPTION}}\n</transcription>",
     "postProcessingModel": null,
     "iconName": "waveform",
     "iconColor": "blue"
@@ -18,7 +18,7 @@
     "shortcut": null,
     "transcriptionModel": "whisper-large-v3-turbo",
     "postProcessingEnabled": false,
-    "postProcessingPrompt": "{{TRANSCRIPTION}}",
+    "postProcessingPrompt": "Cleanup the following text. Check for correct grammar and punctuation. Do not change the tone. Use as much of the original text as possible.\n\nHere is the transcription:\n\n<transcription>\n{{TRANSCRIPTION}}\n</transcription>",
     "postProcessingModel": null,
     "iconName": "ear.fill",
     "iconColor": "indigo"

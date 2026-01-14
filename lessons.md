@@ -105,3 +105,43 @@ private func updateAudioLevels() {
 - Apple Documentation: "DispatchSourceTimer is preferred over Timer for non-runloop contexts"
 - Common pattern in AVAudioEngine-based apps: Calculate in tap, cache values, read from timer
 
+## AirPods After Idle -> Silent Recording
+
+**Problem:** After the app sits idle and AirPods are connected/used, recording starts but captures silence (waveform stays at 0.0), often with CoreAudio errors like EAGAIN (35) and kAudioUnitErr_FormatNotSupported (-10877).
+
+**Root Cause:** The AVAudioEngine graph was built with stale device formats and a fixed 48kHz "stable" format. When Bluetooth devices switch profiles (A2DP 48kHz -> HFP 16-24kHz), the engine emits configuration changes but the graph (player connection + sink format) was not rebuilt. That mismatch causes start errors and/or a running engine with a silent input path.
+
+**Solution:** Make the engine resilient to configuration changes and align the recording graph to the current input format:
+
+1. **Observe engine configuration changes** - Listen for `.AVAudioEngineConfigurationChange` and reset/rebuild the engine when idle (defer while recording to avoid disruption).
+2. **Reconnect playback node on format change** - Reconnect `playerNode` to the main mixer using the *current* output format whenever sample rate or channel count changes.
+3. **Use current input sample rate for recording** - Build the "stable" recording format from `inputNode.inputFormat(forBus: 0)` so the sink format matches the active device profile.
+
+**Key Implementation:**
+```swift
+configurationChangeObserver = NotificationCenter.default.addObserver(
+  forName: .AVAudioEngineConfigurationChange,
+  object: engine,
+  queue: .main
+) { [weak self] _ in
+  guard let self = self else { return }
+  if self.isRecordingActive {
+    self.needsConfigurationReset = true
+    return
+  }
+  self.resetEngineForConfigurationChange()
+}
+
+let inputFormat = inputNode.inputFormat(forBus: 0)
+let stableFormat = AVAudioFormat(
+  commonFormat: .pcmFormatFloat32,
+  sampleRate: inputFormat.sampleRate,
+  channels: 1,
+  interleaved: false
+)
+```
+
+**Why This Works:**
+- **Configuration change handling** prevents stale device IDs/formats from lingering after Bluetooth profile switches.
+- **Input-aligned stable format** avoids -10877 format mismatches during HFP/A2DP transitions.
+- **Playback reconnection** keeps the shared engine graph valid when the output device changes.

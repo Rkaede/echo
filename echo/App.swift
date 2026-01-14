@@ -135,6 +135,7 @@ struct EchoApp: App {
         // Initialize services after panel is created
         self.tempFileManager.performStartupCleanup()
         self.tempFileManager.startPeriodicCleanup()
+        LoggingService.shared.cleanupOldLogs()
         self.globalShortcutMonitor.loadProfileShortcuts(from: self.profilesService.profiles)
 
         // Start UpdateManager after delay

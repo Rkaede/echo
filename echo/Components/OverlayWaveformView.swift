@@ -7,18 +7,18 @@ struct OverlayWaveformView: View {
   let color: Color
 
   // Default values (used in RELEASE builds)
-  private static let defaultBarCount = 12
-  private static let defaultMinHeight: CGFloat = 1.25
-  private static let defaultMaxHeight: CGFloat = 28
+  private static let defaultBarCount = 11
+  private static let defaultMinHeight: CGFloat = 1.0714285714285714
+  private static let defaultMaxHeight: CGFloat = 28.238095238095244
   private static let defaultIdleHeight: CGFloat = 0
-  private static let defaultBarWidth: CGFloat = 1.64
-  private static let defaultSpacing: CGFloat = 1.37
-  private static let defaultUpdateInterval: TimeInterval = 0.125
-  private static let defaultNoiseFloor: CGFloat = 0.06
-  private static let defaultResponseExponent: CGFloat = 0.56
-  private static let defaultSilenceThreshold: CGFloat = 0.008
-  private static let defaultDecayDuration: TimeInterval = 0.7
-  private static let defaultUpdateDuration: TimeInterval = 0.07
+  private static let defaultBarWidth: CGFloat = 1.9733333333333334
+  private static let defaultSpacing: CGFloat = 0.9523809523809523
+  private static let defaultUpdateInterval: TimeInterval = 0.11482142857142859
+  private static let defaultNoiseFloor: CGFloat = 0.09523809523809523
+  private static let defaultResponseExponent: CGFloat = 0.5
+  private static let defaultSilenceThreshold: CGFloat = 0.0035714285714285713
+  private static let defaultDecayDuration: TimeInterval = 0.41607142857142854
+  private static let defaultUpdateDuration: TimeInterval = 0.10051020408163266
 
   #if DEBUG
   @ObservedObject private var settings = WaveformSettings.shared

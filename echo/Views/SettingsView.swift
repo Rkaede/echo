@@ -172,6 +172,21 @@ struct GeneralSettingsView: View {
           .foregroundColor(.secondary)
       }
 
+      Section("Troubleshooting") {
+        HStack {
+          Button("Open Logs Folder") {
+            LoggingService.shared.openLogsFolder()
+          }
+          .buttonStyle(.bordered)
+
+          Spacer()
+        }
+
+        Text("Contains diagnostic logs for troubleshooting issues.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+
     }
     .formStyle(.grouped)
     .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
