@@ -21,6 +21,7 @@ class UnifiedAudioEngine: ObservableObject {
   private let playerNode = AVAudioPlayerNode()
   private var sinkNode: AVAudioSinkNode?
   private var recordingMixerNode: AVAudioMixerNode?
+  private var pendingPlaybackCount = 0
 
   // Thread-safe queue for audio processing (access to shared state)
   private let audioProcessingQueue = DispatchQueue(
@@ -50,6 +51,14 @@ class UnifiedAudioEngine: ObservableObject {
   nonisolated(unsafe) private var lastLevelUpdate: TimeInterval = 0
   private let levelUpdateThrottle: TimeInterval = 0.05  // 20Hz max (50ms)
   private let waveformBarCount: Int = 12
+  nonisolated private static let normalizationTargetPeak: Float = 0.35
+  nonisolated fileprivate static let normalizationMinPeak: Float = 0.02
+  nonisolated private static let normalizationMinGain: Float = 0.75
+  nonisolated private static let normalizationMaxGain: Float = 8.0
+  nonisolated private static let normalizationDecayPerSecond: Float = 0.85
+  nonisolated private static let normalizationSilenceGate: Float = 0.003
+  nonisolated private static let normalizationGainSmoothing: Float = 0.2
+  nonisolated(unsafe) private var normalizationState = WaveformNormalizationState()
 
   // Sound buffers (preloaded)
   private var recordingStartBuffer: AVAudioPCMBuffer?
@@ -59,13 +68,17 @@ class UnifiedAudioEngine: ObservableObject {
   private var hasAttemptedStart = false
   private var audioSessionConfigured = false
   private var configurationChangeObserver: NSObjectProtocol?
+  private var idlePolicyObserver: NSObjectProtocol?
+  private var idleStopTask: Task<Void, Never>?
   private var needsConfigurationReset = false
   private var lastKnownMixerSampleRate: Double?
   private var lastKnownMixerChannelCount: AVAudioChannelCount?
+  private let settingsManager = SettingsManager.shared
 
   private init() {
     setupAudioEngine()
     setupEngineConfigurationObserver()
+    setupIdlePolicyObserver()
     // Don't start engine immediately - wait until first use
     // This avoids Core Audio HAL errors before permissions are granted
   }
@@ -75,6 +88,9 @@ class UnifiedAudioEngine: ObservableObject {
     // Note: Can't call MainActor methods from deinit
     // The AVAudioEngine will stop itself when deallocated
     if let observer = configurationChangeObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    if let observer = idlePolicyObserver {
       NotificationCenter.default.removeObserver(observer)
     }
   }
@@ -205,19 +221,132 @@ class UnifiedAudioEngine: ObservableObject {
     ) { [weak self] _ in
       guard let self = self else { return }
 
-      log(
-        "Audio engine configuration changed",
-        category: unifiedAudioEngineLogCategory,
-        level: .warning
-      )
+      Task { @MainActor in
+        log(
+          "Audio engine configuration changed",
+          category: unifiedAudioEngineLogCategory,
+          level: .warning
+        )
 
-      // Defer reset until we're idle to avoid disrupting an active recording.
-      if self.isRecordingActive {
-        self.needsConfigurationReset = true
-        return
+        // Defer reset until we're idle to avoid disrupting an active recording.
+        if self.isRecordingActive {
+          self.needsConfigurationReset = true
+          return
+        }
+
+        self.resetEngineForConfigurationChange()
       }
+    }
+  }
 
-      self.resetEngineForConfigurationChange()
+  private func setupIdlePolicyObserver() {
+    idlePolicyObserver = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      Task { @MainActor in
+        self.handleIdlePolicyChange()
+      }
+    }
+  }
+
+  private func handleIdlePolicyChange() {
+    switch settingsManager.audioEngineIdlePolicy {
+    case .stopWhenIdle:
+      stopEngineIfIdle()
+    case .idleTimeout:
+      if !isRecordingActive && !playerNode.isPlaying {
+        scheduleIdleStop()
+      }
+    case .alwaysOn:
+      cancelIdleStop()
+    }
+  }
+
+  private func cancelIdleStop() {
+    idleStopTask?.cancel()
+    idleStopTask = nil
+  }
+
+  private func scheduleIdleStop() {
+    cancelIdleStop()
+
+    switch settingsManager.audioEngineIdlePolicy {
+    case .stopWhenIdle:
+      log(
+        "Idle policy: stopWhenIdle",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      stopEngineIfIdle()
+    case .idleTimeout:
+      let seconds = max(2, min(60, settingsManager.audioEngineIdleTimeoutSeconds))
+      log(
+        "Idle policy: idleTimeout (\(seconds)s)",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      idleStopTask = Task { [weak self] in
+        try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+        await MainActor.run {
+          self?.stopEngineIfIdle()
+        }
+      }
+    case .alwaysOn:
+      log(
+        "Idle policy: alwaysOn",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      break
+    }
+  }
+
+  private func stopEngineIfIdle() {
+    guard !isRecordingActive else {
+      log(
+        "Idle stop skipped: recording active",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      return
+    }
+    guard pendingPlaybackCount == 0 else {
+      log(
+        "Idle stop skipped: pending playback count = \(pendingPlaybackCount)",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      return
+    }
+
+    if engine.isRunning {
+      engine.stop()
+    }
+    engine.reset()
+    hasAttemptedStart = false
+    log(
+      "Engine stopped and reset due to idle policy",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+  }
+
+  private func handlePlaybackCompletion() {
+    pendingPlaybackCount = max(0, pendingPlaybackCount - 1)
+    log(
+      "Playback completed (pending: \(pendingPlaybackCount))",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    if pendingPlaybackCount == 0 {
+      if playerNode.isPlaying {
+        playerNode.stop()
+      }
+      scheduleIdleStop()
     }
   }
 
@@ -249,8 +378,8 @@ class UnifiedAudioEngine: ObservableObject {
     lastKnownMixerChannelCount = mixerFormat.channelCount
   }
 
-  // Note: We keep the engine always running for optimal performance
-  // No stopEngine() method - engine runs continuously
+  // Note: The engine can be kept running or stopped when idle based on settings.
+  // There is no public stopEngine() API; idle behavior is managed internally.
 
   // MARK: - Recording
 
@@ -266,6 +395,9 @@ class UnifiedAudioEngine: ObservableObject {
     guard !isRecordingActive else {
       throw UnifiedAudioEngineError.alreadyRecording
     }
+
+    cancelIdleStop()
+    normalizationState = WaveformNormalizationState()
 
     // Ensure engine is started (lazy initialization)
     let engineStartTime = Date()
@@ -691,20 +823,8 @@ class UnifiedAudioEngine: ObservableObject {
       level: .info
     )
 
-    // Stop the engine to release input node connection
-    engine.stop()
-
-    // Reset the audio engine graph to fully release all audio resources
-    // This ensures the input node is completely disconnected and the macOS
-    // recording indicator (orange dot) is cleared
-    engine.reset()
-
-    hasAttemptedStart = false  // Reset flag to allow engine restart on next recording
-    log(
-      "Engine stopped and reset - recording indicator cleared",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
+    // Apply idle policy (may stop/reset immediately or after a timeout)
+    scheduleIdleStop()
 
     return url
   }
@@ -732,16 +852,6 @@ class UnifiedAudioEngine: ObservableObject {
         )
       }
     }
-
-    // Ensure engine is stopped (stopRecording should have done this, but be explicit)
-    engine.stop()
-    engine.reset()
-    hasAttemptedStart = false  // Reset flag to allow engine restart on next recording
-    log(
-      "Engine stopped and reset after cancellation",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
   }
 
   // MARK: - Real-Time Audio Callback (C-Style for Performance)
@@ -848,14 +958,13 @@ class UnifiedAudioEngine: ObservableObject {
       if timeSinceLastUpdate > self.levelUpdateThrottle {
         self.lastLevelUpdate = now
 
-        // Calculate level from copied buffer and dispatch to main thread
-        if let level = self.normalizedLevel(from: copiedBuffer) {
-          // Also extract waveform samples for visualization
-          let samples = self.extractWaveformSamples(from: copiedBuffer)
+        let rawSamples = self.extractWaveformSamples(from: copiedBuffer)
+        let normalized = self.normalizeWaveformSamples(rawSamples, now: now)
 
+        if let level = self.normalizedLevel(from: copiedBuffer, gain: normalized.gain, isSilent: normalized.isSilent) {
           Task { @MainActor [weak self] in
             self?.updateLevel(level)
-            self?.updateWaveformSamples(samples)
+            self?.updateWaveformSamples(normalized.samples)
           }
         }
       }
@@ -997,8 +1106,58 @@ class UnifiedAudioEngine: ObservableObject {
 
   // MARK: - Level Monitoring
 
+  /// Normalizes raw waveform samples so different input devices render similar visual ranges
+  nonisolated private func normalizeWaveformSamples(
+    _ samples: [Float],
+    now: TimeInterval
+  ) -> (samples: [Float], gain: Float, isSilent: Bool) {
+    guard !samples.isEmpty else {
+      return ([], 1, true)
+    }
+
+    let peak = samples.max() ?? 0
+    let isSilent = peak <= Self.normalizationSilenceGate
+
+    var state = normalizationState
+    let delta = max(0, now - state.lastUpdate)
+    let decay = pow(Self.normalizationDecayPerSecond, Float(delta))
+
+    if peak > state.referencePeak {
+      state.referencePeak = peak
+    } else {
+      state.referencePeak = max(peak, state.referencePeak * decay)
+    }
+
+    state.lastUpdate = now
+
+    let referencePeak = max(state.referencePeak, Self.normalizationMinPeak)
+    var targetGain = Self.normalizationTargetPeak / referencePeak
+    targetGain = min(Self.normalizationMaxGain, max(Self.normalizationMinGain, targetGain))
+    state.gain = state.gain + (targetGain - state.gain) * Self.normalizationGainSmoothing
+
+    normalizationState = state
+
+    if isSilent {
+      return (Array(repeating: 0, count: samples.count), state.gain, true)
+    }
+
+    var normalizedSamples = samples
+    for i in 0..<normalizedSamples.count {
+      normalizedSamples[i] = min(1, normalizedSamples[i] * state.gain)
+    }
+
+    return (normalizedSamples, state.gain, false)
+  }
+
   /// Calculates a normalized audio level from the provided buffer
-  nonisolated private func normalizedLevel(from buffer: AVAudioPCMBuffer) -> CGFloat? {
+  nonisolated private func normalizedLevel(
+    from buffer: AVAudioPCMBuffer,
+    gain: Float,
+    isSilent: Bool
+  ) -> CGFloat? {
+    if isSilent {
+      return 0
+    }
     guard let channelData = buffer.floatChannelData?[0] else { return nil }
     let frameLength = Int(buffer.frameLength)
 
@@ -1009,10 +1168,11 @@ class UnifiedAudioEngine: ObservableObject {
     }
 
     let rms = sqrt(sum / Float(frameLength))
-    let db = 20 * log10(max(rms, 0.000001))  // Avoid log(0)
+    let adjustedRms = min(1, rms * gain)
+    let db = 20 * log10(max(adjustedRms, 0.000001))  // Avoid log(0)
 
     // Normalize to 0-1 range
-    let minDb: Float = -60
+    let minDb: Float = -55
     let maxDb: Float = -10
     let normalized = (db - minDb) / (maxDb - minDb)
     let clamped = max(0, min(1, normalized))
@@ -1207,8 +1367,16 @@ class UnifiedAudioEngine: ObservableObject {
 
     log("Playing \(type) sound", category: unifiedAudioEngineLogCategory, level: .debug)
 
+    cancelIdleStop()
     // Ensure engine is started (lazy initialization)
     ensureEngineStarted()
+
+    pendingPlaybackCount += 1
+    log(
+      "Scheduled playback (pending: \(pendingPlaybackCount))",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
 
     // Schedule buffer on player node
     playerNode.scheduleBuffer(buffer) {
@@ -1217,6 +1385,9 @@ class UnifiedAudioEngine: ObservableObject {
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
+      Task { @MainActor in
+        self.handlePlaybackCompletion()
+      }
       completion?()
     }
 
@@ -1236,6 +1407,15 @@ class UnifiedAudioEngine: ObservableObject {
     }
     log("Cleared \(type) sound from memory", category: unifiedAudioEngineLogCategory, level: .debug)
   }
+}
+
+// MARK: - Waveform Normalization
+
+/// State for adaptive waveform normalization (accessed on async write queue only).
+private struct WaveformNormalizationState {
+  var referencePeak: Float = UnifiedAudioEngine.normalizationMinPeak
+  var gain: Float = 1
+  var lastUpdate: TimeInterval = 0
 }
 
 // MARK: - Buffer Pool

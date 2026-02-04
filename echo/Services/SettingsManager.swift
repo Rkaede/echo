@@ -1,6 +1,12 @@
 import Foundation
 import SwiftUI
 
+enum AudioEngineIdlePolicy: String, CaseIterable {
+  case stopWhenIdle
+  case idleTimeout
+  case alwaysOn
+}
+
 @MainActor
 class SettingsManager: ObservableObject {
   static let shared = SettingsManager()
@@ -27,6 +33,13 @@ class SettingsManager: ObservableObject {
   @AppStorage("soundOnTranscriptionComplete") var soundOnTranscriptionComplete = true
   @AppStorage("recordingStartSound") var recordingStartSound = "click01"
   @AppStorage("transcriptionCompleteSound") var transcriptionCompleteSound = "click02"
+  @AppStorage("audioEngineIdlePolicyRaw") var audioEngineIdlePolicyRaw = AudioEngineIdlePolicy.stopWhenIdle.rawValue
+  @AppStorage("audioEngineIdleTimeoutSeconds") var audioEngineIdleTimeoutSeconds = 10
+
+  var audioEngineIdlePolicy: AudioEngineIdlePolicy {
+    get { AudioEngineIdlePolicy(rawValue: audioEngineIdlePolicyRaw) ?? .stopWhenIdle }
+    set { audioEngineIdlePolicyRaw = newValue.rawValue }
+  }
   
   // API key uses lazy loading to avoid immediate keychain access
   var apiKey: String {

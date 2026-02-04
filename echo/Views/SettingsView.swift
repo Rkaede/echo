@@ -137,6 +137,36 @@ struct GeneralSettingsView: View {
           .foregroundColor(.secondary)
       }
 
+      Section("Microphone") {
+        Picker(
+          "Engine idle behavior",
+          selection: Binding(
+            get: { settings.audioEngineIdlePolicy },
+            set: { settings.audioEngineIdlePolicy = $0 }
+          )
+        ) {
+          Text("Stop when idle").tag(AudioEngineIdlePolicy.stopWhenIdle)
+          Text("Idle timeout").tag(AudioEngineIdlePolicy.idleTimeout)
+          Text("Always on").tag(AudioEngineIdlePolicy.alwaysOn)
+        }
+
+        if settings.audioEngineIdlePolicy == .idleTimeout {
+          Stepper(
+            value: $settings.audioEngineIdleTimeoutSeconds,
+            in: 2...60,
+            step: 1
+          ) {
+            Text("Idle timeout: \(settings.audioEngineIdleTimeoutSeconds) seconds")
+          }
+        }
+
+        Text(
+          "Controls how long Echo keeps the audio engine running after activity. Stopping clears the mic indicator but may increase start latency and Bluetooth mode switches."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
       Section("Clipboard") {
         Toggle("Restore clipboard after pasting", isOn: $settings.restoreClipboard)
 

@@ -57,21 +57,23 @@ struct EchoApp: App {
     .defaultSize(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
     .defaultLaunchBehavior(.suppressed)
     .windowStyle(.hiddenTitleBar)
-    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) { _ in handleHotkeyToggle() }
-    .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) { _ in handlePushToTalkStart() }
-    .onChange(of: globalShortcutMonitor.shouldStopPushToTalk) { _ in handlePushToTalkStop() }
-    .onChange(of: displayManager.shouldRepositionOverlay) { _ in repositionOverlayPanel() }
-    .onChange(of: displayManager.spaceDidChange) { _ in handleSpaceChange() }
-    .onChange(of: globalShortcutMonitor.shouldCancelRecording) { _ in handleCancelRecording() }
-    .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) { _ in handleProfileSwitch(direction: .next) }
-    .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) { _ in handleProfileSwitch(direction: .previous) }
-    .onChange(of: historyManager.recentTranscriptions) { _ in updateHistoryState() }
-    .onChange(of: historyManager.totalCount) { _ in updateHistoryState() }
+    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) { _, _ in handleHotkeyToggle() }
+    .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) { _, _ in handlePushToTalkStart() }
+    .onChange(of: globalShortcutMonitor.shouldStopPushToTalk) { _, _ in handlePushToTalkStop() }
+    .onChange(of: displayManager.shouldRepositionOverlay) { _, _ in repositionOverlayPanel() }
+    .onChange(of: displayManager.spaceDidChange) { _, _ in handleSpaceChange() }
+    .onChange(of: globalShortcutMonitor.shouldCancelRecording) { _, _ in handleCancelRecording() }
+    .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) { _, _ in handleProfileSwitch(direction: .next) }
+    .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) { _, _ in handleProfileSwitch(direction: .previous) }
+    .onChange(of: historyManager.recentTranscriptions) { _, _ in updateHistoryState() }
+    .onChange(of: historyManager.totalCount) { _, _ in updateHistoryState() }
     .onChange(of: appState.status) { old, new in
       updateRecordingStateInGlobalShortcutMonitor()
       handleOverlayVisibility(oldStatus: old, newStatus: new)
     }
-    .onChange(of: profilesService.profiles) { _ in globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles) }
+    .onChange(of: profilesService.profiles) { _, _ in
+      globalShortcutMonitor.loadProfileShortcuts(from: profilesService.profiles)
+    }
     .onChange(of: globalShortcutMonitor.triggeredProfileId) { _, new in
       if let profileId = new {
         handleProfileShortcut(profileId: profileId)
