@@ -17,6 +17,8 @@ class TranscriptionService: ObservableObject {
 
   private var cancellables = Set<AnyCancellable>()
   private var isCancelled = false
+  private var transcriptionTask: Task<TranscriptionServiceResult, Never>?
+  private var transcriptionToken: UUID?
 
   private var recordingStartTime: Date?
   private var transcriptionStartTime: Date?
@@ -45,6 +47,11 @@ class TranscriptionService: ObservableObject {
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
     log("------------------------------------------------------", category: loggerCategory, level: .info)
     log("startRecording called with mode: \(mode)", category: loggerCategory, level: .info)
+
+    // Cancel any in-flight transcription task from a previous session
+    transcriptionTask?.cancel()
+    transcriptionTask = nil
+    transcriptionToken = nil
 
     // Reset cancellation flag for new recording
     isCancelled = false
@@ -146,6 +153,12 @@ class TranscriptionService: ObservableObject {
       return .failure(error)
     }
 
+    if isCancelled {
+      log("Stop recording aborted due to cancellation", category: loggerCategory, level: .info)
+      audioRecorder.deleteRecording()
+      return .success(())
+    }
+
     log("Recording stopped, file at: \(audioFileURL)", category: loggerCategory, level: .info)
     appState.updateStatus(.processing)
 
@@ -155,158 +168,24 @@ class TranscriptionService: ObservableObject {
     // Get active application context
     let activeApp = getActiveApplicationName()
 
-    // Ensure cleanup happens regardless of success or failure
-    defer {
-      audioRecorder.deleteRecording()
-    }
+    let token = UUID()
+    transcriptionToken = token
 
-    do {
-      log("Starting transcription", category: loggerCategory, level: .info)
-      transcriptionStartTime = Date()
-      let uploadStartTime = Date()
-
-      // Choose model from active profile when available
-      let modelToUse =
-        profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
-      let resultWithTiming = try await apiClient.transcribeAudio(
-        fileURL: audioFileURL, apiKey: settingsManager.apiKey, model: modelToUse)
-
-      let transcriptionEndTime = Date()
-      let totalTime = transcriptionEndTime.timeIntervalSince(transcriptionStartTime!)
-
-      // Extract timing data
-      let pureUploadTime = resultWithTiming.uploadTime
-      let downloadTime = resultWithTiming.downloadTime
-      let totalNetworkTime = resultWithTiming.totalNetworkTime
-
-      // Legacy uploadTime calculation (for backward compatibility)
-      let legacyUploadTime = transcriptionEndTime.timeIntervalSince(uploadStartTime)
-
-      log(
-        "Transcription completed: '\(resultWithTiming.result.text.prefix(50))...'",
-        category: loggerCategory, level: .info
+    transcriptionTask?.cancel()
+    transcriptionTask = Task { [audioFileURL, recordingDuration, activeApp, token] in
+      await self.runTranscriptionPipeline(
+        audioFileURL: audioFileURL,
+        recordingDuration: recordingDuration,
+        activeApp: activeApp,
+        token: token
       )
-
-      // Check if cancelled after API call completes
-      if isCancelled {
-        log("Ignoring transcription result due to cancellation", category: loggerCategory, level: .warning)
-        return .success(())
-      }
-
-      let transcribedText = resultWithTiming.result.text.trimmingCharacters(in: .whitespaces)
-      appState.transcriptionText = transcribedText
-
-      // Save successful transcription to history if enabled
-      if !transcribedText.isEmpty && settingsManager.enableHistory {
-        log("Preparing to save transcription to history", category: loggerCategory, level: .debug)
-
-        // Generate ID for this history entry
-        let historyEntryId = UUID()
-
-        // Save audio file if enabled and we have the recording file
-        var audioFileReference: String? = nil
-        if settingsManager.saveAudioWithHistory {
-          audioFileReference = AudioStorageManager.shared.saveAudioFile(
-            from: audioFileURL, transcriptionId: historyEntryId)
-
-          if audioFileReference != nil {
-            log("Saved audio file for history entry", category: loggerCategory, level: .debug)
-          } else {
-            log("Failed to save audio file, continuing without audio", category: loggerCategory, level: .warning)
-          }
-        }
-
-        let historyEntry = TranscriptionHistory(
-          id: historyEntryId,
-          transcribedText: transcribedText,
-          duration: recordingDuration,
-          audioFileReference: audioFileReference,
-          languageDetected: resultWithTiming.result.language,
-          modelUsed: modelToUse,
-          applicationContext: activeApp,
-          uploadTime: legacyUploadTime,  // Legacy field for backward compatibility
-          pureUploadTime: pureUploadTime,
-          downloadTime: downloadTime,
-          totalNetworkTime: totalNetworkTime,
-          groqProcessingTime: totalTime - legacyUploadTime,  // Server processing time
-          totalTranscriptionTime: totalTime
-        )
-
-        historyManager.saveTranscription(historyEntry)
-        log(
-          "Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")",
-          category: loggerCategory, level: .info
-        )
-      } else {
-        log(
-          "History save skipped - isEmpty: \(!transcribedText.isEmpty), enableHistory: \(settingsManager.enableHistory)",
-          category: loggerCategory, level: .debug
-        )
-      }
-
-      // Check cancellation before auto-paste
-      if isCancelled {
-        log("Skipping auto-paste due to cancellation", category: loggerCategory, level: .warning)
-        return .success(())
-      }
-
-      var finalText = transcribedText
-
-      // Optional post-processing based on active profile
-      if let profile = profilesService.activeProfile, profile.postProcessingEnabled,
-        !transcribedText.isEmpty
-      {
-        appState.updateStatus(.postProcessing)
-        let ppModel =
-          profile.postProcessingModel.isEmpty
-          ? PostProcessingModelOption.defaultOptionValue
-          : profile.postProcessingModel
-        do {
-          let processed = try await postProcessor.processText(
-            transcribedText, promptTemplate: profile.postProcessingPrompt,
-            postProcessingModel: ppModel)
-          // If not cancelled during processing, update final text and UI
-          if !isCancelled {
-            finalText = processed
-            appState.transcriptionText = processed
-          }
-        } catch {
-          log("Post-processing failed: \(error)", category: loggerCategory, level: .warning)
-          // Fall back to raw text; proceed without blocking
-        }
-      }
-
-      // Automatically paste the chosen text
-      if !finalText.isEmpty {
-        let pasteSuccess = await performAutoPaste(text: finalText)
-        if !pasteSuccess {
-          log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
-        } else {
-          // Play completion sound only if paste was successful
-          soundManager.playTranscriptionCompleteSound()
-        }
-      } else {
-        log("No text to paste (empty result)", category: loggerCategory, level: .warning)
-      }
-
-      // Final check before marking as inserted
-      if isCancelled {
-        log("Skipping completion status due to cancellation", category: loggerCategory, level: .warning)
-        return .success(())
-      }
-
-      appState.updateStatus(.inserted)
-      log("Transcription workflow completed", category: loggerCategory, level: .info)
-      log("------------------------------------------------------", category: loggerCategory, level: .info)
-
-      return .success(())
-
-    } catch {
-      log("Transcription failed: \(error)", category: loggerCategory, level: .error)
-      let transcriptionError = TranscriptionError.transcriptionFailed(error)
-      appState.setError(transcriptionError.localizedDescription)
-      return .failure(transcriptionError)
     }
+
+    let result = await transcriptionTask?.value ?? .success(())
+    if transcriptionToken == token {
+      transcriptionTask = nil
+    }
+    return result
   }
 
   func cancelRecording() async -> TranscriptionServiceResult {
@@ -314,6 +193,9 @@ class TranscriptionService: ObservableObject {
 
     // Mark as cancelled to prevent completion of ongoing operations
     isCancelled = true
+    transcriptionToken = nil
+    transcriptionTask?.cancel()
+    transcriptionTask = nil
 
     switch appState.status {
     case .recording:
@@ -358,6 +240,209 @@ class TranscriptionService: ObservableObject {
   }
 
   // MARK: - Private Methods
+
+  private func runTranscriptionPipeline(
+    audioFileURL: URL,
+    recordingDuration: TimeInterval,
+    activeApp: String?,
+    token: UUID
+  ) async -> TranscriptionServiceResult {
+    let localToken = token
+
+    func shouldContinue(stage: String) -> Bool {
+      if Task.isCancelled {
+        log("Task cancelled during \(stage)", category: loggerCategory, level: .info)
+        return false
+      }
+      if isCancelled {
+        log("Cancelled flag set during \(stage)", category: loggerCategory, level: .info)
+        return false
+      }
+      if transcriptionToken != localToken {
+        log("Stale transcription task during \(stage)", category: loggerCategory, level: .info)
+        return false
+      }
+      return true
+    }
+
+    // Ensure cleanup happens regardless of success or failure
+    defer {
+      audioRecorder.deleteRecording()
+    }
+
+    do {
+      if !shouldContinue(stage: "transcription start") {
+        return .success(())
+      }
+
+      log("Starting transcription", category: loggerCategory, level: .info)
+      transcriptionStartTime = Date()
+      let uploadStartTime = Date()
+
+      // Choose model from active profile when available
+      let modelToUse =
+        profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
+      let resultWithTiming = try await apiClient.transcribeAudio(
+        fileURL: audioFileURL, apiKey: settingsManager.apiKey, model: modelToUse)
+
+      if !shouldContinue(stage: "transcription response") {
+        log(
+          "Ignoring transcription result due to cancellation",
+          category: loggerCategory,
+          level: .warning
+        )
+        return .success(())
+      }
+
+      let transcriptionEndTime = Date()
+      let totalTime = transcriptionEndTime.timeIntervalSince(transcriptionStartTime!)
+
+      // Extract timing data
+      let pureUploadTime = resultWithTiming.uploadTime
+      let downloadTime = resultWithTiming.downloadTime
+      let totalNetworkTime = resultWithTiming.totalNetworkTime
+
+      // Legacy uploadTime calculation (for backward compatibility)
+      let legacyUploadTime = transcriptionEndTime.timeIntervalSince(uploadStartTime)
+
+      log(
+        "Transcription completed: '\(resultWithTiming.result.text.prefix(50))...'",
+        category: loggerCategory,
+        level: .info
+      )
+
+      let transcribedText = resultWithTiming.result.text.trimmingCharacters(in: .whitespaces)
+      appState.transcriptionText = transcribedText
+
+      // Save successful transcription to history if enabled
+      if !transcribedText.isEmpty && settingsManager.enableHistory {
+        log("Preparing to save transcription to history", category: loggerCategory, level: .debug)
+
+        // Generate ID for this history entry
+        let historyEntryId = UUID()
+
+        // Save audio file if enabled and we have the recording file
+        var audioFileReference: String? = nil
+        if settingsManager.saveAudioWithHistory {
+          audioFileReference = AudioStorageManager.shared.saveAudioFile(
+            from: audioFileURL, transcriptionId: historyEntryId)
+
+          if audioFileReference != nil {
+            log("Saved audio file for history entry", category: loggerCategory, level: .debug)
+          } else {
+            log(
+              "Failed to save audio file, continuing without audio",
+              category: loggerCategory,
+              level: .warning
+            )
+          }
+        }
+
+        let historyEntry = TranscriptionHistory(
+          id: historyEntryId,
+          transcribedText: transcribedText,
+          duration: recordingDuration,
+          audioFileReference: audioFileReference,
+          languageDetected: resultWithTiming.result.language,
+          modelUsed: modelToUse,
+          applicationContext: activeApp,
+          uploadTime: legacyUploadTime,  // Legacy field for backward compatibility
+          pureUploadTime: pureUploadTime,
+          downloadTime: downloadTime,
+          totalNetworkTime: totalNetworkTime,
+          groqProcessingTime: totalTime - legacyUploadTime,  // Server processing time
+          totalTranscriptionTime: totalTime
+        )
+
+        historyManager.saveTranscription(historyEntry)
+        log(
+          "Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")",
+          category: loggerCategory,
+          level: .info
+        )
+      } else {
+        log(
+          "History save skipped - isEmpty: \(!transcribedText.isEmpty), enableHistory: \(settingsManager.enableHistory)",
+          category: loggerCategory,
+          level: .debug
+        )
+      }
+
+      if !shouldContinue(stage: "pre post-processing") {
+        log("Skipping post-processing due to cancellation", category: loggerCategory, level: .warning)
+        return .success(())
+      }
+
+      var finalText = transcribedText
+
+      // Optional post-processing based on active profile
+      if let profile = profilesService.activeProfile, profile.postProcessingEnabled,
+        !transcribedText.isEmpty
+      {
+        appState.updateStatus(.postProcessing)
+        let ppModel =
+          profile.postProcessingModel.isEmpty
+          ? PostProcessingModelOption.defaultOptionValue
+          : profile.postProcessingModel
+        do {
+          let processed = try await postProcessor.processText(
+            transcribedText, promptTemplate: profile.postProcessingPrompt,
+            postProcessingModel: ppModel)
+          if shouldContinue(stage: "post-processing") {
+            finalText = processed
+            appState.transcriptionText = processed
+          }
+        } catch {
+          log("Post-processing failed: \(error)", category: loggerCategory, level: .warning)
+          // Fall back to raw text; proceed without blocking
+        }
+      }
+
+      if !shouldContinue(stage: "auto-paste") {
+        log("Skipping auto-paste due to cancellation", category: loggerCategory, level: .warning)
+        return .success(())
+      }
+
+      // Automatically paste the chosen text
+      if !finalText.isEmpty {
+        let pasteSuccess = await performAutoPaste(text: finalText)
+        if !pasteSuccess {
+          log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
+        } else {
+          // Play completion sound only if paste was successful
+          soundManager.playTranscriptionCompleteSound()
+        }
+      } else {
+        log("No text to paste (empty result)", category: loggerCategory, level: .warning)
+      }
+
+      if !shouldContinue(stage: "completion") {
+        log("Skipping completion status due to cancellation", category: loggerCategory, level: .warning)
+        return .success(())
+      }
+
+      appState.updateStatus(.inserted)
+      log("Transcription workflow completed", category: loggerCategory, level: .info)
+      log("------------------------------------------------------", category: loggerCategory, level: .info)
+
+      return .success(())
+
+    } catch {
+      if error is CancellationError || (error as? URLError)?.code == .cancelled {
+        log("Transcription task cancelled", category: loggerCategory, level: .info)
+        return .success(())
+      }
+
+      if !shouldContinue(stage: "error handling") {
+        return .success(())
+      }
+
+      log("Transcription failed: \(error)", category: loggerCategory, level: .error)
+      let transcriptionError = TranscriptionError.transcriptionFailed(error)
+      appState.setError(transcriptionError.localizedDescription)
+      return .failure(transcriptionError)
+    }
+  }
 
   private func getActiveApplicationName() -> String? {
     guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {

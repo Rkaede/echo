@@ -68,14 +68,15 @@ class AppState: ObservableObject {
     @Published var recentTranscriptions: [TranscriptionHistory] = []
 
     private var confirmationTimeoutTask: Task<Void, Never>?
+    private var statusResetTask: Task<Void, Never>?
     private var _previousStatusBeforeConfirmation: RecordingStatus?
     private var profileDisplayTimeoutTask: Task<Void, Never>?
 
     init() {}
     
     func updateStatus(_ newStatus: RecordingStatus) {
-        // Prevent overwriting cancelled state unless transitioning to idle
-        if status == .cancelled && newStatus != .idle {
+        // Prevent stale async updates from overwriting cancelled state, but allow a new recording session.
+        if status == .cancelled && newStatus != .idle && newStatus != .initiatingRecording {
             log("Ignoring state change from cancelled to \(newStatus)", category: loggerCategory, level: .debug)
             return
         }
@@ -93,22 +94,32 @@ class AppState: ObservableObject {
             errorCategory = nil
         }
 
+        // Any non-transient transition should cancel pending auto-reset from a previous status.
+        statusResetTask?.cancel()
+        statusResetTask = nil
+
         log("Status changing from \(status) to \(newStatus)", category: loggerCategory, level: .info)
         status = newStatus
 
-        // If status is inserted, cancelled, or error, automatically return to idle after delay
+        // Auto-dismiss transient statuses only if they are still active when the delay ends.
         if newStatus == .inserted || newStatus == .cancelled {
-            Task {
-                try await Task.sleep(nanoseconds: 2_000_000_000)
-                self.status = .idle
-                self.recordingMode = nil
-            }
+            scheduleStatusReset(for: newStatus, afterNanoseconds: 2_000_000_000)
         } else if newStatus == .error {
             // Auto-dismiss errors after 3.5 seconds (longer than success states)
-            Task {
-                try await Task.sleep(nanoseconds: 3_500_000_000)
+            scheduleStatusReset(for: newStatus, afterNanoseconds: 3_500_000_000)
+        }
+    }
+
+    private func scheduleStatusReset(for expectedStatus: RecordingStatus, afterNanoseconds delay: UInt64) {
+        statusResetTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+                guard self.status == expectedStatus else { return }
                 self.status = .idle
                 self.recordingMode = nil
+            } catch {
+                // Task was cancelled, which is expected
             }
         }
     }
@@ -188,6 +199,8 @@ class AppState: ObservableObject {
         log("Force resetting to idle state", category: loggerCategory, level: .info)
         confirmationTimeoutTask?.cancel()
         confirmationTimeoutTask = nil
+        statusResetTask?.cancel()
+        statusResetTask = nil
         profileDisplayTimeoutTask?.cancel()
         profileDisplayTimeoutTask = nil
         _previousStatusBeforeConfirmation = nil

@@ -35,13 +35,13 @@ class TranscriptionViewModel: ObservableObject {
   func toggleRecording() async {
     print("TranscriptionViewModel: toggleRecording called, current status: \(appState.status)")
     switch appState.status {
-    case .idle, .error:
+    case .idle, .error, .inserted, .cancelled:
       print("TranscriptionViewModel: Starting recording from \(appState.status) state")
       await startRecording()
     case .recording:
       print("TranscriptionViewModel: Stopping recording")
       await stopRecording()
-    case .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
+    case .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
       print("TranscriptionViewModel: Ignoring toggle, currently in \(appState.status) state")
       break
     }
@@ -49,11 +49,11 @@ class TranscriptionViewModel: ObservableObject {
   }
   
   func startRecordingOnly() async {
-    // Only start recording if we're in idle or error state
+    // Allow immediate restart from transient completion states.
     switch appState.status {
-    case .idle, .error:
+    case .idle, .error, .inserted, .cancelled:
       await startRecording(mode: .pushToTalk)
-    case .recording, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
+    case .recording, .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
       // Don't start if already recording or processing
       print("TranscriptionViewModel: Cannot start push-to-talk recording - already in \(appState.status) state")
       break
@@ -151,7 +151,7 @@ class TranscriptionViewModel: ObservableObject {
 
   var isButtonDisabled: Bool {
     switch appState.status {
-    case .processing, .postProcessing, .initiatingRecording, .cancelled, .confirmingCancel:
+    case .processing, .postProcessing, .initiatingRecording, .confirmingCancel:
       return true
     default:
       // Only check API key - microphone permission will be requested when needed
