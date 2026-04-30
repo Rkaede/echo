@@ -52,6 +52,37 @@ xcodebuild -scheme Echo test
 # Check for zero errors and warnings in output
 ``` 
 
+## Diagnostic Logs
+
+Use the in-app route first because sandboxed builds may place logs under the app
+container:
+
+1. Open Echo Settings.
+2. Click **Open Logs Folder**.
+3. Inspect the newest files in that folder.
+
+Log files:
+- `echo-YYYY-MM-DD.log` - persisted `LoggingService` warning/error entries.
+- `echo-console-YYYY-MM-DD.log` - mirrored stdout/stderr from the app process, including
+  raw `print()` output and framework/CoreAudio diagnostics such as `throwing -10877`,
+  `HALC_ProxyIOContext`, and `HALB_IOThread` lines.
+
+Filesystem fallbacks:
+```bash
+# Development sandbox build
+open "$HOME/Library/Containers/io.littlecove.echo.dev/Data/Library/Application Support/Echo/logs"
+
+# Release sandbox build
+open "$HOME/Library/Containers/io.littlecove.echo/Data/Library/Application Support/Echo/logs"
+
+# Unsandboxed/local fallback
+open "$HOME/Library/Application Support/Echo/logs"
+```
+
+When debugging audio/Bluetooth recording failures, ask the user to restart Echo, reproduce
+the failure once, then collect the newest `echo-console-YYYY-MM-DD.log`. Console capture is
+started at app launch by `LoggingService.shared.startConsoleCapture()`.
+
 ## Testing
 
 The project uses **Swift Testing framework** (Apple's modern testing framework introduced in Swift 5.9+). Tests are implemented for core logic and state management.

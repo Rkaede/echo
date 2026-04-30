@@ -102,6 +102,13 @@ class AudioRecorder: NSObject, ObservableObject {
   private var currentRecordingURL: URL?
 
   func getCurrentInputDevice() -> String {
+    let selection = AudioInputDeviceManager.shared.resolvedSelection(
+      for: SettingsManager.shared.selectedInputDeviceUID
+    )
+    if let selectedDevice = selection.device {
+      return selectedDevice.name
+    }
+
     guard let defaultDevice = AVCaptureDevice.default(for: .audio) else {
       return "Unknown"
     }
@@ -133,11 +140,9 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     do {
-      // Start recording via unified engine
-      try unifiedEngine.startRecording(to: recordingURL)
-
-      // Wait briefly to verify the recording actually started
-      try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+      // Start recording via unified engine. Internally this verifies the HAL is actually
+      // delivering audio frames before returning, so no additional settle delay is needed.
+      try await unifiedEngine.startRecording(to: recordingURL)
 
       recordingStartTime = Date()
       isRecording = true
@@ -217,7 +222,9 @@ class AudioRecorder: NSObject, ObservableObject {
     // However, we can perform basic validation to ensure the audio system is ready.
 
     // Verify we have an available audio input device
-    guard AVCaptureDevice.default(for: .audio) != nil else {
+    guard AudioInputDeviceManager.shared.currentDefaultInputDevice() != nil
+      || AVCaptureDevice.default(for: .audio) != nil
+    else {
       print("No audio input device available")
       throw RecordingError.audioSessionConfigurationFailed
     }

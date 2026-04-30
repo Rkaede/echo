@@ -35,6 +35,8 @@ class SettingsManager: ObservableObject {
   @AppStorage("transcriptionCompleteSound") var transcriptionCompleteSound = "click02"
   @AppStorage("audioEngineIdlePolicyRaw") var audioEngineIdlePolicyRaw = AudioEngineIdlePolicy.stopWhenIdle.rawValue
   @AppStorage("audioEngineIdleTimeoutSeconds") var audioEngineIdleTimeoutSeconds = 10
+  @AppStorage("selectedInputDeviceUID") var selectedInputDeviceUID = ""
+  @AppStorage("selectedInputDeviceName") var selectedInputDeviceName = ""
 
   var audioEngineIdlePolicy: AudioEngineIdlePolicy {
     get { AudioEngineIdlePolicy(rawValue: audioEngineIdlePolicyRaw) ?? .stopWhenIdle }

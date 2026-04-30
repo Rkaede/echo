@@ -17,6 +17,8 @@ struct EchoApp: App {
   private var overlayPanel: OverlayPanel?
 
   init() {
+    LoggingService.shared.startConsoleCapture()
+
     let appState = AppState()
     _appState = StateObject(wrappedValue: appState)
     _viewModel = StateObject(wrappedValue: TranscriptionViewModel(appState: appState))

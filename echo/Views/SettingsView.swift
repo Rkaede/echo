@@ -121,6 +121,7 @@ struct GeneralSettingsView: View {
   @EnvironmentObject private var updateManager: UpdateManager
   @Environment(\.openWindow) private var openWindow
   @ObservedObject private var settings = SettingsManager.shared
+  @StateObject private var audioInputDeviceManager = AudioInputDeviceManager.shared
 
   var body: some View {
     Form {
@@ -138,6 +139,38 @@ struct GeneralSettingsView: View {
       }
 
       Section("Microphone") {
+        Picker(
+          "Microphone",
+          selection: Binding(
+            get: { settings.selectedInputDeviceUID },
+            set: { uid in
+              settings.selectedInputDeviceUID = uid
+              settings.selectedInputDeviceName =
+                audioInputDeviceManager.devices.first(where: { $0.uid == uid })?.name ?? ""
+            }
+          )
+        ) {
+          Text("System Default").tag("")
+
+          if shouldShowUnavailableSelectedDevice {
+            Text("\(unavailableSelectedDeviceName) (Unavailable)")
+              .tag(settings.selectedInputDeviceUID)
+          }
+
+          ForEach(audioInputDeviceManager.devices) { device in
+            Text(device.name).tag(device.uid)
+          }
+        }
+        .onAppear {
+          audioInputDeviceManager.refreshDevices()
+        }
+
+        Text(
+          "Choose the microphone Echo uses for recordings. If the selected microphone is unavailable, Echo uses the system default."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+
         Picker(
           "Engine idle behavior",
           selection: Binding(
@@ -220,6 +253,17 @@ struct GeneralSettingsView: View {
     }
     .formStyle(.grouped)
     .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
+  }
+
+  private var shouldShowUnavailableSelectedDevice: Bool {
+    !settings.selectedInputDeviceUID.isEmpty
+      && !audioInputDeviceManager.devices.contains(where: { $0.uid == settings.selectedInputDeviceUID })
+  }
+
+  private var unavailableSelectedDeviceName: String {
+    settings.selectedInputDeviceName.isEmpty
+      ? "Selected microphone"
+      : settings.selectedInputDeviceName
   }
 }
 

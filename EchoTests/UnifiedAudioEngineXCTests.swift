@@ -6,6 +6,22 @@ import AVFoundation
 @MainActor
 final class UnifiedAudioEngineXCTests: XCTestCase {
 
+  private let builtInMic = AudioInputDevice(
+    uid: "built-in-mic",
+    name: "Built-in Microphone",
+    deviceID: AudioDeviceID(101)
+  )
+  private let usbMic = AudioInputDevice(
+    uid: "usb-mic",
+    name: "USB Microphone",
+    deviceID: AudioDeviceID(202)
+  )
+  private let duplicateNameMic = AudioInputDevice(
+    uid: "other-usb-mic",
+    name: "USB Microphone",
+    deviceID: AudioDeviceID(303)
+  )
+
   // MARK: - Error Enum Tests
 
   func testErrorDescriptions() {
@@ -57,7 +73,7 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
     let invalidURL = URL(fileURLWithPath: "/nonexistent/directory/audio.wav")
 
     do {
-      try UnifiedAudioEngine.shared.startRecording(to: invalidURL)
+      try await UnifiedAudioEngine.shared.startRecording(to: invalidURL)
       XCTFail("Expected error to be thrown")
     } catch {
       // Expected error
@@ -198,5 +214,51 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
       XCTAssertGreaterThanOrEqual(clamped, 0.0)
       XCTAssertLessThanOrEqual(clamped, 1.0)
     }
+  }
+
+  // MARK: - Input Device Selection Tests
+
+  func testEmptyInputDeviceUIDUsesDefaultDevice() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: "",
+      devices: [usbMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, builtInMic)
+    XCTAssertFalse(selection.isFallback)
+  }
+
+  func testAvailableInputDeviceUIDUsesSelectedDevice() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: usbMic.uid,
+      devices: [builtInMic, usbMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, usbMic)
+    XCTAssertFalse(selection.isFallback)
+  }
+
+  func testMissingInputDeviceUIDFallsBackToDefaultDevice() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: "missing-mic",
+      devices: [builtInMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, builtInMic)
+    XCTAssertTrue(selection.isFallback)
+  }
+
+  func testInputDeviceSelectionUsesUIDWhenNamesAreDuplicated() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: duplicateNameMic.uid,
+      devices: [usbMic, duplicateNameMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, duplicateNameMic)
+    XCTAssertFalse(selection.isFallback)
   }
 }

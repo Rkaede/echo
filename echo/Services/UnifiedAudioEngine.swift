@@ -1,27 +1,36 @@
 // Treat legacy AVFoundation types as @unchecked Sendable while the module awaits concurrency annotations.
 @preconcurrency import AVFoundation
+import AudioToolbox
 import Combine
 import CoreGraphics
 import Foundation
 
 private let unifiedAudioEngineLogCategory = "UnifiedAudioEngine"
 
-/// Unified audio engine that manages all audio operations (recording + playback) through a single AVAudioEngine instance.
-/// This architecture provides:
-/// - Single HAL client (eliminates race conditions)
-/// - Minimal Bluetooth mode switching (A2DP ↔ HFP)
-/// - Always-running engine (no create/destroy overhead)
-/// - Unified metering and level monitoring
+/// Audio engine facade that uses two separate AVAudioEngine instances:
+/// - `playbackEngine`: long-lived, output-only. Never touches `inputNode`, so Bluetooth
+///   devices stay in A2DP while sound effects play.
+/// - `recordingEngine`: created fresh for each recording and fully deallocated on stop.
+///   Deallocating the engine releases the AUHAL input, letting Bluetooth devices return
+///   to A2DP once recording ends.
 @MainActor
 class UnifiedAudioEngine: ObservableObject {
   static let shared = UnifiedAudioEngine()
 
-  // Core audio components
-  private let engine = AVAudioEngine()
+  // MARK: - Playback (long-lived)
+  private let playbackEngine = AVAudioEngine()
   private let playerNode = AVAudioPlayerNode()
+  private var pendingPlaybackCount = 0
+  private var lastKnownMixerSampleRate: Double?
+  private var lastKnownMixerChannelCount: AVAudioChannelCount?
+  private var configurationChangeObserver: NSObjectProtocol?
+  private var idlePolicyObserver: NSObjectProtocol?
+  private var idleStopTask: Task<Void, Never>?
+
+  // MARK: - Recording (per-session)
+  private var recordingEngine: AVAudioEngine?
   private var sinkNode: AVAudioSinkNode?
   private var recordingMixerNode: AVAudioMixerNode?
-  private var pendingPlaybackCount = 0
 
   // Thread-safe queue for audio processing (access to shared state)
   private let audioProcessingQueue = DispatchQueue(
@@ -34,16 +43,22 @@ class UnifiedAudioEngine: ObservableObject {
   // Buffer pool for zero-allocation real-time callbacks
   private let bufferPool = BufferPool()
 
-  // Recording state (thread-safe via audioProcessingQueue)
-  // These are accessed from both MainActor and audio thread, so we protect them with the queue
+  // Recording state (accessed from MainActor and audio thread; protected by queue/lock)
   nonisolated(unsafe) private var outputFile: AVAudioFile?
   nonisolated(unsafe) private var converter: AVAudioConverter?
   private var isRecordingActive = false
   private var recordingURL: URL?
 
-  // Counter for pending buffer writes (thread-safe via writeLock)
   nonisolated(unsafe) private var pendingWriteCount = 0
   private let writeLock = NSLock()
+
+  // Frame counter used to detect silent HAL IO failure. AVAudioEngine.start() can return
+  // success while the underlying AUHAL fails to start (CoreAudio logs
+  // "StartAndWaitForState returned error 35"), leaving the sink node receiving no callbacks
+  // and the recording file empty. We track frame deliveries and verify the first one arrived
+  // before reporting the recording as started.
+  nonisolated(unsafe) private var framesReceived: Int = 0
+  private let frameCounterLock = NSLock()
 
   // Metering
   @Published var currentInputLevel: CGFloat = 0
@@ -60,33 +75,20 @@ class UnifiedAudioEngine: ObservableObject {
   nonisolated private static let normalizationGainSmoothing: Float = 0.2
   nonisolated(unsafe) private var normalizationState = WaveformNormalizationState()
 
-  // Sound buffers (preloaded)
+  // Preloaded sound buffers
   private var recordingStartBuffer: AVAudioPCMBuffer?
   private var transcriptionCompleteBuffer: AVAudioPCMBuffer?
 
-  // Track engine initialization state
-  private var hasAttemptedStart = false
-  private var audioSessionConfigured = false
-  private var configurationChangeObserver: NSObjectProtocol?
-  private var idlePolicyObserver: NSObjectProtocol?
-  private var idleStopTask: Task<Void, Never>?
-  private var needsConfigurationReset = false
-  private var lastKnownMixerSampleRate: Double?
-  private var lastKnownMixerChannelCount: AVAudioChannelCount?
   private let settingsManager = SettingsManager.shared
+  private let firstFrameTimeoutMs = 750
 
   private init() {
-    setupAudioEngine()
-    setupEngineConfigurationObserver()
+    setupPlaybackEngine()
+    setupPlaybackConfigurationObserver()
     setupIdlePolicyObserver()
-    // Don't start engine immediately - wait until first use
-    // This avoids Core Audio HAL errors before permissions are granted
   }
 
   deinit {
-    // Engine cleanup happens automatically when deallocated
-    // Note: Can't call MainActor methods from deinit
-    // The AVAudioEngine will stop itself when deallocated
     if let observer = configurationChangeObserver {
       NotificationCenter.default.removeObserver(observer)
     }
@@ -95,91 +97,46 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
-  // MARK: - Engine Lifecycle
+  // MARK: - Playback Engine Lifecycle
 
-  /// Configures the audio session for recording and playback
-  private func setupAudioSession() {
-    guard !audioSessionConfigured else { return }
+  private func setupPlaybackEngine() {
+    log("Setting up playback engine", category: unifiedAudioEngineLogCategory, level: .debug)
 
-    #if os(macOS)
-      // macOS doesn't use AVAudioSession in the same way as iOS
-      // Audio routing is handled automatically by Core Audio
-      audioSessionConfigured = true
-      log("Audio session configuration not required on macOS", category: unifiedAudioEngineLogCategory, level: .debug)
-    #else
-      do {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-          .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-        try session.setActive(true)
-        audioSessionConfigured = true
-        log("Audio session configured successfully", category: unifiedAudioEngineLogCategory, level: .info)
-      } catch {
-        log("Failed to configure audio session: \(error)", category: unifiedAudioEngineLogCategory, level: .error)
-      }
-    #endif
-  }
+    playbackEngine.attach(playerNode)
 
-  private func setupAudioEngine() {
-    log("Setting up audio engine", category: unifiedAudioEngineLogCategory, level: .debug)
-
-    // Attach player node for sound playback
-    engine.attach(playerNode)
-
-    // Get the output format from the main mixer node
-    // This is typically the hardware's default output format (e.g., 48kHz stereo)
-    let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+    let mixerFormat = playbackEngine.mainMixerNode.outputFormat(forBus: 0)
     log(
-      "Mixer format - sampleRate: \(mixerFormat.sampleRate), channels: \(mixerFormat.channelCount)",
+      "Playback mixer format - sampleRate: \(mixerFormat.sampleRate), channels: \(mixerFormat.channelCount)",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )
 
-    // Connect player node to mixer with explicit format
-    engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
+    playbackEngine.connect(playerNode, to: playbackEngine.mainMixerNode, format: mixerFormat)
     lastKnownMixerSampleRate = mixerFormat.sampleRate
     lastKnownMixerChannelCount = mixerFormat.channelCount
 
-    log("Audio engine setup complete", category: unifiedAudioEngineLogCategory, level: .debug)
+    log("Playback engine setup complete", category: unifiedAudioEngineLogCategory, level: .debug)
   }
 
-  /// Ensures the engine is started (lazy initialization)
-  /// Call this before any operation that requires the engine
-  private func ensureEngineStarted() {
-    // Configure audio session before starting engine
-    setupAudioSession()
-
-    if needsConfigurationReset && !isRecordingActive {
-      log(
-        "Engine configuration change pending - resetting before start",
-        category: unifiedAudioEngineLogCategory,
-        level: .warning
-      )
-      resetEngineForConfigurationChange()
-      needsConfigurationReset = false
+  /// Ensures the playback engine is running (lazy start on first sound).
+  /// Only connects output — never touches `inputNode`, so Bluetooth stays in A2DP.
+  private func ensurePlaybackEngineStarted() {
+    if !playbackEngine.isRunning {
+      refreshPlayerConnectionIfNeeded()
     }
 
-    if !engine.isRunning {
-      refreshPlaybackConnectionIfNeeded()
-    }
+    guard !playbackEngine.isRunning else { return }
 
-    // Check if engine is actually running, not just if we attempted to start it
-    // This is important because the engine may be stopped/restarted during recording setup
-    guard !engine.isRunning else {
-      return
-    }
-
-    hasAttemptedStart = true
-    startEngineWithRetry()
+    startPlaybackEngineWithRetry()
   }
 
-  private func startEngineWithRetry(maxRetries: Int = 3) {
+  private func startPlaybackEngineWithRetry(maxRetries: Int = 3) {
     for attempt in 1...maxRetries {
       do {
-        if !engine.isRunning {
-          try engine.start()
+        if !playbackEngine.isRunning {
+          try playbackEngine.start()
           log(
-            "Engine started successfully on attempt \(attempt)",
+            "Playback engine started on attempt \(attempt)",
             category: unifiedAudioEngineLogCategory,
             level: .info
           )
@@ -187,57 +144,68 @@ class UnifiedAudioEngine: ObservableObject {
         return
       } catch let error as NSError {
         log(
-          "Start attempt \(attempt) failed: \(error)",
+          "Playback engine start attempt \(attempt) failed: \(error)",
           category: unifiedAudioEngineLogCategory,
           level: .error
         )
 
-        // EAGAIN (35) means device is reconfiguring - retry immediately without blocking
+        // EAGAIN (35) means device is reconfiguring - retry immediately
         if error.code == 35 && attempt < maxRetries {
-          log(
-            "Device reconfiguring, retrying immediately (attempt \(attempt + 1))...",
-            category: unifiedAudioEngineLogCategory,
-            level: .debug
-          )
           continue
         }
-
-        // Other errors or max retries reached
-        log(
-          "Failed to start engine after \(attempt) attempts: \(error)",
-          category: unifiedAudioEngineLogCategory,
-          level: .error
-        )
         return
       }
     }
   }
 
-  private func setupEngineConfigurationObserver() {
+  private func setupPlaybackConfigurationObserver() {
     configurationChangeObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange,
-      object: engine,
+      object: playbackEngine,
       queue: .main
     ) { [weak self] _ in
-      guard let self = self else { return }
-
+      guard let self else { return }
       Task { @MainActor in
         log(
-          "Audio engine configuration changed",
+          "Playback engine configuration changed",
           category: unifiedAudioEngineLogCategory,
           level: .warning
         )
-
-        // Defer reset until we're idle to avoid disrupting an active recording.
-        if self.isRecordingActive {
-          self.needsConfigurationReset = true
-          return
-        }
-
-        self.resetEngineForConfigurationChange()
+        self.resetPlaybackEngineForConfigurationChange()
       }
     }
   }
+
+  private func resetPlaybackEngineForConfigurationChange() {
+    // Only stop/reset if actually running — resetting an idle engine can churn the HAL
+    // and contend with a concurrent recording engine start.
+    if playbackEngine.isRunning {
+      playbackEngine.stop()
+      playbackEngine.reset()
+    }
+    refreshPlayerConnectionIfNeeded()
+  }
+
+  private func refreshPlayerConnectionIfNeeded() {
+    let mixerFormat = playbackEngine.mainMixerNode.outputFormat(forBus: 0)
+    let sampleRateChanged = lastKnownMixerSampleRate != mixerFormat.sampleRate
+    let channelCountChanged = lastKnownMixerChannelCount != mixerFormat.channelCount
+
+    guard sampleRateChanged || channelCountChanged else { return }
+
+    log(
+      "Mixer format changed - reconnecting player node (sampleRate: \(mixerFormat.sampleRate), channels: \(mixerFormat.channelCount))",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+
+    playbackEngine.disconnectNodeOutput(playerNode)
+    playbackEngine.connect(playerNode, to: playbackEngine.mainMixerNode, format: mixerFormat)
+    lastKnownMixerSampleRate = mixerFormat.sampleRate
+    lastKnownMixerChannelCount = mixerFormat.channelCount
+  }
+
+  // MARK: - Idle Policy (playback engine only)
 
   private func setupIdlePolicyObserver() {
     idlePolicyObserver = NotificationCenter.default.addObserver(
@@ -255,10 +223,10 @@ class UnifiedAudioEngine: ObservableObject {
   private func handleIdlePolicyChange() {
     switch settingsManager.audioEngineIdlePolicy {
     case .stopWhenIdle:
-      stopEngineIfIdle()
+      stopPlaybackEngineIfIdle()
     case .idleTimeout:
-      if !isRecordingActive && !playerNode.isPlaying {
-        scheduleIdleStop()
+      if pendingPlaybackCount == 0 {
+        schedulePlaybackEngineIdleStop()
       }
     case .alwaysOn:
       cancelIdleStop()
@@ -270,65 +238,34 @@ class UnifiedAudioEngine: ObservableObject {
     idleStopTask = nil
   }
 
-  private func scheduleIdleStop() {
+  private func schedulePlaybackEngineIdleStop() {
     cancelIdleStop()
 
     switch settingsManager.audioEngineIdlePolicy {
     case .stopWhenIdle:
-      log(
-        "Idle policy: stopWhenIdle",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-      stopEngineIfIdle()
+      stopPlaybackEngineIfIdle()
     case .idleTimeout:
       let seconds = max(2, min(60, settingsManager.audioEngineIdleTimeoutSeconds))
-      log(
-        "Idle policy: idleTimeout (\(seconds)s)",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
       idleStopTask = Task { [weak self] in
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         await MainActor.run {
-          self?.stopEngineIfIdle()
+          self?.stopPlaybackEngineIfIdle()
         }
       }
     case .alwaysOn:
-      log(
-        "Idle policy: alwaysOn",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
       break
     }
   }
 
-  private func stopEngineIfIdle() {
-    guard !isRecordingActive else {
-      log(
-        "Idle stop skipped: recording active",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-      return
-    }
-    guard pendingPlaybackCount == 0 else {
-      log(
-        "Idle stop skipped: pending playback count = \(pendingPlaybackCount)",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-      return
-    }
+  private func stopPlaybackEngineIfIdle() {
+    guard pendingPlaybackCount == 0 else { return }
 
-    if engine.isRunning {
-      engine.stop()
+    if playbackEngine.isRunning {
+      playbackEngine.stop()
     }
-    engine.reset()
-    hasAttemptedStart = false
+    playbackEngine.reset()
     log(
-      "Engine stopped and reset due to idle policy",
+      "Playback engine stopped due to idle policy",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )
@@ -346,45 +283,17 @@ class UnifiedAudioEngine: ObservableObject {
       if playerNode.isPlaying {
         playerNode.stop()
       }
-      scheduleIdleStop()
+      schedulePlaybackEngineIdleStop()
     }
   }
-
-  private func resetEngineForConfigurationChange() {
-    if engine.isRunning {
-      engine.stop()
-    }
-    engine.reset()
-    hasAttemptedStart = false
-    refreshPlaybackConnectionIfNeeded()
-  }
-
-  private func refreshPlaybackConnectionIfNeeded() {
-    let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-    let sampleRateChanged = lastKnownMixerSampleRate != mixerFormat.sampleRate
-    let channelCountChanged = lastKnownMixerChannelCount != mixerFormat.channelCount
-
-    guard sampleRateChanged || channelCountChanged else { return }
-
-    log(
-      "Mixer format changed - reconnecting player node (sampleRate: \(mixerFormat.sampleRate), channels: \(mixerFormat.channelCount))",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-
-    engine.disconnectNodeOutput(playerNode)
-    engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
-    lastKnownMixerSampleRate = mixerFormat.sampleRate
-    lastKnownMixerChannelCount = mixerFormat.channelCount
-  }
-
-  // Note: The engine can be kept running or stopped when idle based on settings.
-  // There is no public stopEngine() API; idle behavior is managed internally.
 
   // MARK: - Recording
 
-  /// Starts recording audio to the specified URL using input tap
-  func startRecording(to url: URL) throws {
+  /// Starts recording audio to the specified URL.
+  /// Creates a fresh AVAudioEngine for this session. On stop, the engine is fully
+  /// deallocated — that's what releases the AUHAL input and lets Bluetooth headsets
+  /// switch back from HFP to A2DP.
+  func startRecording(to url: URL) async throws {
     let startTime = Date()
     log(
       "[PERF] startRecording() started at \(startTime)",
@@ -396,43 +305,19 @@ class UnifiedAudioEngine: ObservableObject {
       throw UnifiedAudioEngineError.alreadyRecording
     }
 
-    cancelIdleStop()
     normalizationState = WaveformNormalizationState()
 
-    // Ensure engine is started (lazy initialization)
-    let engineStartTime = Date()
-    ensureEngineStarted()
-    let engineStartDuration = Date().timeIntervalSince(engineStartTime)
-    log(
-      "[PERF] ensureEngineStarted took \(engineStartDuration * 1000)ms",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-
-    guard engine.isRunning else {
-      throw UnifiedAudioEngineError.engineNotRunning
-    }
-
-    // Try to setup recording with retry logic for error 35 (EAGAIN)
-    // This can happen when Bluetooth devices are reconfiguring
+    // Retry logic handles two classes of failure:
+    //   1. Setup throws EAGAIN (35) / format-not-supported (-10877) during Bluetooth
+    //      profile transitions.
+    //   2. Setup succeeds but AUHAL silently fails to start IO — engine.start() returns
+    //      success yet no sink callback ever fires. Detected by waitForFirstFrame().
     let maxRetries = 3
     var lastError: Error?
 
     for attempt in 1...maxRetries {
       do {
-        try setupRecordingTap(to: url)
-        let totalDuration = Date().timeIntervalSince(startTime)
-        log(
-          "[PERF] startRecording() total duration: \(totalDuration * 1000)ms",
-          category: unifiedAudioEngineLogCategory,
-          level: .debug
-        )
-        log(
-          "Recording started successfully on attempt \(attempt)",
-          category: unifiedAudioEngineLogCategory,
-          level: .info
-        )
-        return
+        try setupRecordingEngine(to: url)
       } catch let error as NSError {
         lastError = error
         log(
@@ -441,56 +326,128 @@ class UnifiedAudioEngine: ObservableObject {
           level: .error
         )
 
-        // EAGAIN (35) or "already running" errors - retry immediately without blocking
+        tearDownRecordingEngine()
+
         if (error.code == 35 || error.code == -10877) && attempt < maxRetries {
+          let settleDelay = retrySettleDelayNanoseconds(afterAttempt: attempt)
           log(
-            "Device reconfiguring, retrying immediately (attempt \(attempt + 1))...",
+            "Device reconfiguring, retrying after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
             category: unifiedAudioEngineLogCategory,
             level: .warning
           )
-
-          // Clean up any partial state
-          if let sinkNode = sinkNode {
-            engine.detach(sinkNode)
-            self.sinkNode = nil
-          }
-          resetRecordingState()
-
+          try? await Task.sleep(nanoseconds: settleDelay)
           continue
         }
 
-        // Other errors or max retries reached - clean up and throw
-        resetRecordingState()
         throw error
+      }
+
+      // Setup succeeded — verify the HAL is actually delivering audio frames.
+      if await waitForFirstFrame(timeoutMs: firstFrameTimeoutMs) {
+        let totalDuration = Date().timeIntervalSince(startTime)
+        log(
+          "[PERF] startRecording() total duration: \(totalDuration * 1000)ms",
+          category: unifiedAudioEngineLogCategory,
+          level: .info
+        )
+        log(
+          "Recording started successfully on attempt \(attempt)",
+          category: unifiedAudioEngineLogCategory,
+          level: .info
+        )
+        return
+      }
+
+      log(
+        "Recording engine started but HAL delivered no frames — silent IO failure (attempt \(attempt) of \(maxRetries))",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      tearDownRecordingEngine()
+
+      if attempt < maxRetries {
+        // setupRecordingEngine already stops the playback engine on each attempt, so we
+        // just need to wait for the device to settle before the next try.
+        let settleDelay = retrySettleDelayNanoseconds(afterAttempt: attempt)
+        log(
+          "Retrying recording after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
+          category: unifiedAudioEngineLogCategory,
+          level: .warning
+        )
+        try? await Task.sleep(nanoseconds: settleDelay)
+        continue
       }
     }
 
-    // If we get here, all retries failed
     if let error = lastError {
       throw error
-    } else {
-      throw UnifiedAudioEngineError.engineNotRunning
+    }
+    throw UnifiedAudioEngineError.deviceUnavailable
+  }
+
+  private func retrySettleDelayNanoseconds(afterAttempt attempt: Int) -> UInt64 {
+    switch attempt {
+    case 1:
+      return 500_000_000
+    case 2:
+      return 1_000_000_000
+    default:
+      return 1_500_000_000
     }
   }
 
-  private func setupRecordingTap(to url: URL) throws {
-    let inputNode = engine.inputNode
+  /// Polls the frame counter until either a frame arrives or the timeout elapses.
+  /// Used to detect silent AUHAL IO failures after `engine.start()` returns success.
+  private func waitForFirstFrame(timeoutMs: Int) async -> Bool {
+    let deadline = Date().addingTimeInterval(TimeInterval(timeoutMs) / 1000.0)
 
-    // CRITICAL: Stop the engine before modifying graph
-    // According to Apple docs, you must configure nodes before starting the engine
-    if engine.isRunning {
+    // Read the counter through a sync closure so the lock never spans an await point.
+    let getCount = { [self] () -> Int in
+      self.frameCounterLock.lock()
+      let count = self.framesReceived
+      self.frameCounterLock.unlock()
+      return count
+    }
+
+    while Date() < deadline {
+      if getCount() > 0 { return true }
+      try? await Task.sleep(nanoseconds: 20_000_000)  // 20ms
+    }
+
+    return getCount() > 0
+  }
+
+  private func setupRecordingEngine(to url: URL) throws {
+    // Fully release the playback engine before allocating the recording engine. Even when
+    // idle, a recently-used playback engine holds a HAL output stream that contends with
+    // the recording engine's input stream on the same Bluetooth device. Symptom of skipping
+    // this: first recording succeeds (playback engine was cold), second fails silently
+    // (playback engine warm from the recording-start / transcription-complete sounds).
+    // The playback engine restarts lazily when the next sound effect plays.
+    if playbackEngine.isRunning {
       log(
-        "[DEBUG] Stopping engine to setup recording graph",
+        "Stopping playback engine to release device before recording setup",
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
-      engine.stop()
+      playbackEngine.stop()
+      playbackEngine.reset()
     }
 
-    // Use the CURRENT input sample rate with mono as the stable intermediate format.
-    // This avoids kAudioUnitErr_FormatNotSupported (-10877) when Bluetooth devices
-    // switch between A2DP (48kHz) and HFP (16-24kHz) modes.
-    // The mixer still isolates the sink from hardware changes during this recording.
+    // Reset the frame counter here (not just in teardown) so any stale callbacks from the
+    // previous session's audio thread can't spoof a "first frame received" reading on the
+    // new engine.
+    frameCounterLock.lock()
+    framesReceived = 0
+    frameCounterLock.unlock()
+
+    // Fresh engine per session so teardown fully releases the AUHAL input.
+    let engine = AVAudioEngine()
+    recordingEngine = engine
+
+    let inputNode = engine.inputNode
+    applyPreferredInputDevice(to: inputNode)
+
     let inputFormat = inputNode.inputFormat(forBus: 0)
     log(
       "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount), commonFormat: \(inputFormat.commonFormat)",
@@ -498,13 +455,14 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
+    // Use current input sample rate with mono as the stable intermediate format.
+    // Avoids kAudioUnitErr_FormatNotSupported (-10877) during Bluetooth A2DP↔HFP transitions.
     guard let stableFormat = AVAudioFormat(
       commonFormat: .pcmFormatFloat32,
       sampleRate: inputFormat.sampleRate,
       channels: 1,
       interleaved: false
     ) else {
-      resetRecordingState()
       throw UnifiedAudioEngineError.invalidFormat
     }
 
@@ -514,20 +472,16 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    // Create output format (16kHz mono 16-bit PCM for Whisper API)
-    guard
-      let outputFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: 16000.0,
-        channels: 1,
-        interleaved: true  // 16-bit PCM must be interleaved for WAV on macOS
-      )
-    else {
-      resetRecordingState()
+    // Output format: 16kHz mono 16-bit PCM for Whisper API
+    guard let outputFormat = AVAudioFormat(
+      commonFormat: .pcmFormatInt16,
+      sampleRate: 16000.0,
+      channels: 1,
+      interleaved: true
+    ) else {
       throw UnifiedAudioEngineError.invalidFormat
     }
 
-    // Explicit settings to avoid Core Audio throwing kAudioUnitErr_FormatNotSupported (-10877)
     var fileSettings = outputFormat.settings
     fileSettings[AVFormatIDKey] = Int(kAudioFormatLinearPCM)
     fileSettings[AVLinearPCMBitDepthKey] = 16
@@ -535,28 +489,18 @@ class UnifiedAudioEngine: ObservableObject {
     fileSettings[AVLinearPCMIsBigEndianKey] = false
     fileSettings[AVLinearPCMIsNonInterleaved] = false
 
-    // Create output file with sanitized settings
-    do {
-      let file = try AVAudioFile(forWriting: url, settings: fileSettings)
-
-      // Thread-safe assignment
-      audioProcessingQueue.sync {
-        self.outputFile = file
-        self.recordingURL = url
-      }
-    } catch {
-      resetRecordingState()
-      throw error
+    let file = try AVAudioFile(forWriting: url, settings: fileSettings)
+    audioProcessingQueue.sync {
+      self.outputFile = file
+      self.recordingURL = url
     }
 
-    // Use the concrete file format as converter target (Core Audio may adjust settings)
     var fileFormat: AVAudioFormat?
     audioProcessingQueue.sync {
       fileFormat = self.outputFile?.processingFormat
     }
 
-    guard let fileFormat = fileFormat else {
-      resetRecordingState()
+    guard let fileFormat else {
       throw UnifiedAudioEngineError.invalidFormat
     }
 
@@ -566,119 +510,157 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    // Create converter from stable format to file format
-    // This always needs conversion since we're going from Float32 to Int16
     guard let conv = AVAudioConverter(from: stableFormat, to: fileFormat) else {
-      resetRecordingState()
       throw UnifiedAudioEngineError.converterCreationFailed
     }
-
-    // In live capture we cannot provide priming frames, so disable priming latency.
+    // Live capture can't provide priming frames.
     conv.primeMethod = .none
     conv.primeInfo = AVAudioConverterPrimeInfo(leadingFrames: 0, trailingFrames: 0)
 
-    // Thread-safe assignment
     audioProcessingQueue.sync {
       self.converter = conv
     }
 
-    log(
-      "Created format converter (\(stableFormat.sampleRate)Hz \(stableFormat.channelCount)ch -> \(fileFormat.sampleRate)Hz \(fileFormat.channelCount)ch)",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-
-    // Create mixer node to handle format conversion from inputNode's dynamic format
-    // The mixer automatically converts from whatever format the hardware provides
     let recordingMixer = AVAudioMixerNode()
-
-    // Create sink node for real-time recording (replaces installTap for better performance)
-    // AVAudioSinkNode provides lower latency than installTap (can receive 512-frame buffers)
-    // The sink receives audio in our stable format (converted by the mixer)
     let sinkNode = AVAudioSinkNode { [weak self] timestamp, frameCount, audioBufferList in
-      // CRITICAL: This callback runs on high-priority audio thread
-      // Must return quickly (<1ms) to avoid audio glitches
-      guard let self = self else { return 0 }
-
-      // Process the audio buffer (now in stable format)
+      // Runs on high-priority audio thread; must return in <1ms.
+      guard let self else { return 0 }
       self.processRecordingBufferRealtime(
         timestamp: timestamp,
         frameCount: frameCount,
         bufferList: audioBufferList,
         format: stableFormat
       )
-
-      return 0  // Return 0 to indicate success
+      return 0
     }
 
-    // Attach nodes to engine
-    log("Attaching mixer and sink nodes for real-time recording", category: unifiedAudioEngineLogCategory, level: .debug)
     engine.attach(recordingMixer)
     engine.attach(sinkNode)
 
-    // Connect the graph: inputNode → mixer (auto-converts) → sinkNode (stable format)
-    // Using nil format for inputNode connection lets the mixer auto-detect and convert
+    // inputNode → mixer (auto-converts HW format) → sinkNode (stable format)
     engine.connect(inputNode, to: recordingMixer, format: nil)
     engine.connect(recordingMixer, to: sinkNode, format: stableFormat)
 
-    // Store references for cleanup
     self.recordingMixerNode = recordingMixer
     self.sinkNode = sinkNode
 
     isRecordingActive = true
 
-    // Start the engine after configuring the graph
-    do {
-      try engine.start()
-      log(
-        "[DEBUG] Engine started successfully with mixer → sink node graph",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-    } catch {
-      log(
-        "[ERROR] Failed to start engine: \(error)",
-        category: unifiedAudioEngineLogCategory,
-        level: .error
-      )
-      // Clean up on failure
-      resetRecordingState()
-      throw UnifiedAudioEngineError.engineNotRunning
-    }
-
+    try engine.start()
     log(
-      "Recording graph setup successfully, file ready at: \(url.path)",
+      "Recording engine started with mixer → sink graph",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
+    log(
+      "Recording ready at: \(url.path)",
       category: unifiedAudioEngineLogCategory,
       level: .info
     )
   }
 
-  /// Resets recording state atomically (call on errors or cancellation)
-  private func resetRecordingState() {
+  private func applyPreferredInputDevice(to inputNode: AVAudioInputNode) {
+    let preferredUID = settingsManager.selectedInputDeviceUID
+    guard !preferredUID.isEmpty else { return }
+
+    let selection = AudioInputDeviceManager.shared.resolvedSelection(for: preferredUID)
+    guard let selectedDevice = selection.device else {
+      log(
+        "Selected input device unavailable and no default input device could be resolved",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      return
+    }
+
+    if selection.isFallback {
+      log(
+        "Selected input device '\(settingsManager.selectedInputDeviceName)' is unavailable; falling back to '\(selectedDevice.name)'",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      return
+    }
+
+    guard let audioUnit = inputNode.audioUnit else {
+      log(
+        "Unable to access input audio unit; using system default input device",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      return
+    }
+
+    do {
+      try AudioInputDeviceManager.applyInputDevice(selectedDevice.deviceID, to: audioUnit)
+      log(
+        "Selected input device: \(selectedDevice.name)",
+        category: unifiedAudioEngineLogCategory,
+        level: .info
+      )
+    } catch {
+      log(
+        "Failed to apply selected input device '\(selectedDevice.name)': \(error.localizedDescription). Using system default input device.",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+    }
+  }
+
+  /// Fully tears down the recording engine. Deallocating the engine releases the
+  /// AUHAL input, which is what allows Bluetooth devices to return to A2DP.
+  private func tearDownRecordingEngine() {
     isRecordingActive = false
+
+    weak var releasedEngine = recordingEngine
+
+    if let engine = recordingEngine {
+      if engine.isRunning {
+        engine.stop()
+      }
+      engine.reset()
+    }
+    sinkNode = nil
+    recordingMixerNode = nil
+    recordingEngine = nil  // Release HAL input
+
     audioProcessingQueue.sync {
       self.outputFile = nil
       self.converter = nil
     }
     recordingURL = nil
 
-    // Reset pending write counter
     writeLock.lock()
     pendingWriteCount = 0
     writeLock.unlock()
 
-    // Clean up recording graph nodes if they exist
-    if let sinkNode = sinkNode {
-      engine.detach(sinkNode)
-      self.sinkNode = nil
-    }
-    if let mixer = recordingMixerNode {
-      engine.detach(mixer)
-      self.recordingMixerNode = nil
+    frameCounterLock.lock()
+    framesReceived = 0
+    frameCounterLock.unlock()
+
+    bufferPool.clear()
+
+    if releasedEngine != nil {
+      Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        if releasedEngine != nil {
+          log(
+            "Recording engine still alive 100ms after teardown",
+            category: unifiedAudioEngineLogCategory,
+            level: .warning
+          )
+        } else {
+          log(
+            "Recording engine released after teardown",
+            category: unifiedAudioEngineLogCategory,
+            level: .debug
+          )
+        }
+      }
     }
   }
 
-  /// Stops recording and returns the URL of the recorded file
+  /// Stops recording and returns the URL of the recorded file.
   func stopRecording() async -> URL? {
     let startTime = Date()
     log(
@@ -692,47 +674,19 @@ class UnifiedAudioEngine: ObservableObject {
       return nil
     }
 
-    // Detach recording graph nodes first - no more data will be written
-    let detachStart = Date()
-    if let sinkNode = sinkNode {
-      engine.detach(sinkNode)
-      self.sinkNode = nil
+    // Stop the engine so no new sink callbacks fire. In-flight writes still drain below.
+    if let engine = recordingEngine, engine.isRunning {
+      engine.stop()
     }
-    if let mixer = recordingMixerNode {
-      engine.detach(mixer)
-      self.recordingMixerNode = nil
-    }
-    let detachDuration = Date().timeIntervalSince(detachStart)
-    log(
-      "[PERF] detach recording nodes took \(detachDuration * 1000)ms",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-
-    // Mark as inactive to prevent new operations
     isRecordingActive = false
 
-    // Keep strong reference to the file and URL during finalization
-    var fileToFinalize: AVAudioFile?
     var url: URL?
     audioProcessingQueue.sync {
-      fileToFinalize = self.outputFile
       url = self.recordingURL
     }
 
-    // CRITICAL: Wait for any pending audio buffers to be written
-    // The tap callback runs on a separate audio thread, and even after removeTap(),
-    // there may be buffers in flight. We need to give them time to complete.
-    // Use counter-based waiting instead of fixed sleep duration
-    log(
-      "[PERF] Waiting for pending buffer writes to complete",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
+    // Wait for pending buffer writes to complete (tap callbacks already dispatched to queue)
     let waitStart = Date()
-    var iterations = 0
-
-    // Helper to get count without async lock warnings
     let getCount = { [self] () -> Int in
       self.writeLock.lock()
       let count = self.pendingWriteCount
@@ -740,15 +694,12 @@ class UnifiedAudioEngine: ObservableObject {
       return count
     }
 
+    var iterations = 0
     while true {
       let count = getCount()
-
-      if count == 0 {
-        break
-      }
-
+      if count == 0 { break }
       iterations += 1
-      if iterations > 200 {  // Max 2 seconds wait (200 * 10ms) - increased for async writes
+      if iterations > 200 {  // ~2s max
         log(
           "[WARN] Timeout waiting for buffers (still \(count) pending)",
           category: unifiedAudioEngineLogCategory,
@@ -756,7 +707,6 @@ class UnifiedAudioEngine: ObservableObject {
         )
         break
       }
-
       try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
     }
     let waitDuration = Date().timeIntervalSince(waitStart)
@@ -766,56 +716,19 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    // Additional safety: Ensure async write queue is drained
-    // This is a belt-and-suspenders approach - the counter should already be 0
-    log(
-      "[PERF] Ensuring async write queue is drained",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
-    let drainStart = Date()
+    // Belt-and-suspenders: ensure the async write queue is drained before finalizing.
     await withCheckedContinuation { continuation in
-      asyncWriteQueue.async {
-        continuation.resume()
-      }
+      asyncWriteQueue.async { continuation.resume() }
     }
-    let drainDuration = Date().timeIntervalSince(drainStart)
-    log(
-      "[PERF] Queue drain took \(drainDuration * 1000)ms",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
 
-    // Now it's safe to finalize the file
-    if let fileToFinalize = fileToFinalize {
-      let finalizeStart = Date()
-      let framePos = fileToFinalize.framePosition
-      log(
-        "Finalizing audio file (framePosition: \(framePos))",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-
-      // Clean up file reference in thread-safe manner
-      audioProcessingQueue.sync {
-        self.outputFile = nil
-        self.converter = nil
-        self.recordingURL = nil
-      }
-
-      let finalizeDuration = Date().timeIntervalSince(finalizeStart)
-      log(
-        "[PERF] File finalization took \(finalizeDuration * 1000)ms",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-    }
+    // Finalize and tear down. Nilling the engine releases the HAL, freeing BT for A2DP.
+    tearDownRecordingEngine()
 
     let totalDuration = Date().timeIntervalSince(startTime)
     log(
       "[PERF] stopRecording() total duration: \(totalDuration * 1000)ms",
       category: unifiedAudioEngineLogCategory,
-      level: .debug
+      level: .info
     )
     log(
       "Recording stopped, file at: \(url?.path ?? "unknown")",
@@ -823,20 +736,16 @@ class UnifiedAudioEngine: ObservableObject {
       level: .info
     )
 
-    // Apply idle policy (may stop/reset immediately or after a timeout)
-    scheduleIdleStop()
-
     return url
   }
 
-  /// Cancels recording and deletes the file
+  /// Cancels recording and deletes the file.
   func cancelRecording() async {
     log("Cancelling recording", category: unifiedAudioEngineLogCategory, level: .info)
 
     let url = await stopRecording()
 
-    // Delete the recording file
-    if let url = url {
+    if let url {
       do {
         try FileManager.default.removeItem(at: url)
         log(
@@ -854,10 +763,9 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
-  // MARK: - Real-Time Audio Callback (C-Style for Performance)
+  // MARK: - Real-Time Audio Callback
 
-  /// Real-time audio callback for AVAudioSinkNode (optimized C-style)
-  /// CRITICAL: This runs on high-priority audio thread - must complete in <1ms
+  /// Real-time sinkNode callback. Runs on the audio thread — must complete in <1ms.
   nonisolated private func processRecordingBufferRealtime(
     timestamp: UnsafePointer<AudioTimeStamp>,
     frameCount: AVAudioFrameCount,
@@ -868,7 +776,13 @@ class UnifiedAudioEngine: ObservableObject {
     let callbackStartTime = CFAbsoluteTimeGetCurrent()
     #endif
 
-    // OPTIMIZATION: Direct access without queue sync (marked nonisolated unsafe)
+    // Track HAL activity *before* any early return so startRecording() can tell that
+    // frames are actually flowing even if outputFile has been cleared mid-teardown.
+    let frameLockRef = self.frameCounterLock
+    frameLockRef.lock()
+    self.framesReceived += 1
+    frameLockRef.unlock()
+
     let localFile = self.outputFile
     let localConverter = self.converter
 
@@ -877,13 +791,11 @@ class UnifiedAudioEngine: ObservableObject {
       return
     }
 
-    // Increment pending write counter (atomic via lock)
     let writeLockRef = self.writeLock
     writeLockRef.lock()
     self.pendingWriteCount += 1
     writeLockRef.unlock()
 
-    // Get buffer from pool (reuse if available, allocate if needed)
     guard let copiedBuffer = bufferPool.getBuffer(format: format, frameCapacity: frameCount) else {
       writeLockRef.lock()
       self.pendingWriteCount -= 1
@@ -891,7 +803,6 @@ class UnifiedAudioEngine: ObservableObject {
       return
     }
 
-    // CRITICAL: Fast C-style memcpy from AudioBufferList to AVAudioPCMBuffer
     copiedBuffer.frameLength = frameCount
 
     guard let destChannels = copiedBuffer.floatChannelData else {
@@ -902,12 +813,11 @@ class UnifiedAudioEngine: ObservableObject {
       return
     }
 
-    // Copy audio data using direct pointer arithmetic
+    // Fast C-style copy from AudioBufferList to AVAudioPCMBuffer
     let bytesToCopy = Int(frameCount) * MemoryLayout<Float>.stride
     let abl = bufferList.pointee
     let numBuffers = Int(abl.mNumberBuffers)
 
-    // Access the buffer array using withUnsafePointer
     withUnsafePointer(to: abl.mBuffers) { buffersPtr in
       let buffersPointer = UnsafeRawPointer(buffersPtr)
         .assumingMemoryBound(to: AudioBuffer.self)
@@ -922,10 +832,8 @@ class UnifiedAudioEngine: ObservableObject {
     }
 
     #if DEBUG
-    // Measure callback execution time
     let callbackDuration = CFAbsoluteTimeGetCurrent() - callbackStartTime
-    if callbackDuration > 0.001 {  // > 1ms
-      // Log occasionally to avoid flooding
+    if callbackDuration > 0.001 {
       if Int.random(in: 0..<100) == 0 {
         log(
           "[PERF WARN] Audio callback took \(callbackDuration * 1000)ms (should be < 1ms)",
@@ -936,12 +844,10 @@ class UnifiedAudioEngine: ObservableObject {
     }
     #endif
 
-    // Dispatch file write ASYNCHRONOUSLY - don't wait for it to complete!
-    // This is the key to avoiding stuttering
+    // Dispatch file write asynchronously; don't block audio thread.
     let asyncWriteQueueRef = self.asyncWriteQueue
     let bufferPoolRef = self.bufferPool
     asyncWriteQueueRef.async {
-      // Ensure we decrement counter and return buffer on all exit paths
       defer {
         writeLockRef.lock()
         self.pendingWriteCount -= 1
@@ -949,10 +855,9 @@ class UnifiedAudioEngine: ObservableObject {
         bufferPoolRef.returnBuffer(copiedBuffer)
       }
 
-      // Unwrap file for use in this closure
       guard let file = localFile else { return }
 
-      // Update level monitoring with throttling (moved OFF audio thread)
+      // Level monitoring (throttled)
       let now = CFAbsoluteTimeGetCurrent()
       let timeSinceLastUpdate = now - self.lastLevelUpdate
       if timeSinceLastUpdate > self.levelUpdateThrottle {
@@ -969,14 +874,13 @@ class UnifiedAudioEngine: ObservableObject {
         }
       }
 
-      // Perform conversion if needed (this is now OFF the audio thread)
+      // Convert and write (off the audio thread)
       if let converter = localConverter {
-        // Convert format using pull-based API
         let outputFrameCapacity =
           AVAudioFrameCount(
             Double(copiedBuffer.frameLength) * converter.outputFormat.sampleRate
               / converter.inputFormat.sampleRate
-          ) + 1024  // Safety margin
+          ) + 1024  // safety margin
 
         guard
           let outputBuffer = AVAudioPCMBuffer(
@@ -992,7 +896,6 @@ class UnifiedAudioEngine: ObservableObject {
           return
         }
 
-        // Convert
         var isBufferConsumed = false
 
         conversionLoop: while true {
@@ -1005,14 +908,13 @@ class UnifiedAudioEngine: ObservableObject {
               outStatus.pointee = .noDataNow
               return nil
             }
-
             isBufferConsumed = true
             providedInput = true
             outStatus.pointee = .haveData
             return copiedBuffer
           }
 
-          if let error = error {
+          if let error {
             log(
               "[ERROR] Conversion failed: \(error)",
               category: unifiedAudioEngineLogCategory,
@@ -1035,16 +937,13 @@ class UnifiedAudioEngine: ObservableObject {
               break
             }
           } else if !providedInput && status == .endOfStream {
-            // No input provided and nothing output - nothing left to process.
             break
           }
 
           switch status {
           case .haveData:
-            // Converter may still have residual data to emit.
             continue conversionLoop
           case .inputRanDry:
-            // We've supplied all available input for now; exit until next buffer arrives.
             break conversionLoop
           case .endOfStream:
             break conversionLoop
@@ -1060,7 +959,6 @@ class UnifiedAudioEngine: ObservableObject {
           }
         }
       } else {
-        // No conversion needed, write directly
         do {
           try file.write(from: copiedBuffer)
         } catch {
@@ -1074,39 +972,9 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
-  /// Copies an audio buffer (fast operation for real-time thread safety)
-  nonisolated private func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-    guard
-      let copy = AVAudioPCMBuffer(
-        pcmFormat: buffer.format,
-        frameCapacity: buffer.frameLength  // Only allocate what we need
-      )
-    else {
-      return nil
-    }
-
-    copy.frameLength = buffer.frameLength
-
-    // Fast copy using direct pointer access
-    guard let sourceChannels = buffer.floatChannelData,
-          let destChannels = copy.floatChannelData else {
-      return nil
-    }
-
-    let channelCount = Int(buffer.format.channelCount)
-    let bytesToCopy = Int(buffer.frameLength) * MemoryLayout<Float>.stride
-
-    // Copy each channel's data
-    for channel in 0..<channelCount {
-      memcpy(destChannels[channel], sourceChannels[channel], bytesToCopy)
-    }
-
-    return copy
-  }
-
   // MARK: - Level Monitoring
 
-  /// Normalizes raw waveform samples so different input devices render similar visual ranges
+  /// Normalizes raw waveform samples so different input devices render similar visual ranges.
   nonisolated private func normalizeWaveformSamples(
     _ samples: [Float],
     now: TimeInterval
@@ -1149,7 +1017,6 @@ class UnifiedAudioEngine: ObservableObject {
     return (normalizedSamples, state.gain, false)
   }
 
-  /// Calculates a normalized audio level from the provided buffer
   nonisolated private func normalizedLevel(
     from buffer: AVAudioPCMBuffer,
     gain: Float,
@@ -1169,9 +1036,8 @@ class UnifiedAudioEngine: ObservableObject {
 
     let rms = sqrt(sum / Float(frameLength))
     let adjustedRms = min(1, rms * gain)
-    let db = 20 * log10(max(adjustedRms, 0.000001))  // Avoid log(0)
+    let db = 20 * log10(max(adjustedRms, 0.000001))
 
-    // Normalize to 0-1 range
     let minDb: Float = -55
     let maxDb: Float = -10
     let normalized = (db - minDb) / (maxDb - minDb)
@@ -1180,14 +1046,11 @@ class UnifiedAudioEngine: ObservableObject {
     return CGFloat(clamped)
   }
 
-  /// Updates the published audio level on the main actor
   private func updateLevel(_ level: CGFloat) {
     print("[WAVEFORM DEBUG] UnifiedAudioEngine.updateLevel: \(level)")
     currentInputLevel = level
-    // Note: lastLevelUpdate is updated in the audio callback for performance
   }
 
-  /// Extracts peak samples from the buffer for waveform visualization
   nonisolated private func extractWaveformSamples(from buffer: AVAudioPCMBuffer) -> [Float] {
     guard let channelData = buffer.floatChannelData?[0] else { return [] }
     let frameLength = Int(buffer.frameLength)
@@ -1211,14 +1074,13 @@ class UnifiedAudioEngine: ObservableObject {
     return peaks
   }
 
-  /// Updates the published waveform samples on the main actor
   private func updateWaveformSamples(_ samples: [Float]) {
     waveformSamples = samples
   }
 
   // MARK: - Sound Playback
 
-  /// Preloads a sound file into memory for faster playback
+  /// Preloads a sound file into memory for faster playback.
   func preloadSound(from url: URL, for type: SoundType) {
     log(
       "Preloading \(type) sound from \(url)",
@@ -1230,8 +1092,6 @@ class UnifiedAudioEngine: ObservableObject {
       let audioFile = try AVAudioFile(forReading: url)
       let frameCount = AVAudioFrameCount(audioFile.length)
       let sourceFormat = audioFile.processingFormat
-
-      // Get the playerNode's output format (matches the mixer's format)
       let playerFormat = playerNode.outputFormat(forBus: 0)
 
       log(
@@ -1240,7 +1100,6 @@ class UnifiedAudioEngine: ObservableObject {
         level: .debug
       )
 
-      // Read the source audio into a buffer
       guard
         let sourceBuffer = AVAudioPCMBuffer(
           pcmFormat: sourceFormat,
@@ -1257,16 +1116,13 @@ class UnifiedAudioEngine: ObservableObject {
 
       try audioFile.read(into: sourceBuffer)
 
-      // Convert to player format if needed
       let finalBuffer: AVAudioPCMBuffer
       if sourceFormat.sampleRate == playerFormat.sampleRate
         && sourceFormat.channelCount == playerFormat.channelCount
       {
-        // No conversion needed
         finalBuffer = sourceBuffer
         log("No conversion needed for \(type)", category: unifiedAudioEngineLogCategory, level: .debug)
       } else {
-        // Create converter
         guard let converter = AVAudioConverter(from: sourceFormat, to: playerFormat) else {
           log(
             "Failed to create converter for \(type)",
@@ -1276,12 +1132,10 @@ class UnifiedAudioEngine: ObservableObject {
           return
         }
 
-        // Calculate output frame count
         let outputFrameCount = AVAudioFrameCount(
           Double(frameCount) * playerFormat.sampleRate / sourceFormat.sampleRate
         )
 
-        // Create output buffer
         guard
           let outputBuffer = AVAudioPCMBuffer(
             pcmFormat: playerFormat,
@@ -1296,16 +1150,15 @@ class UnifiedAudioEngine: ObservableObject {
           return
         }
 
-        // Convert
         var error: NSError?
         converter.convert(
           to: outputBuffer, error: &error,
-          withInputFrom: { inNumPackets, outStatus in
+          withInputFrom: { _, outStatus in
             outStatus.pointee = .haveData
             return sourceBuffer
           })
 
-        if let error = error {
+        if let error {
           log(
             "Conversion error for \(type): \(error)",
             category: unifiedAudioEngineLogCategory,
@@ -1315,14 +1168,8 @@ class UnifiedAudioEngine: ObservableObject {
         }
 
         finalBuffer = outputBuffer
-        log(
-          "Successfully converted \(type) sound",
-          category: unifiedAudioEngineLogCategory,
-          level: .debug
-        )
       }
 
-      // Store the converted buffer
       switch type {
       case .recordingStart:
         recordingStartBuffer = finalBuffer
@@ -1344,7 +1191,7 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
-  /// Plays a preloaded sound
+  /// Plays a preloaded sound on the playback engine.
   func playSound(type: SoundType, completion: (() -> Void)? = nil) {
     let buffer: AVAudioPCMBuffer?
 
@@ -1355,7 +1202,7 @@ class UnifiedAudioEngine: ObservableObject {
       buffer = transcriptionCompleteBuffer
     }
 
-    guard let buffer = buffer else {
+    guard let buffer else {
       log(
         "Sound \(type) not loaded",
         category: unifiedAudioEngineLogCategory,
@@ -1368,8 +1215,7 @@ class UnifiedAudioEngine: ObservableObject {
     log("Playing \(type) sound", category: unifiedAudioEngineLogCategory, level: .debug)
 
     cancelIdleStop()
-    // Ensure engine is started (lazy initialization)
-    ensureEngineStarted()
+    ensurePlaybackEngineStarted()
 
     pendingPlaybackCount += 1
     log(
@@ -1378,7 +1224,6 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    // Schedule buffer on player node
     playerNode.scheduleBuffer(buffer) {
       log(
         "Finished playing \(type) sound",
@@ -1391,13 +1236,12 @@ class UnifiedAudioEngine: ObservableObject {
       completion?()
     }
 
-    // Start player if not already playing
     if !playerNode.isPlaying {
       playerNode.play()
     }
   }
 
-  /// Clears a preloaded sound from memory
+  /// Clears a preloaded sound from memory.
   func clearSound(type: SoundType) {
     switch type {
     case .recordingStart:
@@ -1420,42 +1264,35 @@ private struct WaveformNormalizationState {
 
 // MARK: - Buffer Pool
 
-/// Thread-safe buffer pool for zero-allocation real-time audio callbacks
+/// Thread-safe buffer pool for zero-allocation real-time audio callbacks.
 final class BufferPool: @unchecked Sendable {
   private var availableBuffers: [AVAudioPCMBuffer] = []
   private let lock = NSLock()
   private let poolSize = 20
 
-  /// Get a buffer from the pool (creates one if pool is empty)
   nonisolated func getBuffer(format: AVAudioFormat, frameCapacity: AVAudioFrameCount) -> AVAudioPCMBuffer? {
     lock.lock()
     defer { lock.unlock() }
 
-    // Try to reuse existing buffer with matching format
     if let index = availableBuffers.firstIndex(where: {
       $0.format == format && $0.frameCapacity >= frameCapacity
     }) {
       return availableBuffers.remove(at: index)
     }
 
-    // Pool is empty or no matching buffer, create new one
     return AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity)
   }
 
-  /// Return a buffer to the pool for reuse
   nonisolated func returnBuffer(_ buffer: AVAudioPCMBuffer) {
     lock.lock()
     defer { lock.unlock() }
 
-    // Only keep up to poolSize buffers to avoid unbounded memory growth
     guard availableBuffers.count < poolSize else { return }
 
-    // Reset buffer for reuse
     buffer.frameLength = 0
     availableBuffers.append(buffer)
   }
 
-  /// Clear all buffers from pool
   nonisolated func clear() {
     lock.lock()
     defer { lock.unlock() }
@@ -1475,6 +1312,7 @@ enum UnifiedAudioEngineError: LocalizedError {
   case engineNotRunning
   case invalidFormat
   case converterCreationFailed
+  case deviceUnavailable
 
   var errorDescription: String? {
     switch self {
@@ -1486,6 +1324,8 @@ enum UnifiedAudioEngineError: LocalizedError {
       return "Invalid audio format"
     case .converterCreationFailed:
       return "Failed to create audio format converter"
+    case .deviceUnavailable:
+      return "Audio input is unavailable. If you're on Bluetooth, try disconnecting and reconnecting your headset."
     }
   }
 }

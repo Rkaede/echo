@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 /// Lightweight logger that wraps `print` while allowing callers to scope output by log level and category.
@@ -46,6 +47,14 @@ final class LoggingService {
   private var currentLogFileDate: String?
   private var fileHandle: FileHandle?
   private let maxLogAgeDays: Int = 30
+  private var isConsoleCaptureActive = false
+  private var consoleLogFileDate: String?
+  private var consoleFileHandle: FileHandle?
+  private var stdoutReadHandle: FileHandle?
+  private var stderrReadHandle: FileHandle?
+  private var stdoutOriginalHandle: FileHandle?
+  private var stderrOriginalHandle: FileHandle?
+  private var consoleLineBuffers: [String: Data] = [:]
 
   init(configuration: Configuration = .default) {
     self.configuration = configuration
@@ -138,6 +147,170 @@ final class LoggingService {
   private func formattedLevel(_ level: LogLevel) -> String {
     let label = "[\(level.rawValue)]"
     return label.padding(toLength: Self.levelLabelLength, withPad: " ", startingAt: 0)
+  }
+
+  // MARK: - Console Capture
+
+  /// Mirrors stdout and stderr into a daily rolling file while preserving Xcode/terminal output.
+  /// This captures raw framework output that bypasses `print`, including CoreAudio HAL diagnostics.
+  func startConsoleCapture() {
+    var didStart = false
+
+    fileQueue.sync {
+      guard !isConsoleCaptureActive else { return }
+      setupLogDirectory()
+
+      if let stdoutCapture = createConsoleCapture(for: STDOUT_FILENO, streamName: "stdout") {
+        stdoutReadHandle = stdoutCapture.readHandle
+        stdoutOriginalHandle = stdoutCapture.originalHandle
+        installConsoleReadHandler(
+          readHandle: stdoutCapture.readHandle,
+          originalHandle: stdoutCapture.originalHandle,
+          streamName: "stdout"
+        )
+      }
+
+      if let stderrCapture = createConsoleCapture(for: STDERR_FILENO, streamName: "stderr") {
+        stderrReadHandle = stderrCapture.readHandle
+        stderrOriginalHandle = stderrCapture.originalHandle
+        installConsoleReadHandler(
+          readHandle: stderrCapture.readHandle,
+          originalHandle: stderrCapture.originalHandle,
+          streamName: "stderr"
+        )
+      }
+
+      if stdoutReadHandle != nil || stderrReadHandle != nil {
+        isConsoleCaptureActive = true
+        didStart = true
+      }
+    }
+
+    if didStart {
+      print("LoggingService: Console capture started")
+    }
+  }
+
+  private func createConsoleCapture(
+    for fileDescriptor: Int32,
+    streamName: String
+  ) -> (readHandle: FileHandle, originalHandle: FileHandle)? {
+    if fileDescriptor == STDOUT_FILENO {
+      fflush(stdout)
+      setvbuf(stdout, nil, _IONBF, 0)
+    } else if fileDescriptor == STDERR_FILENO {
+      fflush(stderr)
+      setvbuf(stderr, nil, _IONBF, 0)
+    }
+
+    let originalFileDescriptor = dup(fileDescriptor)
+    guard originalFileDescriptor >= 0 else {
+      print("LoggingService: Failed to duplicate \(streamName)")
+      return nil
+    }
+
+    var pipeFileDescriptors: [Int32] = [0, 0]
+    guard pipe(&pipeFileDescriptors) == 0 else {
+      close(originalFileDescriptor)
+      print("LoggingService: Failed to create \(streamName) capture pipe")
+      return nil
+    }
+
+    guard dup2(pipeFileDescriptors[1], fileDescriptor) >= 0 else {
+      close(originalFileDescriptor)
+      close(pipeFileDescriptors[0])
+      close(pipeFileDescriptors[1])
+      print("LoggingService: Failed to redirect \(streamName)")
+      return nil
+    }
+
+    close(pipeFileDescriptors[1])
+
+    return (
+      FileHandle(fileDescriptor: pipeFileDescriptors[0], closeOnDealloc: true),
+      FileHandle(fileDescriptor: originalFileDescriptor, closeOnDealloc: true)
+    )
+  }
+
+  private func installConsoleReadHandler(
+    readHandle: FileHandle,
+    originalHandle: FileHandle,
+    streamName: String
+  ) {
+    readHandle.readabilityHandler = { [weak self, weak originalHandle] handle in
+      let data = handle.availableData
+      guard !data.isEmpty else { return }
+
+      originalHandle?.write(data)
+
+      self?.fileQueue.async { [weak self] in
+        self?.writeCapturedConsoleData(data, streamName: streamName)
+      }
+    }
+  }
+
+  private func writeCapturedConsoleData(_ data: Data, streamName: String) {
+    var buffer = consoleLineBuffers[streamName] ?? Data()
+    buffer.append(data)
+
+    let newline = Data([0x0A])
+    while let range = buffer.range(of: newline) {
+      let lineData = buffer[..<range.lowerBound]
+      writeConsoleLine(Data(lineData), streamName: streamName)
+      buffer.removeSubrange(..<range.upperBound)
+    }
+
+    // Avoid unbounded growth if a framework writes a long partial line without a newline.
+    if buffer.count > 8192 {
+      writeConsoleLine(buffer, streamName: streamName, isPartial: true)
+      buffer.removeAll()
+    }
+
+    consoleLineBuffers[streamName] = buffer
+  }
+
+  private func writeConsoleLine(
+    _ lineData: Data,
+    streamName: String,
+    isPartial: Bool = false
+  ) {
+    let now = Date()
+    rotateConsoleLogFileIfNeeded(for: now)
+
+    var line = String(decoding: lineData, as: UTF8.self)
+    while line.last == "\r" {
+      line.removeLast()
+    }
+
+    let timestamp = timestampFormatter.string(from: now)
+    let suffix = isPartial ? " [partial]" : ""
+    let logEntry = "\(timestamp) [\(streamName)] \(line)\(suffix)\n"
+
+    if let data = logEntry.data(using: .utf8) {
+      consoleFileHandle?.write(data)
+      try? consoleFileHandle?.synchronize()
+    }
+  }
+
+  private func rotateConsoleLogFileIfNeeded(for date: Date) {
+    let dateString = fileDateFormatter.string(from: date)
+    guard dateString != consoleLogFileDate else { return }
+
+    try? consoleFileHandle?.close()
+    consoleFileHandle = nil
+
+    let fileURL = logDirectory.appendingPathComponent("echo-console-\(dateString).log")
+    if !FileManager.default.fileExists(atPath: fileURL.path) {
+      FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+    }
+
+    do {
+      consoleFileHandle = try FileHandle(forWritingTo: fileURL)
+      consoleFileHandle?.seekToEndOfFile()
+      consoleLogFileDate = dateString
+    } catch {
+      stderrOriginalHandle?.write(Data("LoggingService: Failed to open console log file: \(error)\n".utf8))
+    }
   }
 
   // MARK: - File Logging
