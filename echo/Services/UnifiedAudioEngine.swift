@@ -314,11 +314,15 @@ class UnifiedAudioEngine: ObservableObject {
     //      success yet no sink callback ever fires. Detected by waitForFirstFrame().
     let maxRetries = 3
     var lastError: Error?
+    var allowPreferredInputDevice = !settingsManager.selectedInputDeviceUID.isEmpty
 
     for attempt in 1...maxRetries {
       do {
-        try setupRecordingEngine(to: url)
-      } catch let error as NSError {
+        try await setupRecordingEngine(
+          to: url,
+          allowPreferredInputDevice: allowPreferredInputDevice
+        )
+      } catch {
         lastError = error
         log(
           "Recording setup attempt \(attempt) failed: \(error)",
@@ -328,7 +332,22 @@ class UnifiedAudioEngine: ObservableObject {
 
         tearDownRecordingEngine()
 
-        if (error.code == 35 || error.code == -10877) && attempt < maxRetries {
+        if allowPreferredInputDevice,
+          shouldFallbackFromPreferredInputDeviceSetup(error),
+          attempt < maxRetries
+        {
+          allowPreferredInputDevice = false
+          let settleDelay = retrySettleDelayNanoseconds(afterAttempt: attempt)
+          log(
+            "Selected input device setup failed; retrying with system default input after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
+            category: unifiedAudioEngineLogCategory,
+            level: .warning
+          )
+          try? await Task.sleep(nanoseconds: settleDelay)
+          continue
+        }
+
+        if isRecoverableRecordingSetupError(error), attempt < maxRetries {
           let settleDelay = retrySettleDelayNanoseconds(afterAttempt: attempt)
           log(
             "Device reconfiguring, retrying after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
@@ -396,6 +415,45 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
+  nonisolated static func preInputNodeSettleDelayNanoseconds(
+    playbackEngineWasRunning: Bool
+  ) -> UInt64 {
+    playbackEngineWasRunning ? 500_000_000 : 0
+  }
+
+  private func isRecoverableRecordingSetupError(_ error: Error) -> Bool {
+    if let engineError = error as? UnifiedAudioEngineError {
+      switch engineError {
+      case .avfaudioException, .invalidInputHardwareFormat:
+        return true
+      case .alreadyRecording, .engineNotRunning, .invalidFormat, .converterCreationFailed,
+        .deviceUnavailable:
+        return false
+      }
+    }
+
+    if let inputDeviceError = error as? AudioInputDeviceError {
+      switch inputDeviceError {
+      case .failedToApplyDevice(let status):
+        return AudioInputDeviceManager.isRecoverableAudioSetupStatus(status)
+      }
+    }
+
+    let nsError = error as NSError
+    return AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(nsError.code))
+  }
+
+  private func shouldFallbackFromPreferredInputDeviceSetup(_ error: Error) -> Bool {
+    if let inputDeviceError = error as? AudioInputDeviceError {
+      switch inputDeviceError {
+      case .failedToApplyDevice:
+        return true
+      }
+    }
+
+    return isRecoverableRecordingSetupError(error)
+  }
+
   /// Polls the frame counter until either a frame arrives or the timeout elapses.
   /// Used to detect silent AUHAL IO failures after `engine.start()` returns success.
   private func waitForFirstFrame(timeoutMs: Int) async -> Bool {
@@ -417,14 +475,24 @@ class UnifiedAudioEngine: ObservableObject {
     return getCount() > 0
   }
 
-  private func setupRecordingEngine(to url: URL) throws {
+  private func resetFrameCounter() {
+    frameCounterLock.lock()
+    framesReceived = 0
+    frameCounterLock.unlock()
+  }
+
+  private func setupRecordingEngine(
+    to url: URL,
+    allowPreferredInputDevice: Bool
+  ) async throws {
     // Fully release the playback engine before allocating the recording engine. Even when
     // idle, a recently-used playback engine holds a HAL output stream that contends with
     // the recording engine's input stream on the same Bluetooth device. Symptom of skipping
     // this: first recording succeeds (playback engine was cold), second fails silently
     // (playback engine warm from the recording-start / transcription-complete sounds).
     // The playback engine restarts lazily when the next sound effect plays.
-    if playbackEngine.isRunning {
+    let playbackEngineWasRunning = playbackEngine.isRunning
+    if playbackEngineWasRunning {
       log(
         "Stopping playback engine to release device before recording setup",
         category: unifiedAudioEngineLogCategory,
@@ -434,26 +502,63 @@ class UnifiedAudioEngine: ObservableObject {
       playbackEngine.reset()
     }
 
+    let preInputNodeSettleDelay = Self.preInputNodeSettleDelayNanoseconds(
+      playbackEngineWasRunning: playbackEngineWasRunning
+    )
+    if preInputNodeSettleDelay > 0 {
+      log(
+        "Waiting \(preInputNodeSettleDelay / 1_000_000)ms for CoreAudio to settle before accessing recording input node",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      try? await Task.sleep(nanoseconds: preInputNodeSettleDelay)
+    }
+
     // Reset the frame counter here (not just in teardown) so any stale callbacks from the
     // previous session's audio thread can't spoof a "first frame received" reading on the
     // new engine.
-    frameCounterLock.lock()
-    framesReceived = 0
-    frameCounterLock.unlock()
+    resetFrameCounter()
 
     // Fresh engine per session so teardown fully releases the AUHAL input.
+    log("Creating fresh recording engine", category: unifiedAudioEngineLogCategory, level: .debug)
     let engine = AVAudioEngine()
     recordingEngine = engine
 
-    let inputNode = engine.inputNode
-    applyPreferredInputDevice(to: inputNode)
+    logDefaultInputDeviceBreadcrumb()
+    log("Accessing recording input node", category: unifiedAudioEngineLogCategory, level: .debug)
+    let inputNode = try AVFAudioExceptionGuard.run(operation: "recording inputNode") {
+      engine.inputNode
+    }
+    log("Recording input node acquired", category: unifiedAudioEngineLogCategory, level: .debug)
 
-    let inputFormat = inputNode.inputFormat(forBus: 0)
+    if allowPreferredInputDevice {
+      try AVFAudioExceptionGuard.run(operation: "apply preferred input device") {
+        try applyPreferredInputDevice(to: inputNode)
+      }
+    } else if !settingsManager.selectedInputDeviceUID.isEmpty {
+      log(
+        "Skipping selected input device '\(settingsManager.selectedInputDeviceName)' for this attempt; using system default input",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+    }
+
+    log("Reading recording input hardware format", category: unifiedAudioEngineLogCategory, level: .debug)
+    let inputFormat = try AVFAudioExceptionGuard.run(operation: "read input hardware format") {
+      inputNode.inputFormat(forBus: 0)
+    }
     log(
       "Input format - sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount), commonFormat: \(inputFormat.commonFormat)",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )
+
+    guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+      throw UnifiedAudioEngineError.invalidInputHardwareFormat(
+        sampleRate: inputFormat.sampleRate,
+        channelCount: inputFormat.channelCount
+      )
+    }
 
     // Use current input sample rate with mono as the stable intermediate format.
     // Avoids kAudioUnitErr_FormatNotSupported (-10877) during Bluetooth A2DP↔HFP transitions.
@@ -534,19 +639,25 @@ class UnifiedAudioEngine: ObservableObject {
       return 0
     }
 
-    engine.attach(recordingMixer)
-    engine.attach(sinkNode)
+    try AVFAudioExceptionGuard.run(operation: "attach recording nodes") {
+      engine.attach(recordingMixer)
+      engine.attach(sinkNode)
+    }
 
     // inputNode → mixer (auto-converts HW format) → sinkNode (stable format)
-    engine.connect(inputNode, to: recordingMixer, format: nil)
-    engine.connect(recordingMixer, to: sinkNode, format: stableFormat)
+    try AVFAudioExceptionGuard.run(operation: "connect recording input graph") {
+      engine.connect(inputNode, to: recordingMixer, format: nil)
+      engine.connect(recordingMixer, to: sinkNode, format: stableFormat)
+    }
 
     self.recordingMixerNode = recordingMixer
     self.sinkNode = sinkNode
 
     isRecordingActive = true
 
-    try engine.start()
+    try AVFAudioExceptionGuard.run(operation: "start recording engine") {
+      try engine.start()
+    }
     log(
       "Recording engine started with mixer → sink graph",
       category: unifiedAudioEngineLogCategory,
@@ -559,9 +670,22 @@ class UnifiedAudioEngine: ObservableObject {
     )
   }
 
-  private func applyPreferredInputDevice(to inputNode: AVAudioInputNode) {
+  private func applyPreferredInputDevice(to inputNode: AVAudioInputNode) throws {
     let preferredUID = settingsManager.selectedInputDeviceUID
-    guard !preferredUID.isEmpty else { return }
+    guard !preferredUID.isEmpty else {
+      log(
+        "No selected input device; using system default input",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+      return
+    }
+
+    log(
+      "Resolving selected input device - uid: \(preferredUID), name: \(settingsManager.selectedInputDeviceName)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
 
     let selection = AudioInputDeviceManager.shared.resolvedSelection(for: preferredUID)
     guard let selectedDevice = selection.device else {
@@ -572,6 +696,12 @@ class UnifiedAudioEngine: ObservableObject {
       )
       return
     }
+
+    log(
+      "Resolved input device - name: \(selectedDevice.name), id: \(selectedDevice.deviceID), fallback: \(selection.isFallback)",
+      category: unifiedAudioEngineLogCategory,
+      level: .debug
+    )
 
     if selection.isFallback {
       log(
@@ -601,6 +731,23 @@ class UnifiedAudioEngine: ObservableObject {
     } catch {
       log(
         "Failed to apply selected input device '\(selectedDevice.name)': \(error.localizedDescription). Using system default input device.",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
+      throw error
+    }
+  }
+
+  private func logDefaultInputDeviceBreadcrumb() {
+    if let defaultDevice = AudioInputDeviceManager.shared.currentDefaultInputDevice() {
+      log(
+        "Default input device - name: \(defaultDevice.name), uid: \(defaultDevice.uid), id: \(defaultDevice.deviceID)",
+        category: unifiedAudioEngineLogCategory,
+        level: .debug
+      )
+    } else {
+      log(
+        "Default input device unavailable",
         category: unifiedAudioEngineLogCategory,
         level: .warning
       )
@@ -634,9 +781,7 @@ class UnifiedAudioEngine: ObservableObject {
     pendingWriteCount = 0
     writeLock.unlock()
 
-    frameCounterLock.lock()
-    framesReceived = 0
-    frameCounterLock.unlock()
+    resetFrameCounter()
 
     bufferPool.clear()
 
@@ -1311,8 +1456,10 @@ enum UnifiedAudioEngineError: LocalizedError {
   case alreadyRecording
   case engineNotRunning
   case invalidFormat
+  case invalidInputHardwareFormat(sampleRate: Double, channelCount: AVAudioChannelCount)
   case converterCreationFailed
   case deviceUnavailable
+  case avfaudioException(operation: String, reason: String)
 
   var errorDescription: String? {
     switch self {
@@ -1322,10 +1469,15 @@ enum UnifiedAudioEngineError: LocalizedError {
       return "Audio engine is not running"
     case .invalidFormat:
       return "Invalid audio format"
+    case .invalidInputHardwareFormat(let sampleRate, let channelCount):
+      return
+        "Audio input hardware reported an invalid format (sampleRate: \(sampleRate), channels: \(channelCount))"
     case .converterCreationFailed:
       return "Failed to create audio format converter"
     case .deviceUnavailable:
       return "Audio input is unavailable. If you're on Bluetooth, try disconnecting and reconnecting your headset."
+    case .avfaudioException(let operation, let reason):
+      return "AVFAudio failed during \(operation): \(reason)"
     }
   }
 }

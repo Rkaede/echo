@@ -150,9 +150,9 @@ class AudioRecorder: NSObject, ObservableObject {
       print("AudioRecorder: Recording started successfully via UnifiedAudioEngine")
 
     } catch {
-      currentRecordingURL = nil
       print("AudioRecorder: Failed to start recording: \(error)")
-      throw RecordingError.failedToStartRecording
+      cleanupFailedRecording()
+      throw error
     }
   }
 

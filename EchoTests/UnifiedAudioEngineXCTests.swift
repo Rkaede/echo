@@ -41,6 +41,16 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
       UnifiedAudioEngineError.converterCreationFailed.errorDescription,
       "Failed to create audio format converter"
     )
+    XCTAssertEqual(
+      UnifiedAudioEngineError.invalidInputHardwareFormat(sampleRate: 0, channelCount: 0)
+        .errorDescription,
+      "Audio input hardware reported an invalid format (sampleRate: 0.0, channels: 0)"
+    )
+    XCTAssertEqual(
+      UnifiedAudioEngineError.avfaudioException(operation: "inputNode", reason: "boom")
+        .errorDescription,
+      "AVFAudio failed during inputNode: boom"
+    )
   }
 
   func testErrorIsLocalizedError() {
@@ -260,5 +270,52 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
 
     XCTAssertEqual(selection.device, duplicateNameMic)
     XCTAssertFalse(selection.isFallback)
+  }
+
+  func testOSStatusDescriptionIncludesFourCharacterCode() {
+    XCTAssertEqual(
+      AudioInputDeviceManager.describeOSStatus(OSStatus(1852797029)),
+      "1852797029 ('nope')"
+    )
+  }
+
+  func testRecoverableAudioSetupStatuses() {
+    XCTAssertTrue(AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(1852797029)))
+    XCTAssertTrue(AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(35)))
+    XCTAssertTrue(AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(-10877)))
+    XCTAssertFalse(AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(-50)))
+  }
+
+  func testPreInputNodeSettleDelayAfterStoppingPlayback() {
+    XCTAssertEqual(
+      UnifiedAudioEngine.preInputNodeSettleDelayNanoseconds(playbackEngineWasRunning: true),
+      500_000_000
+    )
+    XCTAssertEqual(
+      UnifiedAudioEngine.preInputNodeSettleDelayNanoseconds(playbackEngineWasRunning: false),
+      0
+    )
+  }
+
+  func testObjCExceptionGuardConvertsRaisedExceptionToError() {
+    XCTAssertThrowsError(
+      try AVFAudioExceptionGuard.run(operation: "test exception") {
+        NSException(
+          name: NSExceptionName("EchoTestException"),
+          reason: "intentional",
+          userInfo: nil
+        ).raise()
+      }
+    ) { error in
+      guard case UnifiedAudioEngineError.avfaudioException(
+        let operation,
+        let reason
+      ) = error else {
+        XCTFail("Expected avfaudioException, got \(error)")
+        return
+      }
+      XCTAssertEqual(operation, "test exception")
+      XCTAssertEqual(reason, "intentional")
+    }
   }
 }

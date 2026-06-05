@@ -109,6 +109,34 @@ final class AudioInputDeviceManager: ObservableObject {
     }
   }
 
+  nonisolated static func describeOSStatus(_ status: OSStatus) -> String {
+    let unsignedStatus = UInt32(bitPattern: status)
+    let bytes = [
+      UInt8((unsignedStatus >> 24) & 0xff),
+      UInt8((unsignedStatus >> 16) & 0xff),
+      UInt8((unsignedStatus >> 8) & 0xff),
+      UInt8(unsignedStatus & 0xff),
+    ]
+
+    let isPrintableFourCharCode = bytes.allSatisfy { byte in
+      byte >= 32 && byte <= 126
+    }
+
+    guard isPrintableFourCharCode,
+      let fourCharCode = String(bytes: bytes, encoding: .ascii)
+    else {
+      return "\(status)"
+    }
+
+    return "\(status) ('\(fourCharCode)')"
+  }
+
+  nonisolated static func isRecoverableAudioSetupStatus(_ status: OSStatus) -> Bool {
+    status == OSStatus(kAudioHardwareIllegalOperationError)
+      || status == OSStatus(35)
+      || status == OSStatus(-10877)
+  }
+
   private static func fetchInputDevices() -> [AudioInputDevice] {
     var address = AudioObjectPropertyAddress(
       mSelector: kAudioHardwarePropertyDevices,
@@ -262,7 +290,7 @@ enum AudioInputDeviceError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .failedToApplyDevice(let status):
-      return "Failed to select microphone device (OSStatus \(status))"
+      return "Failed to select microphone device (OSStatus \(AudioInputDeviceManager.describeOSStatus(status)))"
     }
   }
 }
