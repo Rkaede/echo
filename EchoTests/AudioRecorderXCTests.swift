@@ -122,4 +122,44 @@ final class AudioRecorderXCTests: XCTestCase {
       100_000_000
     )
   }
+
+  func testWaitForDefaultInputDeviceSwitchReturnsImmediatelyWhenAlreadySwitched() async {
+    var pollCount = 0
+
+    let completed = await AudioRecorder.waitForDefaultInputDeviceSwitch {
+      pollCount += 1
+      return true
+    }
+
+    XCTAssertTrue(completed)
+    XCTAssertEqual(pollCount, 1)
+  }
+
+  func testWaitForDefaultInputDeviceSwitchDetectsLateSwitch() async {
+    var pollCount = 0
+
+    let completed = await AudioRecorder.waitForDefaultInputDeviceSwitch(
+      pollIntervalNanoseconds: 1_000_000
+    ) {
+      pollCount += 1
+      return pollCount >= 3
+    }
+
+    XCTAssertTrue(completed)
+    XCTAssertEqual(pollCount, 3)
+  }
+
+  func testWaitForDefaultInputDeviceSwitchTimesOutWhenSwitchNeverCompletes() async {
+    let start = Date()
+
+    let completed = await AudioRecorder.waitForDefaultInputDeviceSwitch(
+      timeoutNanoseconds: 30_000_000,
+      pollIntervalNanoseconds: 5_000_000
+    ) {
+      false
+    }
+
+    XCTAssertFalse(completed)
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1.0)
+  }
 }

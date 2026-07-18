@@ -147,6 +147,48 @@ final class AudioInputDeviceManager: ObservableObject {
     }
   }
 
+  nonisolated static func transportType(for deviceID: AudioDeviceID) -> UInt32? {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyTransportType,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var transportType: UInt32 = 0
+    var dataSize = UInt32(MemoryLayout<UInt32>.size)
+
+    guard AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &dataSize,
+      &transportType
+    ) == noErr else {
+      return nil
+    }
+
+    return transportType
+  }
+
+  /// Wireless transports renegotiate their audio mode when capture starts and need settle
+  /// delays that wired transports don't. Unknown transports are treated as wireless so
+  /// unrecognized hardware keeps the conservative behavior.
+  nonisolated static func isWirelessTransport(_ transportType: UInt32?) -> Bool {
+    guard let transportType, transportType != kAudioDeviceTransportTypeUnknown else {
+      return true
+    }
+
+    switch transportType {
+    case kAudioDeviceTransportTypeBluetooth,
+      kAudioDeviceTransportTypeBluetoothLE,
+      kAudioDeviceTransportTypeAirPlay,
+      kAudioDeviceTransportTypeContinuityCaptureWireless:
+      return true
+    default:
+      return false
+    }
+  }
+
   nonisolated static func describeOSStatus(_ status: OSStatus) -> String {
     let unsignedStatus = UInt32(bitPattern: status)
     let bytes = [

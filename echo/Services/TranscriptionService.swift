@@ -44,6 +44,12 @@ class TranscriptionService: ObservableObject {
 
   // MARK: - Public Interface
 
+  nonisolated static func recordingStartSoundSettleDelayNanoseconds(
+    inputIsWireless: Bool
+  ) -> UInt64? {
+    inputIsWireless ? 250_000_000 : nil
+  }
+
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
     log("------------------------------------------------------", category: loggerCategory, level: .info)
     log("startRecording called with mode: \(mode)", category: loggerCategory, level: .info)
@@ -102,9 +108,14 @@ class TranscriptionService: ObservableObject {
       log("Recording started successfully", category: loggerCategory, level: .info)
       appState.updateStatus(.recording)
 
-      // Wait 200-300ms for Bluetooth device to stabilize in input mode
-      // This prevents "reconfig pending" errors when playing the start sound
-      try? await Task.sleep(nanoseconds: 250_000_000)  // 250ms
+      // Bluetooth inputs need time to stabilize in input mode before the start sound
+      // plays — playing too early triggers "reconfig pending" errors. Wired inputs
+      // don't mode-switch, so they skip the delay.
+      if let settleDelay = Self.recordingStartSoundSettleDelayNanoseconds(
+        inputIsWireless: audioRecorder.isCurrentCaptureInputWireless()
+      ) {
+        try? await Task.sleep(nanoseconds: settleDelay)
+      }
 
       // NOW play the start sound (if enabled)
       // The device is already in input mode, so playing a short beep won't

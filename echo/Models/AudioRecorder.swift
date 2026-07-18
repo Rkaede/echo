@@ -136,6 +136,32 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     hasExistingRecorder ? 100_000_000 : nil
   }
 
+  nonisolated static let defaultInputSwitchTimeoutNanoseconds: UInt64 = 200_000_000
+  nonisolated static let defaultInputSwitchPollIntervalNanoseconds: UInt64 = 20_000_000
+
+  /// Polls until the system default input matches the requested device, so capture setup
+  /// resumes as soon as the HAL applies the switch instead of after a fixed sleep.
+  @discardableResult
+  static func waitForDefaultInputDeviceSwitch(
+    timeoutNanoseconds: UInt64 = defaultInputSwitchTimeoutNanoseconds,
+    pollIntervalNanoseconds: UInt64 = defaultInputSwitchPollIntervalNanoseconds,
+    isSwitchComplete: @MainActor () -> Bool
+  ) async -> Bool {
+    if isSwitchComplete() {
+      return true
+    }
+
+    let deadline = Date().addingTimeInterval(Double(timeoutNanoseconds) / 1_000_000_000)
+    while Date() < deadline {
+      try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+      if isSwitchComplete() {
+        return true
+      }
+    }
+
+    return isSwitchComplete()
+  }
+
   nonisolated static func audioRecorderCaptureRoute(
     resolvedSelection: AudioInputDeviceSelection,
     defaultInputDevice: AudioInputDevice?
@@ -183,6 +209,17 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     return AVCaptureDevice.default(for: .audio)?.localizedName ?? "Unknown"
   }
 
+  /// Whether the device feeding the active capture route (or the system default input when
+  /// no capture is active) is on a wireless transport such as Bluetooth. Returns true when
+  /// no device can be resolved so callers keep the conservative Bluetooth-safe behavior.
+  func isCurrentCaptureInputWireless() -> Bool {
+    let device = currentCaptureInputDevice
+      ?? AudioInputDeviceManager.shared.currentDefaultInputDevice()
+    guard let device else { return true }
+    return AudioInputDeviceManager.isWirelessTransport(
+      AudioInputDeviceManager.transportType(for: device.deviceID)
+    )
+  }
 
   func startRecording() async throws {
     print("AudioRecorder: Starting recording")
@@ -295,7 +332,13 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       )
       try AudioInputDeviceManager.setDefaultInputDevice(deviceToMakeDefault.deviceID)
       defaultInputDeviceToRestore = route.deviceToRestore
-      try? await Task.sleep(nanoseconds: 200_000_000)
+      let switchStart = Date()
+      let switchCompleted = await Self.waitForDefaultInputDeviceSwitch {
+        manager.currentDefaultInputDevice()?.deviceID == deviceToMakeDefault.deviceID
+      }
+      print(
+        "AudioRecorder: Default input switch \(switchCompleted ? "completed" : "timed out") after \(Int(Date().timeIntervalSince(switchStart) * 1000))ms"
+      )
       manager.refreshDevices()
 
       let effectiveDefaultInputDevice = manager.currentDefaultInputDevice()
