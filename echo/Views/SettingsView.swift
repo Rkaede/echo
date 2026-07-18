@@ -214,12 +214,30 @@ struct GeneralSettingsView: View {
         }
 
         if settings.audioEngineIdlePolicy == .idleTimeout {
-          Stepper(
-            value: $settings.audioEngineIdleTimeoutSeconds,
-            in: 2...60,
-            step: 1
-          ) {
-            Text("Idle timeout: \(settings.audioEngineIdleTimeoutSeconds) seconds")
+          let presets = SettingsManager.audioEngineIdleTimeoutPresets
+          let currentIndex = SettingsManager.idleTimeoutPresetIndex(
+            closestTo: settings.audioEngineIdleTimeoutSeconds
+          )
+
+          VStack(alignment: .leading, spacing: 4) {
+            Text(
+              "Idle timeout: \(SettingsManager.formattedIdleTimeout(seconds: presets[currentIndex]))"
+            )
+
+            Slider(
+              value: Binding(
+                get: { Double(currentIndex) },
+                set: { settings.audioEngineIdleTimeoutSeconds = presets[Int($0.rounded())] }
+              ),
+              in: 0...Double(presets.count - 1),
+              step: 1
+            ) {
+              EmptyView()
+            } minimumValueLabel: {
+              Text("30 sec").font(.caption).foregroundColor(.secondary)
+            } maximumValueLabel: {
+              Text("30 min").font(.caption).foregroundColor(.secondary)
+            }
           }
         }
 

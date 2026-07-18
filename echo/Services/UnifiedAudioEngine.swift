@@ -245,7 +245,9 @@ class UnifiedAudioEngine: ObservableObject {
     case .stopWhenIdle:
       stopPlaybackEngineIfIdle()
     case .idleTimeout:
-      let seconds = max(2, min(60, settingsManager.audioEngineIdleTimeoutSeconds))
+      let seconds = SettingsManager.clampedIdleTimeoutSeconds(
+        settingsManager.audioEngineIdleTimeoutSeconds
+      )
       idleStopTask = Task { [weak self] in
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
         await MainActor.run {

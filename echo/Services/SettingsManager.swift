@@ -44,6 +44,43 @@ class SettingsManager: ObservableObject {
     get { AudioEngineIdlePolicy(rawValue: audioEngineIdlePolicyRaw) ?? .stopWhenIdle }
     set { audioEngineIdlePolicyRaw = newValue.rawValue }
   }
+
+  // MARK: - Idle Timeout Presets
+
+  /// Slider stops for the engine idle timeout. Non-uniform because fine control only
+  /// matters at the short end.
+  nonisolated static let audioEngineIdleTimeoutPresets = [
+    30, 60, 120, 180, 300, 600, 900, 1200, 1800,
+  ]
+
+  nonisolated static func clampedIdleTimeoutSeconds(_ seconds: Int) -> Int {
+    guard let minSeconds = audioEngineIdleTimeoutPresets.first,
+      let maxSeconds = audioEngineIdleTimeoutPresets.last
+    else {
+      return seconds
+    }
+    return max(minSeconds, min(maxSeconds, seconds))
+  }
+
+  nonisolated static func idleTimeoutPresetIndex(closestTo seconds: Int) -> Int {
+    var bestIndex = 0
+    var bestDistance = Int.max
+    for (index, preset) in audioEngineIdleTimeoutPresets.enumerated() {
+      let distance = abs(preset - seconds)
+      if distance < bestDistance {
+        bestDistance = distance
+        bestIndex = index
+      }
+    }
+    return bestIndex
+  }
+
+  nonisolated static func formattedIdleTimeout(seconds: Int) -> String {
+    guard seconds >= 60 else { return "\(seconds) sec" }
+    let minutes = seconds / 60
+    let remainder = seconds % 60
+    return remainder == 0 ? "\(minutes) min" : "\(minutes) min \(remainder) sec"
+  }
   
   // API key uses lazy loading to avoid immediate keychain access
   var apiKey: String {
