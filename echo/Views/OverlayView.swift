@@ -102,24 +102,16 @@ struct OverlayView: View {
               .frame(maxWidth: .infinity, alignment: .center)
           }
 
-          // Waveform indicator - only show during recording and idle states when content is visible
+          // Waveform indicator - only show once input is live.
           if shouldShowWaveform && showContent {
             HStack(spacing: 4) {
               OverlayWaveformView(level: CGFloat(currentInputLevel), samples: waveformSamples)
-              #if DEBUG
-              // Temporary debug display - remove after testing
-              Text(String(format: "%.2f", currentInputLevel))
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.7))
-              #endif
             }
             .frame(width: 36, alignment: .trailing)
-            .background(Color.white.opacity(0.08))  // Faint background for testing visibility
             .padding(.trailing, 10)
           } else {
             Spacer()
               .frame(width: 36, alignment: .trailing)
-              .background(Color.red)
               .padding(.trailing, 10)
           }
         }
@@ -132,26 +124,7 @@ struct OverlayView: View {
   }
 
   private var statusIcon: String {
-    switch status {
-    case .idle:
-      return "mic.circle"
-    case .initiatingRecording:
-      return "record.circle.fill"
-    case .recording:
-      return recordingIconSymbol
-    case .processing:
-      return "sparkles"
-    case .postProcessing:
-      return "wand.and.rays"
-    case .inserted:
-      return "checkmark.circle.fill"
-    case .cancelled:
-      return "xmark.circle.fill"
-    case .confirmingCancel:
-      return "questionmark.circle.fill"
-    case .error:
-      return "exclamationmark.circle.fill"
-    }
+    OverlayPresentation.statusIconName(for: status, recordingIconName: recordingIconSymbol)
   }
 
   private var recordingIconSymbol: String {
@@ -168,54 +141,34 @@ struct OverlayView: View {
   }
 
   private var statusColor: Color {
-    switch status {
-    case .idle:
+    switch OverlayPresentation.statusTone(for: status) {
+    case .neutral:
       return .gray
-    case .initiatingRecording:
-      return .red.opacity(0.5)
+    case .preparing:
+      return .orange
     case .recording:
       return .red
     case .processing:
       return .yellow
     case .postProcessing:
       return .purple
-    case .inserted:
+    case .success:
       return .green
     case .cancelled:
       return .orange
-    case .confirmingCancel:
+    case .confirming:
       return .orange
     case .error:
       return .red
     }
   }
 
-  private var statusText: String {
-    switch status {
-    case .initiatingRecording:
-      return "Recording"
-    case .inserted:
-      return "Done"
-    case .confirmingCancel:
-      return "Are you sure? (Esc)"
-    default:
-      return status.rawValue.capitalized
-    }
-  }
-
   private var displayText: String {
-    // Priority 1: Show profile name if switching profiles
-    if let profileName = showingProfileName {
-      return profileName
-    }
-    // Priority 2: Show recording device when recording
-    else if status == .recording && !currentInputDevice.isEmpty {
-      return currentInputDevice
-    }
-    // Priority 3: Show status text
-    else {
-      return statusText
-    }
+    OverlayPresentation.displayText(
+      status: status,
+      showingProfileName: showingProfileName,
+      currentInputDevice: currentInputDevice
+    )
   }
 
   private var profileDisplaySymbol: String {
@@ -223,12 +176,7 @@ struct OverlayView: View {
   }
 
   private var shouldShowWaveform: Bool {
-    switch status {
-    case .idle, .initiatingRecording, .recording:
-      return true
-    case .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel, .error:
-      return false
-    }
+    OverlayPresentation.shouldShowWaveform(for: status)
   }
 
   private var backgroundColorForStatus: Color {
