@@ -140,20 +140,21 @@ struct GeneralSettingsView: View {
 
       Section("Microphone") {
         Picker(
-          "Microphone",
+          "Preferred microphone",
           selection: Binding(
             get: { settings.selectedInputDeviceUID },
             set: { uid in
               settings.selectedInputDeviceUID = uid
               settings.selectedInputDeviceName =
                 audioInputDeviceManager.devices.first(where: { $0.uid == uid })?.name ?? ""
+              resetDuplicateFallbackIfNeeded()
             }
           )
         ) {
           Text("System Default").tag("")
 
-          if shouldShowUnavailableSelectedDevice {
-            Text("\(unavailableSelectedDeviceName) (Unavailable)")
+          if shouldShowUnavailablePreferredDevice {
+            Text("\(unavailablePreferredDeviceName) (Unavailable)")
               .tag(settings.selectedInputDeviceUID)
           }
 
@@ -163,10 +164,39 @@ struct GeneralSettingsView: View {
         }
         .onAppear {
           audioInputDeviceManager.refreshDevices()
+          resetDuplicateFallbackIfNeeded()
         }
 
+        Picker(
+          "Fallback microphone",
+          selection: Binding(
+            get: { settings.fallbackInputDeviceUID },
+            set: { uid in
+              settings.fallbackInputDeviceUID = uid
+              settings.fallbackInputDeviceName =
+                audioInputDeviceManager.devices.first(where: { $0.uid == uid })?.name ?? ""
+            }
+          )
+        ) {
+          Text("System Default").tag("")
+
+          if shouldShowUnavailableFallbackDevice {
+            Text("\(unavailableFallbackDeviceName) (Unavailable)")
+              .tag(settings.fallbackInputDeviceUID)
+          }
+
+          ForEach(
+            audioInputDeviceManager.devices.filter {
+              $0.uid != settings.selectedInputDeviceUID
+            }
+          ) { device in
+            Text(device.name).tag(device.uid)
+          }
+        }
+        .disabled(settings.selectedInputDeviceUID.isEmpty)
+
         Text(
-          "Choose the microphone Echo uses for recordings. If the selected microphone is unavailable, Echo uses the system default."
+          "Echo uses the preferred microphone when it is available, then the fallback microphone, then the macOS system default."
         )
         .font(.caption)
         .foregroundColor(.secondary)
@@ -255,15 +285,38 @@ struct GeneralSettingsView: View {
     .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
   }
 
-  private var shouldShowUnavailableSelectedDevice: Bool {
+  private var shouldShowUnavailablePreferredDevice: Bool {
     !settings.selectedInputDeviceUID.isEmpty
       && !audioInputDeviceManager.devices.contains(where: { $0.uid == settings.selectedInputDeviceUID })
   }
 
-  private var unavailableSelectedDeviceName: String {
+  private var unavailablePreferredDeviceName: String {
     settings.selectedInputDeviceName.isEmpty
-      ? "Selected microphone"
+      ? "Preferred microphone"
       : settings.selectedInputDeviceName
+  }
+
+  private var shouldShowUnavailableFallbackDevice: Bool {
+    !settings.fallbackInputDeviceUID.isEmpty
+      && settings.fallbackInputDeviceUID != settings.selectedInputDeviceUID
+      && !audioInputDeviceManager.devices.contains(where: {
+        $0.uid == settings.fallbackInputDeviceUID
+      })
+  }
+
+  private var unavailableFallbackDeviceName: String {
+    settings.fallbackInputDeviceName.isEmpty
+      ? "Fallback microphone"
+      : settings.fallbackInputDeviceName
+  }
+
+  private func resetDuplicateFallbackIfNeeded() {
+    guard !settings.selectedInputDeviceUID.isEmpty,
+      settings.selectedInputDeviceUID == settings.fallbackInputDeviceUID
+    else { return }
+
+    settings.fallbackInputDeviceUID = ""
+    settings.fallbackInputDeviceName = ""
   }
 }
 

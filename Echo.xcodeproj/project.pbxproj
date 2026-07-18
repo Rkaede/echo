@@ -423,8 +423,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "echo/echo-Bridging-Header.h";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "echo/echo-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -463,8 +463,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = io.littlecove.echo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "echo/echo-Bridging-Header.h";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "echo/echo-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

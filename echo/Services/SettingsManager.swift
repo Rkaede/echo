@@ -37,6 +37,8 @@ class SettingsManager: ObservableObject {
   @AppStorage("audioEngineIdleTimeoutSeconds") var audioEngineIdleTimeoutSeconds = 10
   @AppStorage("selectedInputDeviceUID") var selectedInputDeviceUID = ""
   @AppStorage("selectedInputDeviceName") var selectedInputDeviceName = ""
+  @AppStorage("fallbackInputDeviceUID") var fallbackInputDeviceUID = ""
+  @AppStorage("fallbackInputDeviceName") var fallbackInputDeviceName = ""
 
   var audioEngineIdlePolicy: AudioEngineIdlePolicy {
     get { AudioEngineIdlePolicy(rawValue: audioEngineIdlePolicyRaw) ?? .stopWhenIdle }

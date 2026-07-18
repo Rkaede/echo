@@ -1,0 +1,125 @@
+import AVFoundation
+import XCTest
+@testable import Echo
+
+@MainActor
+final class AudioRecorderXCTests: XCTestCase {
+  func testPreferredInputDeviceBecomesAudioRecorderCaptureRoute() {
+    let external = AudioInputDevice(
+      uid: "BuiltInHeadphoneInputDevice",
+      name: "External Microphone",
+      deviceID: AudioDeviceID(123)
+    )
+    let elgato = AudioInputDevice(
+      uid: "AppleUSBAudioEngine:Elgato Systems:Elgato Wave:3:A017A52210MU90:2,1",
+      name: "Elgato Wave:3",
+      deviceID: AudioDeviceID(113)
+    )
+
+    let route = AudioRecorder.audioRecorderCaptureRoute(
+      resolvedSelection: AudioInputDeviceSelection(device: elgato, source: .preferred),
+      defaultInputDevice: external
+    )
+
+    XCTAssertEqual(route.captureDevice, elgato)
+    XCTAssertEqual(route.deviceToMakeDefault, elgato)
+    XCTAssertEqual(route.deviceToRestore, external)
+  }
+
+  func testUnavailablePreferredInputFallsBackToSystemDefaultCaptureRoute() {
+    let external = AudioInputDevice(
+      uid: "BuiltInHeadphoneInputDevice",
+      name: "External Microphone",
+      deviceID: AudioDeviceID(123)
+    )
+
+    let route = AudioRecorder.audioRecorderCaptureRoute(
+      resolvedSelection: AudioInputDeviceSelection(device: external, source: .systemDefault),
+      defaultInputDevice: external
+    )
+
+    XCTAssertEqual(route.captureDevice, external)
+    XCTAssertNil(route.deviceToMakeDefault)
+    XCTAssertNil(route.deviceToRestore)
+  }
+
+  func testFallbackInputDeviceBecomesAudioRecorderCaptureRoute() {
+    let builtIn = AudioInputDevice(
+      uid: "BuiltInMicrophoneDevice",
+      name: "MacBook Microphone",
+      deviceID: AudioDeviceID(456)
+    )
+    let fallback = AudioInputDevice(
+      uid: "fallback-mic",
+      name: "Fallback Microphone",
+      deviceID: AudioDeviceID(789)
+    )
+
+    let route = AudioRecorder.audioRecorderCaptureRoute(
+      resolvedSelection: AudioInputDeviceSelection(device: fallback, source: .fallback),
+      defaultInputDevice: builtIn
+    )
+
+    XCTAssertEqual(route.captureDevice, fallback)
+    XCTAssertEqual(route.deviceToMakeDefault, fallback)
+    XCTAssertEqual(route.deviceToRestore, builtIn)
+  }
+
+  func testDefaultInputDevicesUseAudioRecorderCapture() {
+    let devices = [
+      AudioInputDevice(
+        uid: "BuiltInHeadphoneInputDevice",
+        name: "External Microphone",
+        deviceID: AudioDeviceID(123)
+      ),
+      AudioInputDevice(
+        uid: "BuiltInMicrophoneDevice",
+        name: "MacBook Microphone",
+        deviceID: AudioDeviceID(456)
+      ),
+      AudioInputDevice(
+        uid: "AppleUSBAudioEngine:Elgato Systems:Elgato Wave:3:A017A52210MU90:2,1",
+        name: "Elgato Wave:3",
+        deviceID: AudioDeviceID(113)
+      ),
+    ]
+
+    for device in devices {
+      XCTAssertTrue(AudioRecorder.shouldUseAudioRecorderCapture(defaultInputDevice: device))
+    }
+  }
+
+  func testLegacyMeterLevelNormalization() {
+    XCTAssertEqual(AudioRecorder.normalizedLegacyMeterLevel(averagePower: -80), 0)
+    XCTAssertEqual(AudioRecorder.normalizedLegacyMeterLevel(averagePower: 0), 1)
+    XCTAssertEqual(
+      AudioRecorder.normalizedLegacyMeterLevel(averagePower: -20),
+      0.395,
+      accuracy: 0.001
+    )
+    XCTAssertLessThan(AudioRecorder.normalizedLegacyMeterLevel(averagePower: -10), 0.8)
+  }
+
+  func testLegacyWaveformSamplesUseRollingMeterHistory() {
+    let samples = AudioRecorder.legacyWaveformSamples(
+      from: [0.1, 0.4, 0.2],
+      barCount: 5
+    )
+
+    XCTAssertEqual(samples, [0, 0, 0.1, 0.4, 0.2])
+    XCTAssertEqual(
+      AudioRecorder.legacyWaveformSamples(from: [0.1, 0.2, 0.3], barCount: 2),
+      [0.2, 0.3]
+    )
+  }
+
+  func testLegacyRecorderRestartDelayOnlyAppliesWhenCleaningUpExistingRecorder() {
+    XCTAssertNil(
+      AudioRecorder.legacyRecorderRestartSettleDelayNanoseconds(hasExistingRecorder: false)
+    )
+    XCTAssertEqual(
+      AudioRecorder.legacyRecorderRestartSettleDelayNanoseconds(hasExistingRecorder: true),
+      100_000_000
+    )
+  }
+}

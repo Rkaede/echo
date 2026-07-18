@@ -228,48 +228,76 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
 
   // MARK: - Input Device Selection Tests
 
-  func testEmptyInputDeviceUIDUsesDefaultDevice() {
+  func testEmptyPreferredInputDeviceUIDUsesDefaultDevice() {
     let selection = AudioInputDeviceManager.resolveDevice(
       preferredUID: "",
+      fallbackUID: usbMic.uid,
       devices: [usbMic],
       defaultDevice: builtInMic
     )
 
     XCTAssertEqual(selection.device, builtInMic)
-    XCTAssertFalse(selection.isFallback)
+    XCTAssertEqual(selection.source, .systemDefault)
   }
 
-  func testAvailableInputDeviceUIDUsesSelectedDevice() {
+  func testAvailablePreferredInputDeviceWinsOverFallbackDevice() {
     let selection = AudioInputDeviceManager.resolveDevice(
       preferredUID: usbMic.uid,
+      fallbackUID: duplicateNameMic.uid,
+      devices: [builtInMic, usbMic, duplicateNameMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, usbMic)
+    XCTAssertEqual(selection.source, .preferred)
+  }
+
+  func testMissingPreferredInputDeviceUsesFallbackDevice() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: "missing-preferred-mic",
+      fallbackUID: usbMic.uid,
       devices: [builtInMic, usbMic],
       defaultDevice: builtInMic
     )
 
     XCTAssertEqual(selection.device, usbMic)
-    XCTAssertFalse(selection.isFallback)
+    XCTAssertEqual(selection.source, .fallback)
   }
 
-  func testMissingInputDeviceUIDFallsBackToDefaultDevice() {
+  func testMissingPreferredAndFallbackInputDevicesUseDefaultDevice() {
     let selection = AudioInputDeviceManager.resolveDevice(
-      preferredUID: "missing-mic",
+      preferredUID: "missing-preferred-mic",
+      fallbackUID: "missing-fallback-mic",
       devices: [builtInMic],
       defaultDevice: builtInMic
     )
 
     XCTAssertEqual(selection.device, builtInMic)
-    XCTAssertTrue(selection.isFallback)
+    XCTAssertEqual(selection.source, .systemDefault)
   }
 
-  func testInputDeviceSelectionUsesUIDWhenNamesAreDuplicated() {
+  func testMissingPreferredWithNoFallbackRetainsExistingDefaultBehavior() {
     let selection = AudioInputDeviceManager.resolveDevice(
-      preferredUID: duplicateNameMic.uid,
+      preferredUID: "missing-preferred-mic",
+      fallbackUID: "",
+      devices: [builtInMic],
+      defaultDevice: builtInMic
+    )
+
+    XCTAssertEqual(selection.device, builtInMic)
+    XCTAssertEqual(selection.source, .systemDefault)
+  }
+
+  func testFallbackInputDeviceSelectionUsesUIDWhenNamesAreDuplicated() {
+    let selection = AudioInputDeviceManager.resolveDevice(
+      preferredUID: "missing-preferred-mic",
+      fallbackUID: duplicateNameMic.uid,
       devices: [usbMic, duplicateNameMic],
       defaultDevice: builtInMic
     )
 
     XCTAssertEqual(selection.device, duplicateNameMic)
-    XCTAssertFalse(selection.isFallback)
+    XCTAssertEqual(selection.source, .fallback)
   }
 
   func testOSStatusDescriptionIncludesFourCharacterCode() {

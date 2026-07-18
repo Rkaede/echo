@@ -3,12 +3,30 @@ import Combine
 import CoreGraphics
 import Foundation
 
+struct AudioRecorderCaptureRoute: Equatable {
+  let captureDevice: AudioInputDevice?
+  let deviceToMakeDefault: AudioInputDevice?
+  let deviceToRestore: AudioInputDevice?
+}
+
 @MainActor
-class AudioRecorder: NSObject, ObservableObject {
-  private let unifiedEngine = UnifiedAudioEngine.shared
+class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
+  private enum RecordingBackend {
+    case none
+    case legacyRecorder
+  }
+
+  nonisolated private static let legacyMeteringIntervalNanoseconds: UInt64 = 50_000_000
+  nonisolated private static let legacyWaveformBarCount = 12
+
+  private var legacyRecorder: AVAudioRecorder?
+  private var legacyMeteringTask: Task<Void, Never>?
+  private var legacyMeterHistory: [Float] = []
+  private var activeRecordingBackend: RecordingBackend = .none
   private var recordingStartTime: Date?
   private var hasCheckedPermission = false
-  private var cancellables = Set<AnyCancellable>()
+  private var currentCaptureInputDevice: AudioInputDevice?
+  private var defaultInputDeviceToRestore: AudioInputDevice?
 
   @Published var isRecording = false
   @Published var hasPermission = false
@@ -30,28 +48,13 @@ class AudioRecorder: NSObject, ObservableObject {
     super.init()
     // Don't check permissions on init - wait until explicitly requested
     setupAudioDeviceChangeNotification()
-
-    // Subscribe to unified engine's level updates
-    unifiedEngine.$currentInputLevel
-      .sink { [weak self] level in
-        print("[WAVEFORM DEBUG] AudioRecorder received level: \(level)")
-        self?.currentLevel = level
-      }
-      .store(in: &cancellables)
-
-    // Subscribe to unified engine's waveform samples
-    unifiedEngine.$waveformSamples
-      .sink { [weak self] samples in
-        self?.waveformSamples = samples
-      }
-      .store(in: &cancellables)
   }
 
   deinit {
     // Remove audio device change observer
     NotificationCenter.default.removeObserver(self)
 
-    // Note: Can't call async methods in deinit, so cleanup is handled by UnifiedAudioEngine
+    // Note: Can't call async methods in deinit, so active recordings are cleaned up on stop/cancel.
   }
 
   // Check current permission status without requesting
@@ -101,23 +104,88 @@ class AudioRecorder: NSObject, ObservableObject {
 
   private var currentRecordingURL: URL?
 
-  func getCurrentInputDevice() -> String {
-    let selection = AudioInputDeviceManager.shared.resolvedSelection(
-      for: SettingsManager.shared.selectedInputDeviceUID
-    )
-    if let selectedDevice = selection.device {
-      return selectedDevice.name
+  nonisolated static func shouldUseAudioRecorderCapture(
+    defaultInputDevice _: AudioInputDevice?
+  ) -> Bool {
+    // AVAudioEngine.inputNode can fail inside AVFAudio/HAL before Swift can recover.
+    // Route capture through AVAudioRecorder so recording startup avoids that boundary.
+    true
+  }
+
+  nonisolated static func normalizedLegacyMeterLevel(averagePower: Float) -> CGFloat {
+    guard averagePower > -60 else { return 0 }
+    let shaped = pow(10, averagePower / 40) * 1.25
+    return CGFloat(max(0, min(1, shaped)))
+  }
+
+  nonisolated static func legacyWaveformSamples(
+    from history: [Float],
+    barCount: Int
+  ) -> [Float] {
+    guard barCount > 0 else { return [] }
+
+    let recentHistory = Array(history.suffix(barCount))
+    guard recentHistory.count < barCount else { return recentHistory }
+
+    return Array(repeating: 0, count: barCount - recentHistory.count) + recentHistory
+  }
+
+  nonisolated static func legacyRecorderRestartSettleDelayNanoseconds(
+    hasExistingRecorder: Bool
+  ) -> UInt64? {
+    hasExistingRecorder ? 100_000_000 : nil
+  }
+
+  nonisolated static func audioRecorderCaptureRoute(
+    resolvedSelection: AudioInputDeviceSelection,
+    defaultInputDevice: AudioInputDevice?
+  ) -> AudioRecorderCaptureRoute {
+    guard resolvedSelection.source != .systemDefault,
+      let selectedDevice = resolvedSelection.device
+    else {
+      return systemDefaultAudioRecorderCaptureRoute(defaultInputDevice: defaultInputDevice)
     }
 
-    guard let defaultDevice = AVCaptureDevice.default(for: .audio) else {
-      return "Unknown"
+    guard selectedDevice.deviceID != defaultInputDevice?.deviceID else {
+      return AudioRecorderCaptureRoute(
+        captureDevice: selectedDevice,
+        deviceToMakeDefault: nil,
+        deviceToRestore: nil
+      )
     }
-    return defaultDevice.localizedName
+
+    return AudioRecorderCaptureRoute(
+      captureDevice: selectedDevice,
+      deviceToMakeDefault: selectedDevice,
+      deviceToRestore: defaultInputDevice
+    )
+  }
+
+  nonisolated private static func systemDefaultAudioRecorderCaptureRoute(
+    defaultInputDevice: AudioInputDevice?
+  ) -> AudioRecorderCaptureRoute {
+    AudioRecorderCaptureRoute(
+      captureDevice: defaultInputDevice,
+      deviceToMakeDefault: nil,
+      deviceToRestore: nil
+    )
+  }
+
+  func getCurrentInputDevice() -> String {
+    if let currentCaptureInputDevice {
+      return currentCaptureInputDevice.name
+    }
+
+    if let defaultDevice = AudioInputDeviceManager.shared.currentDefaultInputDevice() {
+      return defaultDevice.name
+    }
+
+    return AVCaptureDevice.default(for: .audio)?.localizedName ?? "Unknown"
   }
 
 
   func startRecording() async throws {
-    print("AudioRecorder: Starting recording via UnifiedAudioEngine")
+    print("AudioRecorder: Starting recording")
 
     // Ensure we've checked permissions
     checkPermissionStatus()
@@ -139,15 +207,18 @@ class AudioRecorder: NSObject, ObservableObject {
       throw RecordingError.failedToCreateFile
     }
 
+    let captureRoute = await prepareAudioRecorderCaptureRoute()
+    logAudioRecorderCaptureRoute(captureRoute)
+
     do {
-      // Start recording via unified engine. Internally this verifies the HAL is actually
-      // delivering audio frames before returning, so no additional settle delay is needed.
-      try await unifiedEngine.startRecording(to: recordingURL)
+      guard Self.shouldUseAudioRecorderCapture(defaultInputDevice: captureRoute.captureDevice) else {
+        throw RecordingError.audioSessionConfigurationFailed
+      }
 
-      recordingStartTime = Date()
-      isRecording = true
-
-      print("AudioRecorder: Recording started successfully via UnifiedAudioEngine")
+      try await startLegacyRecording(
+        to: recordingURL,
+        captureDevice: captureRoute.captureDevice
+      )
 
     } catch {
       print("AudioRecorder: Failed to start recording: \(error)")
@@ -156,35 +227,298 @@ class AudioRecorder: NSObject, ObservableObject {
     }
   }
 
+  private func startLegacyRecording(
+    to recordingURL: URL,
+    captureDevice: AudioInputDevice?
+  ) async throws {
+    print(
+      "AudioRecorder: Using AVAudioRecorder capture for input device \(Self.describeInputDevice(captureDevice))"
+    )
+
+    if let existingRecorder = legacyRecorder {
+      existingRecorder.stop()
+      existingRecorder.delegate = nil
+      legacyRecorder = nil
+
+      if let settleDelay = Self.legacyRecorderRestartSettleDelayNanoseconds(
+        hasExistingRecorder: true
+      ) {
+        try await Task.sleep(nanoseconds: settleDelay)
+      }
+    }
+
+    let recorder = try AVAudioRecorder(url: recordingURL, settings: legacyRecorderSettings())
+    recorder.delegate = self
+    recorder.isMeteringEnabled = true
+
+    if !recorder.prepareToRecord() {
+      print("AudioRecorder: AVAudioRecorder prepareToRecord returned false; attempting record anyway")
+    }
+
+    guard recorder.record() else {
+      throw RecordingError.failedToStartRecording
+    }
+
+    legacyRecorder = recorder
+    currentCaptureInputDevice = captureDevice
+    recordingStartTime = Date()
+    isRecording = true
+    activeRecordingBackend = .legacyRecorder
+    currentLevel = 0
+    legacyMeterHistory = []
+    waveformSamples = []
+    startLegacyMetering()
+
+    print("AudioRecorder: Recording started successfully via AVAudioRecorder capture")
+  }
+
+  private func prepareAudioRecorderCaptureRoute() async -> AudioRecorderCaptureRoute {
+    let manager = AudioInputDeviceManager.shared
+    let defaultInputDevice = manager.currentDefaultInputDevice()
+    let settings = SettingsManager.shared
+    let selection = manager.resolvedSelection(
+      preferredUID: settings.selectedInputDeviceUID,
+      fallbackUID: settings.fallbackInputDeviceUID
+    )
+    var route = Self.audioRecorderCaptureRoute(
+      resolvedSelection: selection,
+      defaultInputDevice: defaultInputDevice
+    )
+
+    guard let deviceToMakeDefault = route.deviceToMakeDefault else {
+      return route
+    }
+
+    do {
+      print(
+        "AudioRecorder: Temporarily setting system default input to selected device \(Self.describeInputDevice(deviceToMakeDefault)) for AVAudioRecorder capture"
+      )
+      try AudioInputDeviceManager.setDefaultInputDevice(deviceToMakeDefault.deviceID)
+      defaultInputDeviceToRestore = route.deviceToRestore
+      try? await Task.sleep(nanoseconds: 200_000_000)
+      manager.refreshDevices()
+
+      let effectiveDefaultInputDevice = manager.currentDefaultInputDevice()
+      guard effectiveDefaultInputDevice?.deviceID == deviceToMakeDefault.deviceID else {
+        print(
+          "AudioRecorder: Selected input device did not become system default; AVAudioRecorder capture will use \(Self.describeInputDevice(effectiveDefaultInputDevice ?? defaultInputDevice))"
+        )
+        restoreDefaultInputDeviceIfNeeded()
+        route = Self.systemDefaultAudioRecorderCaptureRoute(
+          defaultInputDevice: effectiveDefaultInputDevice ?? defaultInputDevice
+        )
+        return route
+      }
+
+      return AudioRecorderCaptureRoute(
+        captureDevice: effectiveDefaultInputDevice ?? deviceToMakeDefault,
+        deviceToMakeDefault: deviceToMakeDefault,
+        deviceToRestore: route.deviceToRestore
+      )
+    } catch {
+      print(
+        "AudioRecorder: Failed to set selected input device as system default: \(error); AVAudioRecorder capture will use \(Self.describeInputDevice(defaultInputDevice))"
+      )
+      defaultInputDeviceToRestore = nil
+      return Self.systemDefaultAudioRecorderCaptureRoute(defaultInputDevice: defaultInputDevice)
+    }
+  }
+
+  private func logAudioRecorderCaptureRoute(_ route: AudioRecorderCaptureRoute) {
+    let settings = SettingsManager.shared
+    let preferredUID = settings.selectedInputDeviceUID
+    let fallbackUID = settings.fallbackInputDeviceUID
+    let selection = AudioInputDeviceManager.shared.resolvedSelection(
+      preferredUID: preferredUID,
+      fallbackUID: fallbackUID
+    )
+
+    guard preferredUID.isEmpty == false else {
+      print(
+        "AudioRecorder: AVAudioRecorder capture will use system default input \(Self.describeInputDevice(route.captureDevice))"
+      )
+      return
+    }
+
+    if selection.source == .systemDefault {
+      let preferredName = settings.selectedInputDeviceName.isEmpty
+        ? preferredUID
+        : settings.selectedInputDeviceName
+      let unavailableDescription: String
+      if fallbackUID.isEmpty {
+        unavailableDescription = "Preferred input device '\(preferredName)' is unavailable"
+      } else {
+        let fallbackName = settings.fallbackInputDeviceName.isEmpty
+          ? fallbackUID
+          : settings.fallbackInputDeviceName
+        unavailableDescription =
+          "Preferred input device '\(preferredName)' and fallback input device '\(fallbackName)' are unavailable"
+      }
+      print(
+        "AudioRecorder: \(unavailableDescription); AVAudioRecorder capture will use system default input \(Self.describeInputDevice(route.captureDevice))"
+      )
+      return
+    }
+
+    guard let resolvedDevice = selection.device else {
+      print(
+        "AudioRecorder: AVAudioRecorder capture will use system default input \(Self.describeInputDevice(route.captureDevice))"
+      )
+      return
+    }
+
+    let sourceName = selection.source.rawValue
+    if resolvedDevice.deviceID == route.captureDevice?.deviceID {
+      print(
+        "AudioRecorder: Using \(sourceName) input device \(Self.describeInputDevice(resolvedDevice))"
+      )
+    } else {
+      print(
+        "AudioRecorder: Resolved \(sourceName) input device \(Self.describeInputDevice(resolvedDevice)) could not be applied; AVAudioRecorder capture will use system default input \(Self.describeInputDevice(route.captureDevice))"
+      )
+    }
+  }
+
+  private func restoreDefaultInputDeviceIfNeeded() {
+    guard let deviceToRestore = defaultInputDeviceToRestore else { return }
+
+    do {
+      try AudioInputDeviceManager.setDefaultInputDevice(deviceToRestore.deviceID)
+      AudioInputDeviceManager.shared.refreshDevices()
+      print(
+        "AudioRecorder: Restored system default input device to \(Self.describeInputDevice(deviceToRestore))"
+      )
+    } catch {
+      print(
+        "AudioRecorder: Failed to restore system default input device \(Self.describeInputDevice(deviceToRestore)): \(error)"
+      )
+    }
+
+    defaultInputDeviceToRestore = nil
+  }
+
+  nonisolated private static func describeInputDevice(_ device: AudioInputDevice?) -> String {
+    guard let device else { return "unknown default input" }
+    return "\(device.name) (\(device.uid), id: \(device.deviceID))"
+  }
+
+  private func startLegacyMetering() {
+    stopLegacyMetering(resetLevels: false)
+    updateLegacyMetering()
+
+    legacyMeteringTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: Self.legacyMeteringIntervalNanoseconds)
+        self?.updateLegacyMetering()
+      }
+    }
+  }
+
+  private func stopLegacyMetering(resetLevels: Bool = true) {
+    legacyMeteringTask?.cancel()
+    legacyMeteringTask = nil
+
+    if resetLevels {
+      currentLevel = 0
+      legacyMeterHistory = []
+      waveformSamples = []
+    }
+  }
+
+  private func updateLegacyMetering() {
+    guard activeRecordingBackend == .legacyRecorder,
+      let legacyRecorder,
+      legacyRecorder.isRecording
+    else {
+      return
+    }
+
+    legacyRecorder.updateMeters()
+    let level = Self.normalizedLegacyMeterLevel(
+      averagePower: legacyRecorder.averagePower(forChannel: 0)
+    )
+    currentLevel = level
+    appendLegacyMeterLevel(level)
+    waveformSamples = Self.legacyWaveformSamples(
+      from: legacyMeterHistory,
+      barCount: Self.legacyWaveformBarCount
+    )
+  }
+
+  private func appendLegacyMeterLevel(_ level: CGFloat) {
+    legacyMeterHistory.append(Float(level))
+    if legacyMeterHistory.count > Self.legacyWaveformBarCount {
+      legacyMeterHistory.removeFirst(legacyMeterHistory.count - Self.legacyWaveformBarCount)
+    }
+  }
+
+  private func legacyRecorderSettings() -> [String: Any] {
+    [
+      AVFormatIDKey: Int(kAudioFormatLinearPCM),
+      AVSampleRateKey: 16000.0,
+      AVNumberOfChannelsKey: 1,
+      AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMIsBigEndianKey: false,
+      AVLinearPCMIsNonInterleaved: false,
+    ]
+  }
+
   func stopRecording() async -> URL? {
     print("AudioRecorder: Stopping recording")
     guard isRecording else { return nil }
 
-    let recordingURL = await unifiedEngine.stopRecording()
+    let recordingURL: URL?
+    switch activeRecordingBackend {
+    case .legacyRecorder:
+      recordingURL = await stopLegacyRecording()
+    case .none:
+      recordingURL = nil
+    }
 
     isRecording = false
     recordingStartTime = nil
     currentRecordingURL = nil
+    activeRecordingBackend = .none
+    currentCaptureInputDevice = nil
+    restoreDefaultInputDeviceIfNeeded()
 
-    // Audio cleanup is handled by UnifiedAudioEngine
     deactivateAudioSession()
 
+    return recordingURL
+  }
+
+  private func stopLegacyRecording() async -> URL? {
+    let recordingURL = currentRecordingURL
+    stopLegacyMetering()
+    legacyRecorder?.stop()
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    legacyRecorder?.delegate = nil
+    legacyRecorder = nil
     return recordingURL
   }
 
   func cancelRecording() async {
     print("AudioRecorder: Cancelling recording (isRecording: \(isRecording))")
 
-    if isRecording {
-      await unifiedEngine.cancelRecording()
+    if isRecording, activeRecordingBackend == .legacyRecorder {
+      stopLegacyMetering()
+      legacyRecorder?.stop()
+      try? await Task.sleep(nanoseconds: 100_000_000)
+      legacyRecorder?.delegate = nil
+      legacyRecorder = nil
+      deleteRecording()
     }
 
     // Always clean up state
     isRecording = false
     recordingStartTime = nil
     currentRecordingURL = nil
+    activeRecordingBackend = .none
+    currentCaptureInputDevice = nil
+    restoreDefaultInputDeviceIfNeeded()
 
-    // Audio cleanup is handled by UnifiedAudioEngine
     deactivateAudioSession()
 
     print("AudioRecorder: Recording cancellation completed")
@@ -203,6 +537,14 @@ class AudioRecorder: NSObject, ObservableObject {
   }
 
   private func cleanupFailedRecording() {
+    stopLegacyMetering()
+    legacyRecorder?.stop()
+    legacyRecorder?.delegate = nil
+    legacyRecorder = nil
+    activeRecordingBackend = .none
+    currentCaptureInputDevice = nil
+    restoreDefaultInputDeviceIfNeeded()
+
     if let url = currentRecordingURL {
       do {
         try FileManager.default.removeItem(at: url)
@@ -277,6 +619,39 @@ class AudioRecorder: NSObject, ObservableObject {
         device.hasMediaType(.audio)
       {
         print("AudioRecorder: Device change: \(device.localizedName)")
+      }
+    }
+  }
+
+  nonisolated func audioRecorderDidFinishRecording(
+    _ recorder: AVAudioRecorder,
+    successfully flag: Bool
+  ) {
+    Task { @MainActor in
+      if !flag {
+        isRecording = false
+        recordingStartTime = nil
+        activeRecordingBackend = .none
+        currentCaptureInputDevice = nil
+        stopLegacyMetering()
+        restoreDefaultInputDeviceIfNeeded()
+      }
+    }
+  }
+
+  nonisolated func audioRecorderEncodeErrorDidOccur(
+    _ recorder: AVAudioRecorder,
+    error: Error?
+  ) {
+    Task { @MainActor in
+      isRecording = false
+      recordingStartTime = nil
+      activeRecordingBackend = .none
+      currentCaptureInputDevice = nil
+      stopLegacyMetering()
+      restoreDefaultInputDeviceIfNeeded()
+      if let error {
+        print("AudioRecorder: AVAudioRecorder encode error: \(error)")
       }
     }
   }

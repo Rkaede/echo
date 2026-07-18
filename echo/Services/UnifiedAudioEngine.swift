@@ -314,13 +314,13 @@ class UnifiedAudioEngine: ObservableObject {
     //      success yet no sink callback ever fires. Detected by waitForFirstFrame().
     let maxRetries = 3
     var lastError: Error?
-    var allowPreferredInputDevice = !settingsManager.selectedInputDeviceUID.isEmpty
+    var allowConfiguredInputDevice = !settingsManager.selectedInputDeviceUID.isEmpty
 
     for attempt in 1...maxRetries {
       do {
         try await setupRecordingEngine(
           to: url,
-          allowPreferredInputDevice: allowPreferredInputDevice
+          allowConfiguredInputDevice: allowConfiguredInputDevice
         )
       } catch {
         lastError = error
@@ -332,14 +332,14 @@ class UnifiedAudioEngine: ObservableObject {
 
         tearDownRecordingEngine()
 
-        if allowPreferredInputDevice,
-          shouldFallbackFromPreferredInputDeviceSetup(error),
+        if allowConfiguredInputDevice,
+          shouldFallbackFromConfiguredInputDeviceSetup(error),
           attempt < maxRetries
         {
-          allowPreferredInputDevice = false
+          allowConfiguredInputDevice = false
           let settleDelay = retrySettleDelayNanoseconds(afterAttempt: attempt)
           log(
-            "Selected input device setup failed; retrying with system default input after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
+            "Configured input device setup failed; retrying with system default input after \(settleDelay / 1_000_000)ms settle delay (attempt \(attempt + 1))...",
             category: unifiedAudioEngineLogCategory,
             level: .warning
           )
@@ -443,7 +443,7 @@ class UnifiedAudioEngine: ObservableObject {
     return AudioInputDeviceManager.isRecoverableAudioSetupStatus(OSStatus(nsError.code))
   }
 
-  private func shouldFallbackFromPreferredInputDeviceSetup(_ error: Error) -> Bool {
+  private func shouldFallbackFromConfiguredInputDeviceSetup(_ error: Error) -> Bool {
     if let inputDeviceError = error as? AudioInputDeviceError {
       switch inputDeviceError {
       case .failedToApplyDevice:
@@ -483,7 +483,7 @@ class UnifiedAudioEngine: ObservableObject {
 
   private func setupRecordingEngine(
     to url: URL,
-    allowPreferredInputDevice: Bool
+    allowConfiguredInputDevice: Bool
   ) async throws {
     // Fully release the playback engine before allocating the recording engine. Even when
     // idle, a recently-used playback engine holds a HAL output stream that contends with
@@ -531,13 +531,13 @@ class UnifiedAudioEngine: ObservableObject {
     }
     log("Recording input node acquired", category: unifiedAudioEngineLogCategory, level: .debug)
 
-    if allowPreferredInputDevice {
-      try AVFAudioExceptionGuard.run(operation: "apply preferred input device") {
-        try applyPreferredInputDevice(to: inputNode)
+    if allowConfiguredInputDevice {
+      try AVFAudioExceptionGuard.run(operation: "apply configured input device") {
+        try applyConfiguredInputDevice(to: inputNode)
       }
     } else if !settingsManager.selectedInputDeviceUID.isEmpty {
       log(
-        "Skipping selected input device '\(settingsManager.selectedInputDeviceName)' for this attempt; using system default input",
+        "Skipping configured input devices for this attempt; using system default input",
         category: unifiedAudioEngineLogCategory,
         level: .warning
       )
@@ -670,11 +670,12 @@ class UnifiedAudioEngine: ObservableObject {
     )
   }
 
-  private func applyPreferredInputDevice(to inputNode: AVAudioInputNode) throws {
+  private func applyConfiguredInputDevice(to inputNode: AVAudioInputNode) throws {
     let preferredUID = settingsManager.selectedInputDeviceUID
+    let fallbackUID = settingsManager.fallbackInputDeviceUID
     guard !preferredUID.isEmpty else {
       log(
-        "No selected input device; using system default input",
+        "No preferred input device; using system default input",
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
@@ -682,15 +683,18 @@ class UnifiedAudioEngine: ObservableObject {
     }
 
     log(
-      "Resolving selected input device - uid: \(preferredUID), name: \(settingsManager.selectedInputDeviceName)",
+      "Resolving configured input devices - preferred uid: \(preferredUID), fallback uid: \(fallbackUID)",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )
 
-    let selection = AudioInputDeviceManager.shared.resolvedSelection(for: preferredUID)
+    let selection = AudioInputDeviceManager.shared.resolvedSelection(
+      preferredUID: preferredUID,
+      fallbackUID: fallbackUID
+    )
     guard let selectedDevice = selection.device else {
       log(
-        "Selected input device unavailable and no default input device could be resolved",
+        "Configured input devices are unavailable and no default input device could be resolved",
         category: unifiedAudioEngineLogCategory,
         level: .warning
       )
@@ -698,18 +702,42 @@ class UnifiedAudioEngine: ObservableObject {
     }
 
     log(
-      "Resolved input device - name: \(selectedDevice.name), id: \(selectedDevice.deviceID), fallback: \(selection.isFallback)",
+      "Resolved \(selection.source.rawValue) input device - name: \(selectedDevice.name), id: \(selectedDevice.deviceID)",
       category: unifiedAudioEngineLogCategory,
       level: .debug
     )
 
-    if selection.isFallback {
+    if selection.source == .systemDefault {
+      let preferredName = settingsManager.selectedInputDeviceName.isEmpty
+        ? preferredUID
+        : settingsManager.selectedInputDeviceName
+      let unavailableDescription: String
+      if fallbackUID.isEmpty {
+        unavailableDescription = "Preferred input device '\(preferredName)' is unavailable"
+      } else {
+        let fallbackName = settingsManager.fallbackInputDeviceName.isEmpty
+          ? fallbackUID
+          : settingsManager.fallbackInputDeviceName
+        unavailableDescription =
+          "Preferred input device '\(preferredName)' and fallback input device '\(fallbackName)' are unavailable"
+      }
       log(
-        "Selected input device '\(settingsManager.selectedInputDeviceName)' is unavailable; falling back to '\(selectedDevice.name)'",
+        "\(unavailableDescription); using system default input '\(selectedDevice.name)'",
         category: unifiedAudioEngineLogCategory,
         level: .warning
       )
       return
+    }
+
+    if selection.source == .fallback {
+      let preferredName = settingsManager.selectedInputDeviceName.isEmpty
+        ? preferredUID
+        : settingsManager.selectedInputDeviceName
+      log(
+        "Preferred input device '\(preferredName)' is unavailable; using fallback input '\(selectedDevice.name)'",
+        category: unifiedAudioEngineLogCategory,
+        level: .warning
+      )
     }
 
     guard let audioUnit = inputNode.audioUnit else {
@@ -724,13 +752,13 @@ class UnifiedAudioEngine: ObservableObject {
     do {
       try AudioInputDeviceManager.applyInputDevice(selectedDevice.deviceID, to: audioUnit)
       log(
-        "Selected input device: \(selectedDevice.name)",
+        "Applied \(selection.source.rawValue) input device: \(selectedDevice.name)",
         category: unifiedAudioEngineLogCategory,
         level: .info
       )
     } catch {
       log(
-        "Failed to apply selected input device '\(selectedDevice.name)': \(error.localizedDescription). Using system default input device.",
+        "Failed to apply \(selection.source.rawValue) input device '\(selectedDevice.name)': \(error.localizedDescription). Using system default input device.",
         category: unifiedAudioEngineLogCategory,
         level: .warning
       )

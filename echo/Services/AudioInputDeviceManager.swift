@@ -11,9 +11,15 @@ struct AudioInputDevice: Identifiable, Equatable {
   var id: String { uid }
 }
 
-struct AudioInputDeviceSelection {
+enum AudioInputDeviceSelectionSource: String, Equatable {
+  case preferred
+  case fallback
+  case systemDefault
+}
+
+struct AudioInputDeviceSelection: Equatable {
   let device: AudioInputDevice?
-  let isFallback: Bool
+  let source: AudioInputDeviceSelectionSource
 }
 
 @MainActor
@@ -29,18 +35,25 @@ final class AudioInputDeviceManager: ObservableObject {
 
   static func resolveDevice(
     preferredUID: String,
+    fallbackUID: String,
     devices: [AudioInputDevice],
     defaultDevice: AudioInputDevice?
   ) -> AudioInputDeviceSelection {
     guard !preferredUID.isEmpty else {
-      return AudioInputDeviceSelection(device: defaultDevice, isFallback: false)
+      return AudioInputDeviceSelection(device: defaultDevice, source: .systemDefault)
     }
 
-    if let selectedDevice = devices.first(where: { $0.uid == preferredUID }) {
-      return AudioInputDeviceSelection(device: selectedDevice, isFallback: false)
+    if let preferredDevice = devices.first(where: { $0.uid == preferredUID }) {
+      return AudioInputDeviceSelection(device: preferredDevice, source: .preferred)
     }
 
-    return AudioInputDeviceSelection(device: defaultDevice, isFallback: true)
+    if !fallbackUID.isEmpty,
+      let fallbackDevice = devices.first(where: { $0.uid == fallbackUID })
+    {
+      return AudioInputDeviceSelection(device: fallbackDevice, source: .fallback)
+    }
+
+    return AudioInputDeviceSelection(device: defaultDevice, source: .systemDefault)
   }
 
   func refreshDevices() {
@@ -55,10 +68,14 @@ final class AudioInputDeviceManager: ObservableObject {
     return Self.makeInputDevice(for: defaultDeviceID)
   }
 
-  func resolvedSelection(for preferredUID: String) -> AudioInputDeviceSelection {
+  func resolvedSelection(
+    preferredUID: String,
+    fallbackUID: String
+  ) -> AudioInputDeviceSelection {
     refreshDevices()
     return Self.resolveDevice(
       preferredUID: preferredUID,
+      fallbackUID: fallbackUID,
       devices: devices,
       defaultDevice: currentDefaultInputDevice()
     )
@@ -68,8 +85,8 @@ final class AudioInputDeviceManager: ObservableObject {
     preferredUID: String,
     preferredName: String
   ) -> String {
-    let selection = resolvedSelection(for: preferredUID)
-    if selection.isFallback, !preferredName.isEmpty {
+    let selection = resolvedSelection(preferredUID: preferredUID, fallbackUID: "")
+    if selection.source == .systemDefault, !preferredUID.isEmpty, !preferredName.isEmpty {
       return "\(preferredName) (Unavailable)"
     }
     return selection.device?.name ?? "System Default"
@@ -102,6 +119,27 @@ final class AudioInputDeviceManager: ObservableObject {
       0,
       &mutableDeviceID,
       UInt32(MemoryLayout<AudioDeviceID>.size)
+    )
+
+    guard status == noErr else {
+      throw AudioInputDeviceError.failedToApplyDevice(status)
+    }
+  }
+
+  static func setDefaultInputDevice(_ deviceID: AudioDeviceID) throws {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultInputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var mutableDeviceID = deviceID
+    let status = AudioObjectSetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      UInt32(MemoryLayout<AudioDeviceID>.size),
+      &mutableDeviceID
     )
 
     guard status == noErr else {
