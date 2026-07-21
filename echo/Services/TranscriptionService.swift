@@ -13,6 +13,7 @@ class TranscriptionService: ObservableObject {
   private let pasteService = PasteService.shared
   private let historyManager = HistoryManager.shared
   private let soundManager = SoundManager.shared
+  private let notesModeService = NotesModeService.shared
   private let loggerCategory = "TranscriptionService"
 
   private var cancellables = Set<AnyCancellable>()
@@ -173,6 +174,14 @@ class TranscriptionService: ObservableObject {
     log("Recording stopped, file at: \(audioFileURL)", category: loggerCategory, level: .info)
     appState.updateStatus(.processing)
 
+    // Capture the screen right away (concurrently with the upload) so the notes
+    // screenshot reflects what was visible while dictating
+    if notesModeService.isActive {
+      Task {
+        await self.notesModeService.captureScreenshotForNextEntry()
+      }
+    }
+
     // Calculate recording duration
     let recordingDuration = recordingStartTime.map { recordingEndTime.timeIntervalSince($0) } ?? 0
 
@@ -246,6 +255,9 @@ class TranscriptionService: ObservableObject {
     // Update app state to cancelled
     appState.updateStatus(.cancelled)
     log("Recording cancelled", category: loggerCategory, level: .info)
+
+    // A screenshot captured for this recording will never get a transcription
+    notesModeService.discardPendingScreenshot()
 
     return .success(())
   }
@@ -414,14 +426,19 @@ class TranscriptionService: ObservableObject {
         return .success(())
       }
 
-      // Automatically paste the chosen text
+      // In notes mode the text goes into the note instead of the focused app
       if !finalText.isEmpty {
-        let pasteSuccess = await performAutoPaste(text: finalText)
-        if !pasteSuccess {
-          log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
-        } else {
-          // Play completion sound only if paste was successful
+        if notesModeService.isActive {
+          notesModeService.addTranscription(finalText)
           soundManager.playTranscriptionCompleteSound()
+        } else {
+          let pasteSuccess = await performAutoPaste(text: finalText)
+          if !pasteSuccess {
+            log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
+          } else {
+            // Play completion sound only if paste was successful
+            soundManager.playTranscriptionCompleteSound()
+          }
         }
       } else {
         log("No text to paste (empty result)", category: loggerCategory, level: .warning)
