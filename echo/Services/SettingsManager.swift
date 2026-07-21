@@ -39,6 +39,7 @@ class SettingsManager: ObservableObject {
   @AppStorage("selectedInputDeviceName") var selectedInputDeviceName = ""
   @AppStorage("fallbackInputDeviceUID") var fallbackInputDeviceUID = ""
   @AppStorage("fallbackInputDeviceName") var fallbackInputDeviceName = ""
+  @AppStorage("notesModeShortcut") var notesModeShortcut = "ctrl+alt+n"
 
   var audioEngineIdlePolicy: AudioEngineIdlePolicy {
     get { AudioEngineIdlePolicy(rawValue: audioEngineIdlePolicyRaw) ?? .stopWhenIdle }

@@ -13,6 +13,7 @@ struct EchoApp: App {
   @StateObject private var tempFileManager = TempFileManager.shared
   @StateObject private var historyManager = HistoryManager.shared
   @StateObject private var profilesService = ProfilesService.shared
+  @StateObject private var notesModeService = NotesModeService.shared
   @StateObject private var updateManager: UpdateManager
   private var overlayPanel: OverlayPanel?
 
@@ -65,6 +66,7 @@ struct EchoApp: App {
     .onChange(of: displayManager.shouldRepositionOverlay) { _, _ in repositionOverlayPanel() }
     .onChange(of: displayManager.spaceDidChange) { _, _ in handleSpaceChange() }
     .onChange(of: globalShortcutMonitor.shouldCancelRecording) { _, _ in handleCancelRecording() }
+    .onChange(of: globalShortcutMonitor.shouldToggleNotesMode) { _, _ in handleNotesModeToggle() }
     .onChange(of: globalShortcutMonitor.shouldActivateNextProfile) { _, _ in handleProfileSwitch(direction: .next) }
     .onChange(of: globalShortcutMonitor.shouldActivatePreviousProfile) { _, _ in handleProfileSwitch(direction: .previous) }
     .onChange(of: historyManager.recentTranscriptions) { _, _ in updateHistoryState() }
@@ -141,6 +143,7 @@ struct EchoApp: App {
         self.tempFileManager.startPeriodicCleanup()
         LoggingService.shared.cleanupOldLogs()
         self.globalShortcutMonitor.loadProfileShortcuts(from: self.profilesService.profiles)
+        self.globalShortcutMonitor.loadNotesModeShortcut(self.settings.notesModeShortcut)
 
         // Start UpdateManager after delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -208,6 +211,15 @@ struct EchoApp: App {
       print("App: Stopping push-to-talk recording")
       await viewModel.stopRecordingOnly()
     }
+  }
+
+  private func handleNotesModeToggle() {
+    print("App: Notes mode shortcut triggered")
+
+    // Ensure overlay panel is created
+    createOverlayPanel()
+
+    notesModeService.toggle()
   }
 
   private func handleCancelRecording() {
@@ -370,6 +382,12 @@ struct EchoApp: App {
         openSettingsWindow()
       }
       .keyboardShortcut(",", modifiers: .command)
+
+      Divider()
+
+      Button(notesModeService.isActive ? "Stop Notes Mode" : "Start Notes Mode") {
+        notesModeService.toggle()
+      }
 
       Divider()
 

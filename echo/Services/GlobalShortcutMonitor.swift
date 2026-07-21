@@ -10,6 +10,7 @@ class GlobalShortcutMonitor: ObservableObject {
   private var isRecording = false
   private var isToggleHotkeySuspended = false
   private var profileShortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
+  private var notesModeShortcut: ShortcutUtils.ParsedShortcut?
   private var lastEventTimestamp: Date?
   private var eventTapCheckTimer: Timer?
 
@@ -19,6 +20,7 @@ class GlobalShortcutMonitor: ObservableObject {
   @Published var shouldActivateNextProfile = false
   @Published var shouldActivatePreviousProfile = false
   @Published var shouldTriggerRecording = false
+  @Published var shouldToggleNotesMode = false
   @Published var triggeredProfileId: String? = nil
 
   init() {
@@ -173,6 +175,27 @@ class GlobalShortcutMonitor: ObservableObject {
       )
     }
 
+    // Check for the notes mode shortcut (only when not suspended, e.g. while
+    // the shortcut recorder is capturing)
+    if !isToggleHotkeySuspended, let notesShortcut = notesModeShortcut,
+      keyCode == notesShortcut.keyCode
+    {
+      let relevantFlags: CGEventFlags = [
+        .maskCommand, .maskControl, .maskAlternate, .maskShift,
+      ]
+      if flags.intersection(relevantFlags) == notesShortcut.modifiers {
+        log(
+          "Notes mode shortcut matched",
+          category: loggerCategory,
+          level: .info
+        )
+        DispatchQueue.main.async {
+          self.shouldToggleNotesMode.toggle()
+        }
+        return nil  // Consume the event
+      }
+    }
+
     // Check for profile shortcuts first (only when not suspended)
     if !isToggleHotkeySuspended {
       for (profileId, parsed) in profileShortcuts {
@@ -325,6 +348,16 @@ class GlobalShortcutMonitor: ObservableObject {
       level: .info
     )
     isToggleHotkeySuspended = false
+  }
+
+  func loadNotesModeShortcut(_ shortcut: String?) {
+    guard let shortcut, !shortcut.isEmpty, let parsed = ShortcutUtils.parse(shortcut) else {
+      notesModeShortcut = nil
+      log("Notes mode shortcut cleared", category: loggerCategory, level: .info)
+      return
+    }
+    notesModeShortcut = parsed
+    log("Loaded notes mode shortcut: \(shortcut)", category: loggerCategory, level: .info)
   }
 
   func loadProfileShortcuts(from profiles: [Profile]) {

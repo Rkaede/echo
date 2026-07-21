@@ -258,6 +258,19 @@ struct GeneralSettingsView: View {
         .foregroundColor(.secondary)
       }
 
+      Section("Notes Mode") {
+        LabeledContent("Toggle notes mode") {
+          ShortcutRecorderView(shortcut: notesModeShortcutBinding)
+            .frame(width: 220)
+        }
+
+        Text(
+          "While notes mode is on, each recording is added to a note along with a screenshot instead of being pasted. Stopping notes mode saves the note as an HTML file and opens it."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
       Section("Updates") {
         Toggle(
           "Check for updates automatically",
@@ -335,6 +348,18 @@ struct GeneralSettingsView: View {
 
     settings.fallbackInputDeviceUID = ""
     settings.fallbackInputDeviceName = ""
+  }
+
+  private var notesModeShortcutBinding: Binding<String?> {
+    Binding(
+      get: {
+        settings.notesModeShortcut.isEmpty ? nil : settings.notesModeShortcut
+      },
+      set: { newValue in
+        settings.notesModeShortcut = newValue ?? ""
+        GlobalShortcutMonitor.shared.loadNotesModeShortcut(newValue)
+      }
+    )
   }
 }
 
