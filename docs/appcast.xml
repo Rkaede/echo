@@ -8,7 +8,7 @@
       <sparkle:version>2</sparkle:version>
       <sparkle:shortVersionString>0.0.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.2/Echo.dmg" length="1592558" type="application/octet-stream" sparkle:edSignature="GE78w+XFbI4FPB0Z1Jnvdz4adb29pdLHL+y54mMXGkGVOhQdAZX2lXEEfFPl0uYHWqDA545NhHbnz3Br91MICQ=="/>
+      <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.2/Echo.dmg" length="1591797" type="application/octet-stream" sparkle:edSignature="r1afGuQ97gMRhSHgjIy8BriLDF1+bDdmjEEU3Mq183yWw5WNTtONTqKsSrVrHhV++wlSM9KGRI9+ecs9mbdzCA=="/>
       <sparkle:releaseNotesLink>https://rkaede.github.io/echo/Echo-0.0.2.html</sparkle:releaseNotesLink>
     </item>
     <item>

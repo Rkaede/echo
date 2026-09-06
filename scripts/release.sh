@@ -121,6 +121,11 @@ check_prerequisites() {
         print_error "  brew install pandoc"
         exit 1
     fi
+
+    if ! command -v generate_appcast &> /dev/null; then
+        print_error "generate_appcast not found. Install Sparkle's release tools first."
+        exit 1
+    fi
     
     # Check for gh CLI (optional for GitHub releases)
     if ! command -v gh &> /dev/null; then
@@ -357,30 +362,14 @@ notarize_app() {
 # Update Sparkle appcast
 update_appcast() {
     local version=$1
-    local dmg_file="${EXPORT_DIR}/${PROJECT_NAME}-${version}.dmg"
     
     print_status "Updating Sparkle appcast..."
     
     # Create docs directory if it doesn't exist
     mkdir -p "$DOCS_DIR"
     
-    # Determine build number for sparkle:version
-    local build_number
-    build_number=$(agvtool what-version -terse 2>/dev/null || /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST" 2>/dev/null || echo "")
-    if [[ -z "$build_number" ]]; then
-        print_warning "Unable to determine build number; falling back to marketing version for sparkle:version"
-        build_number="$version"
-    fi
-    
-    # Check if generate_appcast exists
-    if command -v generate_appcast &> /dev/null; then
-        print_status "Using generate_appcast tool..."
-        generate_appcast "$EXPORT_DIR" -o "$DOCS_DIR/appcast.xml"
-    else
-        print_error "generate_appcast not found. Please install Sparkle's generate_appcast."
-        print_error "brew install --cask sparkle or build from Sparkle repo"
-        exit 1
-    fi
+    print_status "Using generate_appcast tool..."
+    generate_appcast "$EXPORT_DIR" -o "$DOCS_DIR/appcast.xml"
     
     # Inject sparkle:releaseNotesLink pointing to our hosted HTML release notes (via xmlstarlet)
     local release_notes_url="https://rkaede.github.io/echo/Echo-${version}.html"
@@ -401,6 +390,34 @@ update_appcast() {
         && mv "$DOCS_DIR/appcast.xml.tmp" "$DOCS_DIR/appcast.xml"
 
     print_success "Appcast updated with DMG file"
+}
+
+verify_update() {
+    xcrun swift "${PROJECT_DIR}/scripts/verify-update.swift" \
+        "$DOCS_DIR/appcast.xml" \
+        "$EXPORT_DIR/$PROJECT_NAME.app/Contents/Info.plist" \
+        "$1"
+}
+
+verify_published_update() {
+    local version=$1
+    local download
+    download=$(mktemp)
+
+    print_status "Verifying the installer served by GitHub before publishing the feed..."
+    if ! curl --fail --location --silent --show-error \
+        --retry 3 --retry-all-errors --retry-delay 2 \
+        "https://github.com/Rkaede/echo/releases/download/v${version}/Echo.dmg" \
+        --output "$download"; then
+        rm -f "$download"
+        return 1
+    fi
+
+    if ! verify_update "$download"; then
+        rm -f "$download"
+        return 1
+    fi
+    rm -f "$download"
 }
 
 # Generate HTML release notes from CHANGELOG
@@ -433,23 +450,17 @@ commit_and_tag() {
     print_status "Creating git tag v${version}..."
     git tag -a "v${version}" -m "Release version ${version}"
     
-    print_status "Pushing commits and tags to remote..."
-    git push origin "$CURRENT_BRANCH"
-    git push origin "v${version}"
-    
-    print_success "Version committed, tagged, and pushed"
+    print_success "Version committed and tagged locally"
 }
 
 # Create GitHub release
 create_github_release() {
     local version=$1
-    local dmg_file="${EXPORT_DIR}/${PROJECT_NAME}-${version}.dmg"
-    local release_markdown_file="${DOCS_DIR}/Echo-${version}.md"
     
     # Check if gh CLI is available
     if ! command -v gh &> /dev/null; then
-        print_warning "gh CLI not found. Skipping GitHub release creation."
-        return 0
+        print_error "gh CLI is required to publish the release before its update feed."
+        return 1
     fi
     
     # Check if user is authenticated
@@ -490,9 +501,10 @@ create_github_release() {
     local release_title="Echo ${version}"
     local tag_name="v${version}"
 
-    # Upload both versioned and stable-named DMGs so README latest link works
+    # Upload the exact stable-named DMG already checked against the appcast.
     local stable_dmg="${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     gh release create "$tag_name" \
+        --verify-tag \
         --title "$release_title" \
         --notes-file "$tmp_notes" \
         "$stable_dmg"
@@ -502,7 +514,7 @@ create_github_release() {
 
     if [ $gh_status -eq 0 ]; then
         print_success "GitHub release created successfully!"
-        print_status "Release URL: $(gh release view "$tag_name" --web --repo $(gh repo view --json url -q .url) 2>/dev/null || echo "Check GitHub releases page")"
+        print_status "Release URL: $(gh release view "$tag_name" --json url --jq .url)"
     else
         print_error "Failed to create GitHub release"
         return 1
@@ -581,18 +593,14 @@ main() {
         notarize_app "$NEW_VERSION"
     fi
     
+    # Sign after any notarization/stapling; create the identical upload copy afterward.
+    update_appcast "$NEW_VERSION"
+
     # Create stable-named DMG for latest download link
     cp -f "${EXPORT_DIR}/${PROJECT_NAME}-${NEW_VERSION}.dmg" "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     print_success "Stable DMG created: ${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     
-    # Temporarily move stable DMG to avoid duplicate error in appcast generation
-    mv "${EXPORT_DIR}/${PROJECT_NAME}.dmg" "${EXPORT_DIR}/${PROJECT_NAME}.dmg.tmp"
-    
-    # Update appcast
-    update_appcast "$NEW_VERSION"
-    
-    # Restore stable DMG after appcast generation
-    mv "${EXPORT_DIR}/${PROJECT_NAME}.dmg.tmp" "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
+    verify_update "${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     
     # Commit and tag
     read -p "Commit and tag release? (y/n) " -n 1 -r
@@ -600,30 +608,27 @@ main() {
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         commit_and_tag "$NEW_VERSION"
         
-        # Create GitHub release
+        # Upload and verify the installer before a main-branch push publishes the feed.
         echo
-        read -p "Create GitHub release? (y/n) " -n 1 -r
+        read -p "Publish GitHub release and update feed? (y/n) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git push origin "v${NEW_VERSION}"
             create_github_release "$NEW_VERSION"
+            verify_published_update "$NEW_VERSION"
+            git push origin "$CURRENT_BRANCH"
+            print_success "Release ${NEW_VERSION} published; update feed changes pushed to ${CURRENT_BRANCH}"
+            return
         fi
     fi
     
     echo
-    print_success "Release ${NEW_VERSION} completed successfully!"
-    echo
-    echo "Next steps:"
-    if command -v gh &> /dev/null && gh auth status &> /dev/null; then
-        echo "1. GitHub release was created with DMG attachment"
-        echo "2. Update appcast.xml on GitHub (if needed)"
-    else
-        echo "1. Create GitHub release manually and upload:"
-        echo "   - ${EXPORT_DIR}/${PROJECT_NAME}-${NEW_VERSION}.dmg"
-        echo "2. Update appcast.xml on GitHub"
-        echo "3. Install gh CLI for automated releases: brew install gh"
-    fi
+    print_success "Release ${NEW_VERSION} prepared locally; installer and update feed have not been published"
+    echo "Installer: ${EXPORT_DIR}/${PROJECT_NAME}.dmg"
     echo
 }
 
-# Run main function
-main "$@"
+# Allow release checks to exercise the workflow without running a real release.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
