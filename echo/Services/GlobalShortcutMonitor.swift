@@ -11,6 +11,8 @@ class GlobalShortcutMonitor: ObservableObject {
   private var isToggleHotkeySuspended = false
   private var profileShortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
   private var notesModeShortcut: ShortcutUtils.ParsedShortcut?
+  private var previousProfileShortcut: ShortcutUtils.ParsedShortcut?
+  private var nextProfileShortcut: ShortcutUtils.ParsedShortcut?
   private var lastEventTimestamp: Date?
   private var eventTapCheckTimer: Timer?
 
@@ -19,7 +21,6 @@ class GlobalShortcutMonitor: ObservableObject {
   @Published var shouldCancelRecording = false
   @Published var shouldActivateNextProfile = false
   @Published var shouldActivatePreviousProfile = false
-  @Published var shouldTriggerRecording = false
   @Published var shouldToggleNotesMode = false
   @Published var triggeredProfileId: String? = nil
 
@@ -166,93 +167,74 @@ class GlobalShortcutMonitor: ObservableObject {
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags
 
-    // Log ALL keypresses for debugging (only log space + option for now)
-    if keyCode == 49 && flags.contains(.maskAlternate) {
-      log(
-        "Option+Space keyDown detected - isRecording: \(isRecording), isToggleHotkeySuspended: \(isToggleHotkeySuspended), profileShortcuts count: \(profileShortcuts.count)",
-        category: loggerCategory,
-        level: .debug
-      )
-    }
-
     // Check for the notes mode shortcut (only when not suspended, e.g. while
     // the shortcut recorder is capturing)
     if !isToggleHotkeySuspended, let notesShortcut = notesModeShortcut,
-      keyCode == notesShortcut.keyCode
+      shortcutMatches(notesShortcut, keyCode: keyCode, flags: flags)
     {
-      let relevantFlags: CGEventFlags = [
-        .maskCommand, .maskControl, .maskAlternate, .maskShift,
-      ]
-      if flags.intersection(relevantFlags) == notesShortcut.modifiers {
-        log(
-          "Notes mode shortcut matched",
-          category: loggerCategory,
-          level: .info
-        )
-        DispatchQueue.main.async {
-          self.shouldToggleNotesMode.toggle()
-        }
-        return nil  // Consume the event
+      log(
+        "Notes mode shortcut matched",
+        category: loggerCategory,
+        level: .info
+      )
+      DispatchQueue.main.async {
+        self.shouldToggleNotesMode.toggle()
       }
+      return nil  // Consume the event
+    }
+
+    if isRecording, !isToggleHotkeySuspended,
+      let previousShortcut = previousProfileShortcut,
+      shortcutMatches(previousShortcut, keyCode: keyCode, flags: flags)
+    {
+      log(
+        "Previous profile shortcut matched",
+        category: loggerCategory,
+        level: .info
+      )
+      DispatchQueue.main.async {
+        self.shouldActivatePreviousProfile.toggle()
+      }
+      return nil
+    }
+
+    if isRecording, !isToggleHotkeySuspended,
+      let nextShortcut = nextProfileShortcut,
+      shortcutMatches(nextShortcut, keyCode: keyCode, flags: flags)
+    {
+      log(
+        "Next profile shortcut matched",
+        category: loggerCategory,
+        level: .info
+      )
+      DispatchQueue.main.async {
+        self.shouldActivateNextProfile.toggle()
+      }
+      return nil
     }
 
     // Check for profile shortcuts first (only when not suspended)
     if !isToggleHotkeySuspended {
       for (profileId, parsed) in profileShortcuts {
-        if keyCode == parsed.keyCode && flags.contains(parsed.modifiers) {
-          // Check that we have exactly the modifiers specified (no extra modifiers)
-          let relevantFlags: CGEventFlags = [
-            .maskCommand, .maskControl, .maskAlternate, .maskShift,
-          ]
-          let currentModifiers = flags.intersection(relevantFlags)
-
-          if currentModifiers == parsed.modifiers {
-            log(
-              "Profile shortcut matched for profile \(profileId) - isRecording: \(isRecording)",
-              category: loggerCategory,
-              level: .info
-            )
+        if shortcutMatches(parsed, keyCode: keyCode, flags: flags) {
+          log(
+            "Profile shortcut matched for profile \(profileId) - isRecording: \(isRecording)",
+            category: loggerCategory,
+            level: .info
+          )
+          DispatchQueue.main.async {
+            // Emit a nil first so repeated presses of the same shortcut still trigger observers
+            self.triggeredProfileId = nil
             DispatchQueue.main.async {
-              // Emit a nil first so repeated presses of the same shortcut still trigger observers
-              self.triggeredProfileId = nil
-              DispatchQueue.main.async {
-                self.triggeredProfileId = profileId
-              }
+              self.triggeredProfileId = profileId
             }
-            return nil  // Consume the event
-          } else {
-            log(
-              "Modifier mismatch - expected: \(parsed.modifiers), got: \(currentModifiers)",
-              category: loggerCategory,
-              level: .debug
-            )
           }
+          return nil  // Consume the event
         }
-      }
-    } else {
-      if keyCode == 49 && flags.contains(.maskAlternate) {
-        log(
-          "Toggle hotkey is suspended; skipping profile shortcut check",
-          category: loggerCategory,
-          level: .debug
-        )
       }
     }
 
     switch keyCode {
-    case 49:
-      // Space key - check for Option modifier for toggle mode
-      if flags.contains(.maskAlternate) && !isToggleHotkeySuspended {
-        log(
-          "Option+Space pressed; triggering toggle",
-          category: loggerCategory,
-          level: .info
-        )
-        DispatchQueue.main.async {
-          self.shouldTriggerRecording.toggle()
-        }
-        return nil  // Consume the event
-      }
     case 53:
       // Escape key - consume it if we're recording
       if isRecording {
@@ -272,36 +254,24 @@ class GlobalShortcutMonitor: ObservableObject {
           level: .debug
         )
       }
-    case 123:
-      // Left arrow key
-      if isRecording {
-        log(
-          "Left arrow key pressed while recording; requesting previous profile",
-          category: loggerCategory,
-          level: .info
-        )
-        DispatchQueue.main.async {
-          self.shouldActivatePreviousProfile.toggle()
-        }
-      }
-    case 124:
-      // Right arrow key
-      if isRecording {
-        log(
-          "Right arrow key pressed while recording; requesting next profile",
-          category: loggerCategory,
-          level: .info
-        )
-        DispatchQueue.main.async {
-          self.shouldActivateNextProfile.toggle()
-        }
-      }
     default:
       break
     }
 
     // Let all other events (or non-recording Escape) pass through
     return Unmanaged.passUnretained(event)
+  }
+
+  private func shortcutMatches(
+    _ shortcut: ShortcutUtils.ParsedShortcut,
+    keyCode: Int64,
+    flags: CGEventFlags
+  ) -> Bool {
+    let relevantFlags: CGEventFlags = [
+      .maskCommand, .maskControl, .maskAlternate, .maskShift,
+    ]
+    return keyCode == shortcut.keyCode
+      && flags.intersection(relevantFlags) == shortcut.modifiers
   }
 
   // Methods to update recording state
@@ -358,6 +328,16 @@ class GlobalShortcutMonitor: ObservableObject {
     }
     notesModeShortcut = parsed
     log("Loaded notes mode shortcut: \(shortcut)", category: loggerCategory, level: .info)
+  }
+
+  func loadProfileNavigationShortcuts(previous: String?, next: String?) {
+    previousProfileShortcut = previous.flatMap(ShortcutUtils.parse)
+    nextProfileShortcut = next.flatMap(ShortcutUtils.parse)
+    log(
+      "Loaded profile navigation shortcuts",
+      category: loggerCategory,
+      level: .info
+    )
   }
 
   func loadProfileShortcuts(from profiles: [Profile]) {

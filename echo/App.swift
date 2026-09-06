@@ -60,7 +60,6 @@ struct EchoApp: App {
     .defaultSize(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
     .defaultLaunchBehavior(.suppressed)
     .windowStyle(.hiddenTitleBar)
-    .onChange(of: globalShortcutMonitor.shouldTriggerRecording) { _, _ in handleHotkeyToggle() }
     .onChange(of: globalShortcutMonitor.shouldStartPushToTalk) { _, _ in handlePushToTalkStart() }
     .onChange(of: globalShortcutMonitor.shouldStopPushToTalk) { _, _ in handlePushToTalkStop() }
     .onChange(of: displayManager.shouldRepositionOverlay) { _, _ in repositionOverlayPanel() }
@@ -144,6 +143,10 @@ struct EchoApp: App {
         LoggingService.shared.cleanupOldLogs()
         self.globalShortcutMonitor.loadProfileShortcuts(from: self.profilesService.profiles)
         self.globalShortcutMonitor.loadNotesModeShortcut(self.settings.notesModeShortcut)
+        self.globalShortcutMonitor.loadProfileNavigationShortcuts(
+          previous: self.settings.previousProfileShortcut,
+          next: self.settings.nextProfileShortcut
+        )
 
         // Start UpdateManager after delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -178,18 +181,6 @@ struct EchoApp: App {
 
       let totalDuration = Date().timeIntervalSince(startTime)
       print("App: [PERF] Profile shortcut handler total duration: \(totalDuration * 1000)ms")
-    }
-  }
-
-  private func handleHotkeyToggle() {
-    Task {
-      print("App: Toggle hotkey triggered - shouldTriggerRecording changed")
-
-      // Ensure overlay panel is created
-      createOverlayPanel()
-
-      print("App: Triggering recording toggle")
-      await viewModel.toggleRecording()
     }
   }
 

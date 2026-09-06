@@ -163,6 +163,13 @@ class ProfilesService: ObservableObject {
         if let sc = profile.shortcut, !sc.isEmpty {
             let normalized = ShortcutUtils.normalize(sc)
             if ShortcutUtils.reserved.contains(normalized) { throw ProfileValidationError.reservedShortcut }
+            if normalized == ShortcutUtils.normalize(settings.notesModeShortcut) {
+                throw ProfileValidationError.duplicateShortcut
+            }
+            if normalized == ShortcutUtils.normalize(settings.previousProfileShortcut)
+                || normalized == ShortcutUtils.normalize(settings.nextProfileShortcut) {
+                throw ProfileValidationError.duplicateShortcut
+            }
             if profiles.contains(where: { ($0.shortcut.map { ShortcutUtils.normalize($0) }) == normalized && $0.id != ignoreId }) {
                 throw ProfileValidationError.duplicateShortcut
             }

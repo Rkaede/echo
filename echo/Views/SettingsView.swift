@@ -31,6 +31,7 @@ struct FullHeightWindowConfigurator: NSViewRepresentable {
 
 enum SettingsSection: String, CaseIterable, Identifiable {
   case general = "General"
+  case shortcuts = "Shortcuts"
   case sound = "Sound"
   case profiles = "Profiles"
   case history = "History"
@@ -42,6 +43,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
   var icon: String {
     switch self {
     case .general: return "gearshape"
+    case .shortcuts: return "keyboard"
     case .sound: return "speaker.2"
     case .profiles: return "person.crop.square"
     case .history: return "clock.arrow.circlepath"
@@ -103,6 +105,8 @@ struct SettingsView: View {
     switch section {
     case .general:
       GeneralSettingsView()
+    case .shortcuts:
+      ShortcutsSettingsView()
     case .sound:
       SoundSettingsView()
     case .profiles:
@@ -258,19 +262,6 @@ struct GeneralSettingsView: View {
         .foregroundColor(.secondary)
       }
 
-      Section("Notes Mode") {
-        LabeledContent("Toggle notes mode") {
-          ShortcutRecorderView(shortcut: notesModeShortcutBinding)
-            .frame(width: 220)
-        }
-
-        Text(
-          "While notes mode is on, each recording is added to a note along with a screenshot instead of being pasted. Stopping notes mode saves the note as an HTML file and opens it."
-        )
-        .font(.caption)
-        .foregroundColor(.secondary)
-      }
-
       Section("Updates") {
         Toggle(
           "Check for updates automatically",
@@ -349,6 +340,119 @@ struct GeneralSettingsView: View {
     settings.fallbackInputDeviceUID = ""
     settings.fallbackInputDeviceName = ""
   }
+}
+
+struct ShortcutsSettingsView: View {
+  @ObservedObject private var settings = SettingsManager.shared
+  @ObservedObject private var profilesService = ProfilesService.shared
+  @State private var errorMessage: String?
+
+  var body: some View {
+    Form {
+      Section("Profiles") {
+        ForEach(profilesService.profiles) { profile in
+          LabeledContent {
+            ShortcutRecorderView(shortcut: shortcutBinding(for: profile))
+              .frame(width: 220)
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              HStack(spacing: 6) {
+                Text(profile.title)
+
+                if profile.isDefault {
+                  Text("Default")
+                    .font(.caption2)
+                    .foregroundColor(.accentColor)
+                }
+
+                if !profile.isEnabled {
+                  Text("Disabled")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
+              }
+
+              Text(
+                profile.isDefault
+                  ? "Start or stop recording with the default profile"
+                  : "Activate this profile and start or stop recording"
+              )
+              .font(.caption)
+              .foregroundColor(.secondary)
+            }
+          }
+        }
+
+        LabeledContent("Previous profile") {
+          ShortcutRecorderView(shortcut: previousProfileShortcutBinding)
+            .frame(width: 220)
+        }
+
+        LabeledContent("Next profile") {
+          ShortcutRecorderView(shortcut: nextProfileShortcutBinding)
+            .frame(width: 220)
+        }
+
+        Text(
+          "Profile shortcuts work from any app. Previous and next profile shortcuts apply while recording. A disabled profile's shortcut remains saved but is inactive."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
+      Section("Notes Mode") {
+        LabeledContent("Toggle notes mode") {
+          ShortcutRecorderView(shortcut: notesModeShortcutBinding)
+            .frame(width: 220)
+        }
+
+        Text(
+          "While notes mode is on, each recording is added to a note with a screenshot instead of being pasted."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
+      Section("Fixed Shortcuts") {
+        LabeledContent("Push to talk") {
+          shortcutLabel("fn")
+        }
+
+        LabeledContent("Cancel recording") {
+          shortcutLabel("esc")
+        }
+
+        Text("These shortcuts are currently fixed.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+
+      if let errorMessage {
+        Section {
+          Text(errorMessage)
+            .font(.caption)
+            .foregroundColor(.red)
+        }
+      }
+    }
+    .formStyle(.grouped)
+    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
+    .task {
+      await profilesService.load()
+    }
+  }
+
+  private func shortcutBinding(for profile: Profile) -> Binding<String?> {
+    Binding(
+      get: {
+        profilesService.profiles.first(where: { $0.id == profile.id })?.shortcut
+          ?? profile.shortcut
+      },
+      set: { newValue in
+        updateShortcut(newValue, for: profile.id)
+      }
+    )
+  }
 
   private var notesModeShortcutBinding: Binding<String?> {
     Binding(
@@ -356,10 +460,129 @@ struct GeneralSettingsView: View {
         settings.notesModeShortcut.isEmpty ? nil : settings.notesModeShortcut
       },
       set: { newValue in
-        settings.notesModeShortcut = newValue ?? ""
-        GlobalShortcutMonitor.shared.loadNotesModeShortcut(newValue)
+        let normalized = normalizedShortcut(newValue)
+
+        if let normalized, ShortcutUtils.reserved.contains(normalized) {
+          errorMessage = ProfileValidationError.reservedShortcut.localizedDescription
+          return
+        }
+
+        if let normalized,
+          profilesService.profiles.contains(where: {
+            $0.shortcut.map(ShortcutUtils.normalize) == normalized
+          })
+            || normalized == normalizedShortcut(settings.previousProfileShortcut)
+            || normalized == normalizedShortcut(settings.nextProfileShortcut)
+        {
+          errorMessage = ProfileValidationError.duplicateShortcut.localizedDescription
+          return
+        }
+
+        settings.notesModeShortcut = normalized ?? ""
+        GlobalShortcutMonitor.shared.loadNotesModeShortcut(normalized)
+        errorMessage = nil
       }
     )
+  }
+
+  private func updateShortcut(_ shortcut: String?, for profileID: String) {
+    let normalized = normalizedShortcut(shortcut)
+
+    if let normalized,
+      normalized == normalizedShortcut(settings.notesModeShortcut)
+        || normalized == normalizedShortcut(settings.previousProfileShortcut)
+        || normalized == normalizedShortcut(settings.nextProfileShortcut)
+    {
+      errorMessage = ProfileValidationError.duplicateShortcut.localizedDescription
+      return
+    }
+
+    Task { @MainActor in
+      guard var profile = profilesService.profiles.first(where: { $0.id == profileID }) else {
+        return
+      }
+
+      profile.shortcut = normalized
+      profile.updatedAt = Date()
+
+      do {
+        try await profilesService.update(profile: profile)
+        errorMessage = nil
+      } catch {
+        errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  private var previousProfileShortcutBinding: Binding<String?> {
+    Binding(
+      get: {
+        normalizedShortcut(settings.previousProfileShortcut)
+      },
+      set: { newValue in
+        updateProfileNavigationShortcut(newValue, isPrevious: true)
+      }
+    )
+  }
+
+  private var nextProfileShortcutBinding: Binding<String?> {
+    Binding(
+      get: {
+        normalizedShortcut(settings.nextProfileShortcut)
+      },
+      set: { newValue in
+        updateProfileNavigationShortcut(newValue, isPrevious: false)
+      }
+    )
+  }
+
+  private func updateProfileNavigationShortcut(_ shortcut: String?, isPrevious: Bool) {
+    let normalized = normalizedShortcut(shortcut)
+    let otherShortcut =
+      normalizedShortcut(
+        isPrevious ? settings.nextProfileShortcut : settings.previousProfileShortcut
+      )
+
+    if let normalized,
+      ShortcutUtils.reserved.contains(normalized)
+        || normalized == normalizedShortcut(settings.notesModeShortcut)
+        || normalized == otherShortcut
+        || profilesService.profiles.contains(where: {
+          $0.shortcut.map(ShortcutUtils.normalize) == normalized
+        })
+    {
+      errorMessage =
+        ShortcutUtils.reserved.contains(normalized)
+        ? ProfileValidationError.reservedShortcut.localizedDescription
+        : ProfileValidationError.duplicateShortcut.localizedDescription
+      return
+    }
+
+    if isPrevious {
+      settings.previousProfileShortcut = normalized ?? ""
+    } else {
+      settings.nextProfileShortcut = normalized ?? ""
+    }
+
+    GlobalShortcutMonitor.shared.loadProfileNavigationShortcuts(
+      previous: normalizedShortcut(settings.previousProfileShortcut),
+      next: normalizedShortcut(settings.nextProfileShortcut)
+    )
+    errorMessage = nil
+  }
+
+  private func normalizedShortcut(_ shortcut: String?) -> String? {
+    guard let shortcut, !shortcut.isEmpty else { return nil }
+    return ShortcutUtils.normalize(shortcut)
+  }
+
+  private func shortcutLabel(_ text: String) -> some View {
+    Text(text)
+      .font(.body.monospaced())
+      .padding(.horizontal, 10)
+      .padding(.vertical, 4)
+      .background(Color.secondary.opacity(0.1))
+      .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
   }
 }
 

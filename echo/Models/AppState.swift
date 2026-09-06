@@ -43,7 +43,7 @@ enum ErrorCategory: String {
 }
 
 enum RecordingMode {
-    case toggle      // Option+Space
+    case toggle      // Profile shortcut
     case pushToTalk  // Fn key hold
 }
 

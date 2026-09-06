@@ -43,7 +43,7 @@ enum ProfileValidationError: LocalizedError {
         case .invalidTitle: return "Title must be 1–64 characters."
         case .duplicateTitle: return "Another profile already uses this title."
         case .reservedShortcut: return "This shortcut is reserved."
-        case .duplicateShortcut: return "Another profile already uses this shortcut."
+        case .duplicateShortcut: return "Another action or profile already uses this shortcut."
         case .invalidModel: return "Selected model is not supported."
         case .invalidPostProcessingModel: return "Selected post-processing model is not supported."
         case .invalidIcon: return "Invalid icon name."

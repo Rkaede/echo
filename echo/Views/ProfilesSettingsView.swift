@@ -95,7 +95,9 @@ struct ProfilesSettingsView: View {
                   Text("The push-to-talk shortcut (Fn key) always uses the default profile.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                  Text("Switch between profiles during recording using the left/right arrow keys.")
+                  Text(
+                    "Switch between profiles during recording using the shortcuts configured in Shortcuts."
+                  )
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 }
