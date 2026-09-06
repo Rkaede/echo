@@ -23,7 +23,10 @@ struct EchoApp: App {
     let appState = AppState()
     _appState = StateObject(wrappedValue: appState)
     _viewModel = StateObject(wrappedValue: TranscriptionViewModel(appState: appState))
-    _updateManager = StateObject(wrappedValue: UpdateManager(startImmediately: false))
+
+    // Start updates at launch even when no windows or recording overlay are opened.
+    let updateManager = UpdateManager()
+    _updateManager = StateObject(wrappedValue: updateManager)
   }
 
   var body: some Scene {
@@ -147,12 +150,6 @@ struct EchoApp: App {
           previous: self.settings.previousProfileShortcut,
           next: self.settings.nextProfileShortcut
         )
-
-        // Start UpdateManager after delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-          print("App: Starting UpdateManager's updater after overlay panel setup")
-          self.updateManager.startUpdater()
-        }
       }
     }
   }

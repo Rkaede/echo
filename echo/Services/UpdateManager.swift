@@ -1,7 +1,9 @@
+import Combine
 import Foundation
 import Sparkle
 import SwiftUI
 
+@MainActor
 class UpdateManager: ObservableObject {
     private let updaterController: SPUStandardUpdaterController
     private var hasStarted = false
@@ -12,46 +14,50 @@ class UpdateManager: ObservableObject {
         }
     }
 
-    @Published var canCheckForUpdates: Bool = false
+    @Published private(set) var canCheckForUpdates: Bool = false
 
     var updater: SPUUpdater {
         updaterController.updater
     }
 
-    init(startImmediately: Bool = false) {
+    init(startImmediately: Bool = true) {
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: startImmediately,
+            startingUpdater: false,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
 
         self.automaticChecksEnabled = updaterController.updater.automaticallyChecksForUpdates
-        self.hasStarted = startImmediately
+        updaterController.updater.publisher(for: \.canCheckForUpdates)
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$canCheckForUpdates)
 
-        // Update canCheckForUpdates based on updater state
-        Task { @MainActor in
-            self.canCheckForUpdates = updaterController.updater.canCheckForUpdates
+        if startImmediately {
+            startUpdater()
         }
     }
 
     func startUpdater() {
         guard !hasStarted else { return }
-        hasStarted = true
         do {
             try updaterController.updater.start()
+            hasStarted = true
+            log("Updater started", category: "UpdateManager", level: .info)
         } catch {
-            print("UpdateManager: Failed to start updater: \(error)")
+            log("Failed to start updater: \(error)", category: "UpdateManager", level: .error)
         }
     }
     
     func checkForUpdates() {
+        startUpdater()
+        guard hasStarted else { return }
         updaterController.checkForUpdates(nil)
     }
     
     func checkForUpdatesInBackground() {
-        Task {
-            updaterController.updater.checkForUpdatesInBackground()
-        }
+        startUpdater()
+        guard hasStarted else { return }
+        updaterController.updater.checkForUpdatesInBackground()
     }
     
     var lastUpdateCheckDate: Date? {

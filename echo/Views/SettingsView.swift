@@ -1096,7 +1096,7 @@ struct SoundPickerMenu: View {
   SettingsView()
     .frame(width: Constants.Windows.settingsWidth, height: Constants.Windows.settingsHeight)
     .ignoresSafeArea()
-    .environmentObject(UpdateManager())
+    .environmentObject(UpdateManager(startImmediately: false))
     #if DEBUG
       .background(PreviewWindowConfigurator())
     #endif
