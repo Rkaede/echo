@@ -193,6 +193,8 @@ struct OverlayView: View {
       return Color.green
     case .cancelled:
       return Color.orange
+    case .noSpeechDetected:
+      return Color.orange
     case .confirmingCancel:
       return Color.orange
     case .error:

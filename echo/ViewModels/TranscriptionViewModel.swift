@@ -35,7 +35,7 @@ class TranscriptionViewModel: ObservableObject {
   func toggleRecording() async {
     print("TranscriptionViewModel: toggleRecording called, current status: \(appState.status)")
     switch appState.status {
-    case .idle, .error, .inserted, .cancelled:
+    case .idle, .error, .inserted, .cancelled, .noSpeechDetected:
       print("TranscriptionViewModel: Starting recording from \(appState.status) state")
       await startRecording()
     case .recording:
@@ -51,7 +51,7 @@ class TranscriptionViewModel: ObservableObject {
   func startRecordingOnly() async {
     // Allow immediate restart from transient completion states.
     switch appState.status {
-    case .idle, .error, .inserted, .cancelled:
+    case .idle, .error, .inserted, .cancelled, .noSpeechDetected:
       await startRecording(mode: .pushToTalk)
     case .recording, .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
       // Don't start if already recording or processing
@@ -65,7 +65,8 @@ class TranscriptionViewModel: ObservableObject {
     switch appState.status {
     case .recording:
       await stopRecording()
-    case .idle, .error, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled, .confirmingCancel:
+    case .idle, .error, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled,
+      .noSpeechDetected, .confirmingCancel:
       // Don't stop if not recording
       print("TranscriptionViewModel: Cannot stop push-to-talk recording - currently in \(appState.status) state")
       break
@@ -84,7 +85,8 @@ class TranscriptionViewModel: ObservableObject {
       case .failure:
         print("TranscriptionViewModel: Failed to cancel recording")
       }
-    case .idle, .error, .initiatingRecording, .postProcessing, .inserted, .cancelled:
+    case .idle, .error, .initiatingRecording, .postProcessing, .inserted, .cancelled,
+      .noSpeechDetected:
       // Don't cancel if not in a cancellable state
       print("TranscriptionViewModel: Cannot cancel recording - currently in \(appState.status) state")
       break
@@ -127,6 +129,8 @@ class TranscriptionViewModel: ObservableObject {
       return "Inserted"
     case .cancelled:
       return "Cancelled"
+    case .noSpeechDetected:
+      return "No speech detected"
     case .confirmingCancel:
       return "Are you sure? (Esc)"
     case .error:

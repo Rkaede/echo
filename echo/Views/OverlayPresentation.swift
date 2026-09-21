@@ -32,6 +32,8 @@ struct OverlayPresentation {
       return "checkmark.circle.fill"
     case .cancelled:
       return "xmark.circle.fill"
+    case .noSpeechDetected:
+      return "waveform.slash"
     case .confirmingCancel:
       return "questionmark.circle.fill"
     case .error:
@@ -55,6 +57,9 @@ struct OverlayPresentation {
       return .success
     case .cancelled:
       return .cancelled
+    case .noSpeechDetected:
+      // Same muted tone as a cancellation: nothing went wrong, nothing was pasted.
+      return .cancelled
     case .confirmingCancel:
       return .confirming
     case .error:
@@ -70,6 +75,8 @@ struct OverlayPresentation {
       return "Speak now"
     case .inserted:
       return "Done"
+    case .noSpeechDetected:
+      return "No speech detected"
     case .confirmingCancel:
       return "Are you sure? (Esc)"
     default:

@@ -171,6 +171,34 @@ class TranscriptionService: ObservableObject {
       return .success(())
     }
 
+    // Calculate recording duration
+    let recordingDuration = recordingStartTime.map { recordingEndTime.timeIntervalSince($0) } ?? 0
+
+    // Decide whether this is worth uploading at all. Whisper invents stock phrases when
+    // handed silence, so an accidental trigger would otherwise paste "Thank you." into
+    // whatever app is focused.
+    let signal = audioRecorder.recordingSignal(duration: recordingDuration)
+    log(
+      String(
+        format: "Recording signal: peak %.1f dBFS, %ld voiced frames over %.2fs",
+        signal.peakPowerDecibels, signal.voicedFrameCount, signal.duration
+      ),
+      category: loggerCategory,
+      level: .info
+    )
+
+    if case .reject(let reason) = SpeechGate.preflightDecision(for: signal) {
+      log(
+        "Skipping transcription: \(reason.logDescription)",
+        category: loggerCategory,
+        level: .info
+      )
+      audioRecorder.deleteRecording()
+      notesModeService.discardPendingScreenshot()
+      appState.updateStatus(.noSpeechDetected)
+      return .success(())
+    }
+
     log("Recording stopped, file at: \(audioFileURL)", category: loggerCategory, level: .info)
     appState.updateStatus(.processing)
 
@@ -181,9 +209,6 @@ class TranscriptionService: ObservableObject {
         await self.notesModeService.captureScreenshotForNextEntry()
       }
     }
-
-    // Calculate recording duration
-    let recordingDuration = recordingStartTime.map { recordingEndTime.timeIntervalSince($0) } ?? 0
 
     // Get active application context
     let activeApp = getActiveApplicationName()
@@ -335,6 +360,23 @@ class TranscriptionService: ObservableObject {
       )
 
       let transcribedText = resultWithTiming.result.text.trimmingCharacters(in: .whitespaces)
+
+      // The energy gate cannot tell a quiet room from a noisy one, so give the model the
+      // final say: if it flagged every segment as non-speech, the text is a hallucination.
+      if case .reject(let reason) = SpeechGate.transcriptDecision(
+        segments: resultWithTiming.result.segments
+      ) {
+        log(
+          "Discarding transcription '\(transcribedText.prefix(40))': \(reason.logDescription)",
+          category: loggerCategory,
+          level: .info
+        )
+        appState.transcriptionText = ""
+        notesModeService.discardPendingScreenshot()
+        appState.updateStatus(.noSpeechDetected)
+        return .success(())
+      }
+
       appState.transcriptionText = transcribedText
 
       // Save successful transcription to history if enabled

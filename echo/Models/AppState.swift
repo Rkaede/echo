@@ -10,6 +10,7 @@ enum RecordingStatus: String {
     case postProcessing = "post-processing"
     case inserted
     case cancelled
+    case noSpeechDetected = "no speech detected"
     case confirmingCancel = "confirming cancel"
     case error
 }
@@ -102,7 +103,7 @@ class AppState: ObservableObject {
         status = newStatus
 
         // Auto-dismiss transient statuses only if they are still active when the delay ends.
-        if newStatus == .inserted || newStatus == .cancelled {
+        if newStatus == .inserted || newStatus == .cancelled || newStatus == .noSpeechDetected {
             scheduleStatusReset(for: newStatus, afterNanoseconds: 2_000_000_000)
         } else if newStatus == .error {
             // Auto-dismiss errors after 3.5 seconds (longer than success states)

@@ -23,6 +23,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private var legacyMeteringTask: Task<Void, Never>?
   private var legacyMeterHistory: [Float] = []
   private var activeRecordingBackend: RecordingBackend = .none
+  private var peakPowerDecibels = RecordingSignal.silenceFloorDecibels
+  private var voicedFrameCount = 0
   private var recordingStartTime: Date?
   private var hasCheckedPermission = false
   private var currentCaptureInputDevice: AudioInputDevice?
@@ -304,6 +306,8 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     currentLevel = 0
     legacyMeterHistory = []
     waveformSamples = []
+    peakPowerDecibels = RecordingSignal.silenceFloorDecibels
+    voicedFrameCount = 0
     startLegacyMetering()
 
     print("AudioRecorder: Recording started successfully via AVAudioRecorder capture")
@@ -477,6 +481,15 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
 
     legacyRecorder.updateMeters()
+
+    // Peak rather than average for the speech gate: a single short word in an otherwise
+    // quiet recording barely moves the average but shows up clearly in the peak.
+    let peakPower = legacyRecorder.peakPower(forChannel: 0)
+    peakPowerDecibels = max(peakPowerDecibels, peakPower)
+    if SpeechGate.isVoicedFrame(peakPowerDecibels: peakPower) {
+      voicedFrameCount += 1
+    }
+
     let level = Self.normalizedLegacyMeterLevel(
       averagePower: legacyRecorder.averagePower(forChannel: 0)
     )
@@ -493,6 +506,19 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     if legacyMeterHistory.count > Self.legacyWaveformBarCount {
       legacyMeterHistory.removeFirst(legacyMeterHistory.count - Self.legacyWaveformBarCount)
     }
+  }
+
+  /// Metering summary for the recording that just finished.
+  ///
+  /// Stopping a recording deliberately leaves these counters intact — only starting the next
+  /// one resets them — so the transcription pipeline can read the signal after
+  /// `stopRecording()` has already returned the file.
+  func recordingSignal(duration: TimeInterval) -> RecordingSignal {
+    RecordingSignal(
+      peakPowerDecibels: peakPowerDecibels,
+      voicedFrameCount: voicedFrameCount,
+      duration: duration
+    )
   }
 
   private func legacyRecorderSettings() -> [String: Any] {
