@@ -16,8 +16,15 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     case legacyRecorder
   }
 
-  nonisolated private static let legacyMeteringIntervalNanoseconds: UInt64 = 50_000_000
-  nonisolated private static let legacyWaveformBarCount = 12
+  // Sourced from RecordingSignal so the speech gate's voiced-frame threshold (defined in
+  // terms of this cadence) can't silently drift out of sync with the actual poll rate.
+  nonisolated private static let legacyMeteringIntervalNanoseconds = UInt64(
+    RecordingSignal.meteringInterval * 1_000_000_000
+  )
+  // Kept comfortably above the debug waveform's max bar-count slider (20) so
+  // OverlayWaveformView can always right-align to its most recent samples without ever
+  // running short of history.
+  nonisolated private static let legacyWaveformBarCount = 32
 
   private var legacyRecorder: AVAudioRecorder?
   private var legacyMeteringTask: Task<Void, Never>?

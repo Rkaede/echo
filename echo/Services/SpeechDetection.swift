@@ -6,6 +6,12 @@ import Foundation
 /// recording stops so the transcription pipeline can decide whether the audio is worth
 /// uploading.
 struct RecordingSignal: Equatable {
+  /// Cadence `AudioRecorder` polls `AVAudioRecorder` metering at, in seconds. Every
+  /// duration-based threshold derived from a frame count (see
+  /// `SpeechGate.minimumVoicedFrames`) is computed from this constant so the two can't drift
+  /// out of sync if the poll rate ever changes.
+  nonisolated static let meteringInterval: TimeInterval = 0.03
+
   /// The level `AVAudioRecorder` reports when it has heard nothing at all.
   static let silenceFloorDecibels: Float = -160
 
@@ -66,9 +72,12 @@ enum SpeechGate {
   /// for `transcriptDecision`, which judges content rather than volume.
   nonisolated static let speechFloorDecibels: Float = -45
 
-  /// Metering runs every 50ms, so this is 100ms of sound above the floor. A single stray
-  /// frame is usually a click, a key press, or the recording-start chime bleeding in.
-  nonisolated static let minimumVoicedFrames = 2
+  /// ~100ms of sound above the floor, expressed as a frame count via `meteringInterval` so it
+  /// stays correct regardless of poll rate. A single stray frame is usually a click, a key
+  /// press, or the recording-start chime bleeding in.
+  nonisolated static let minimumVoicedFrames = Int(
+    (0.1 / RecordingSignal.meteringInterval).rounded(.up)
+  )
 
   /// Whisper's own thresholds for "this segment is not speech", matching the defaults used
   /// inside openai-whisper's decoding loop.

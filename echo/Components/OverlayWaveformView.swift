@@ -48,7 +48,18 @@ struct OverlayWaveformView: View {
   private var updateDuration: TimeInterval { Self.defaultUpdateDuration }
   #endif
 
-  @State private var barHeights: [CGFloat]
+  // New metering data only arrives every ~30ms (AudioRecorder's poll rate), which reads as a
+  // visible stutter if the bars simply snap to it. Instead every update starts a short tween
+  // from wherever the bars currently are toward the new target, and a TimelineView repaints
+  // that tween on every display frame — so the waveform looks as smooth as the screen's
+  // refresh rate regardless of how often real data actually arrives.
+  @State private var previousHeights: [CGFloat]
+  @State private var targetHeights: [CGFloat]
+  @State private var transitionStart = Date()
+  @State private var transitionDuration: TimeInterval = 0
+  @State private var isAnimating = false
+  @State private var animationGeneration = 0
+
   private let timer = Timer.publish(every: Self.defaultUpdateInterval, on: .main, in: .common)
     .autoconnect()
 
@@ -60,18 +71,23 @@ struct OverlayWaveformView: View {
     self.level = level
     self.samples = samples
     self.color = color
-    _barHeights = State(initialValue: Array(repeating: Self.defaultIdleHeight, count: Self.defaultBarCount))
+    let idle = Array(repeating: Self.defaultIdleHeight, count: Self.defaultBarCount)
+    _previousHeights = State(initialValue: idle)
+    _targetHeights = State(initialValue: idle)
   }
 
   var body: some View {
-    HStack(alignment: .center, spacing: spacing) {
-      ForEach(0..<barCount, id: \.self) { index in
-        Capsule()
-          .fill(color)
-          .frame(width: barWidth, height: index < barHeights.count ? barHeights[index] : idleHeight)
+    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isAnimating)) { timeline in
+      let heights = currentHeights(at: timeline.date)
+      HStack(alignment: .center, spacing: spacing) {
+        ForEach(0..<barCount, id: \.self) { index in
+          Capsule()
+            .fill(color)
+            .frame(width: barWidth, height: index < heights.count ? heights[index] : idleHeight)
+        }
       }
+      .frame(width: totalWidth, height: maxHeight)
     }
-    .frame(width: totalWidth, height: maxHeight)
     .accessibilityHidden(true)
     .onAppear {
       ensureBarCount()
@@ -106,12 +122,49 @@ struct OverlayWaveformView: View {
   }
 
   private func ensureBarCount() {
-    if barHeights.count != barCount {
-      barHeights = Array(repeating: idleHeight, count: barCount)
+    guard targetHeights.count != barCount else { return }
+    beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: 0)
+  }
+
+  /// The tween's current value: `previousHeights` eased toward `targetHeights` over
+  /// `transitionDuration`, evaluated at `date` rather than tied to a specific frame so it
+  /// stays correct no matter how often the TimelineView actually redraws.
+  private func currentHeights(at date: Date) -> [CGFloat] {
+    guard transitionDuration > 0 else { return targetHeights }
+    let elapsed = date.timeIntervalSince(transitionStart)
+    let t = min(1, max(0, elapsed / transitionDuration))
+    let eased = 1 - pow(1 - t, 3)
+    return zip(previousHeights, targetHeights).map { $0 + ($1 - $0) * eased }
+  }
+
+  /// Starts a new tween from wherever the bars visually are right now toward `heights`, and
+  /// schedules the TimelineView to stop ticking once it settles — unless a later update
+  /// supersedes it first — so the waveform doesn't spin the display link while idle.
+  private func beginTransition(to heights: [CGFloat], duration: TimeInterval) {
+    let now = Date()
+    previousHeights = currentHeights(at: now)
+    targetHeights = heights
+    transitionStart = now
+    transitionDuration = duration
+    isAnimating = true
+
+    animationGeneration += 1
+    let generation = animationGeneration
+    guard duration > 0 else {
+      isAnimating = false
+      return
+    }
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+      if generation == animationGeneration {
+        isAnimating = false
+      }
     }
   }
 
   private func updateBarsFromSamples() {
+    ensureBarCount()
+
     // If no samples, fall back to level-based rendering
     guard !samples.isEmpty else {
       updateBars(with: level)
@@ -121,61 +174,40 @@ struct OverlayWaveformView: View {
     // Check if all samples are below threshold (silence)
     let maxSample = samples.max() ?? 0
     if maxSample <= Float(silenceThreshold) {
-      withAnimation(.easeOut(duration: decayDuration)) {
-        barHeights = Array(repeating: idleHeight, count: barCount)
-      }
+      beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: decayDuration)
       return
     }
 
-    // Convert samples to bar heights
+    // Right-align to the most recently captured samples so the newest reading always lands
+    // in the rightmost bar, regardless of how much history AudioRecorder keeps around.
+    let recent = Array(samples.suffix(barCount))
+    let padded = recent.count < barCount
+      ? Array(repeating: Float(0), count: barCount - recent.count) + recent
+      : recent
+
     let dynamicRange = maxHeight - minHeight
-    var newHeights: [CGFloat] = []
-
-    for i in 0..<barCount {
-      // Get sample for this bar (with bounds checking)
-      let sampleValue: Float
-      if i < samples.count {
-        sampleValue = samples[i]
-      } else if !samples.isEmpty {
-        // Wrap around if we have fewer samples than bars
-        sampleValue = samples[i % samples.count]
-      } else {
-        sampleValue = 0
-      }
-
-      // Apply noise floor and response curve
+    let newHeights = padded.map { sampleValue -> CGFloat in
       let normalized = max(CGFloat(sampleValue) - noiseFloor, 0) / (1 - noiseFloor)
       let eased = CGFloat(pow(Double(normalized), Double(responseExponent)))
       let height = minHeight + dynamicRange * eased
-
-      // Clamp to valid range
-      newHeights.append(min(max(height, minHeight), maxHeight))
+      return min(max(height, minHeight), maxHeight)
     }
 
-    withAnimation(.easeOut(duration: updateDuration)) {
-      barHeights = newHeights
-    }
+    beginTransition(to: newHeights, duration: updateDuration)
   }
 
   private func updateBars(with rawLevel: CGFloat) {
+    ensureBarCount()
     let clamped = max(0, min(rawLevel, 1))
 
     if clamped <= silenceThreshold {
-      withAnimation(.easeOut(duration: decayDuration)) {
-        barHeights = Array(repeating: idleHeight, count: barCount)
-      }
+      beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: decayDuration)
       return
     }
 
     // Update all bars in place with slight variations for natural look
-    var newHeights: [CGFloat] = []
-    for _ in 0..<barCount {
-      newHeights.append(generateHeight(for: clamped))
-    }
-
-    withAnimation(.easeOut(duration: updateDuration)) {
-      barHeights = newHeights
-    }
+    let newHeights = (0..<barCount).map { _ in generateHeight(for: clamped) }
+    beginTransition(to: newHeights, duration: updateDuration)
   }
 
   private func generateHeight(for level: CGFloat) -> CGFloat {
