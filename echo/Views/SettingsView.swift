@@ -353,6 +353,7 @@ struct ShortcutsSettingsView: View {
         ForEach(profilesService.profiles) { profile in
           LabeledContent {
             ShortcutRecorderView(shortcut: shortcutBinding(for: profile))
+              .disabled(true)
               .frame(width: 220)
           } label: {
             VStack(alignment: .leading, spacing: 2) {
@@ -373,9 +374,7 @@ struct ShortcutsSettingsView: View {
               }
 
               Text(
-                profile.isDefault
-                  ? "Start or stop recording with the default profile"
-                  : "Activate this profile and start or stop recording"
+                "Saved shortcut (inactive)"
               )
               .font(.caption)
               .foregroundColor(.secondary)
@@ -394,7 +393,7 @@ struct ShortcutsSettingsView: View {
         }
 
         Text(
-          "Profile shortcuts work from any app. Previous and next profile shortcuts apply while recording. A disabled profile's shortcut remains saved but is inactive."
+          "Recording uses Fn with the active profile. Previous and next profile shortcuts apply while recording. Legacy profile recording shortcuts remain saved but are inactive."
         )
         .font(.caption)
         .foregroundColor(.secondary)
@@ -414,7 +413,7 @@ struct ShortcutsSettingsView: View {
       }
 
       Section("Fixed Shortcuts") {
-        LabeledContent("Push to talk") {
+        LabeledContent("Record (tap or hold)") {
           shortcutLabel("fn")
         }
 
@@ -422,7 +421,7 @@ struct ShortcutsSettingsView: View {
           shortcutLabel("esc")
         }
 
-        Text("These shortcuts are currently fixed.")
+        Text("Tap Fn and release within 300 ms to keep recording; press Fn again to stop. Hold Fn for 300 ms or longer and release to stop. These shortcuts are fixed.")
           .font(.caption)
           .foregroundColor(.secondary)
       }
@@ -468,10 +467,7 @@ struct ShortcutsSettingsView: View {
         }
 
         if let normalized,
-          profilesService.profiles.contains(where: {
-            $0.shortcut.map(ShortcutUtils.normalize) == normalized
-          })
-            || normalized == normalizedShortcut(settings.previousProfileShortcut)
+          normalized == normalizedShortcut(settings.previousProfileShortcut)
             || normalized == normalizedShortcut(settings.nextProfileShortcut)
         {
           errorMessage = ProfileValidationError.duplicateShortcut.localizedDescription
@@ -547,9 +543,6 @@ struct ShortcutsSettingsView: View {
       ShortcutUtils.reserved.contains(normalized)
         || normalized == normalizedShortcut(settings.notesModeShortcut)
         || normalized == otherShortcut
-        || profilesService.profiles.contains(where: {
-          $0.shortcut.map(ShortcutUtils.normalize) == normalized
-        })
     {
       errorMessage =
         ShortcutUtils.reserved.contains(normalized)

@@ -7,26 +7,24 @@ class GlobalShortcutMonitor {
   private var runLoopSource: CFRunLoopSource?
   private let loggerCategory = "GlobalShortcutMonitor"
   private var isFnKeyPressed = false
+  private var fnGesture = FnRecordingGesture()
+  var onFnAction: (@MainActor (_ action: FnRecordingGesture.Action, _ keyTime: TimeInterval) -> Void)?
+  var recordingStatus: (() -> RecordingStatus)?
+  var canStartRecording: (() -> Bool)?
   private var isRecording = false
   private var isToggleHotkeySuspended = false
-  private var profileShortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
   private var notesModeShortcut: ShortcutUtils.ParsedShortcut?
   private var previousProfileShortcut: ShortcutUtils.ParsedShortcut?
   private var nextProfileShortcut: ShortcutUtils.ParsedShortcut?
   private var lastEventTimestamp: Date?
   private var eventTapCheckTimer: Timer?
 
-  // Shortcut handlers, called on the main thread straight from the event tap. There is no
-  // `DispatchQueue.main.async` hop or SwiftUI update pass in between, which used to add
-  // 25–80ms before a hotkey took effect. `keyTime` is the `ProcessInfo.systemUptime` at which
-  // the tap saw the key, so the overlay can log how long it took to appear.
-  var onPushToTalkStart: (@MainActor (_ keyTime: TimeInterval) -> Void)?
-  var onPushToTalkStop: (@MainActor () -> Void)?
+  // Handlers run straight from the event tap on the main thread, without a SwiftUI
+  // update pass. Fn actions also carry the uptime at which the tap saw the key.
   var onCancelRecording: (@MainActor () -> Void)?
   var onToggleNotesMode: (@MainActor () -> Void)?
   var onActivateNextProfile: (@MainActor () -> Void)?
   var onActivatePreviousProfile: (@MainActor () -> Void)?
-  var onProfileShortcut: (@MainActor (_ profileId: String, _ keyTime: TimeInterval) -> Void)?
 
   init() {
     startMonitoring()
@@ -54,7 +52,8 @@ class GlobalShortcutMonitor {
           let monitor = Unmanaged<GlobalShortcutMonitor>.fromOpaque(refcon!).takeUnretainedValue()
 
           // Check if event tap was disabled by timeout
-          if type == .tapDisabledByTimeout {
+          if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            monitor.interruptFnGesture()
             log(
               "Event tap disabled by timeout; attempting to re-enable",
               category: monitor.loggerCategory,
@@ -99,7 +98,14 @@ class GlobalShortcutMonitor {
     )
   }
 
+  private func interruptFnGesture() {
+    fnGesture.reset()
+    let keyTime = ProcessInfo.processInfo.systemUptime
+    deliver { self.onFnAction?(.stop, keyTime) }
+  }
+
   func stopMonitoring() {
+    interruptFnGesture()
     if let eventTap = eventTap {
       CGEvent.tapEnable(tap: eventTap, enable: false)
       self.eventTap = nil
@@ -138,27 +144,33 @@ class GlobalShortcutMonitor {
     let flags = event.flags
     let fnKeyCurrentlyPressed = flags.contains(.maskSecondaryFn)
 
-    // Check for FN key state change
-    if fnKeyCurrentlyPressed && !isFnKeyPressed {
-      // FN key was just pressed
-      log(
-        "FN key pressed; starting push-to-talk",
-        category: loggerCategory,
-        level: .debug
-      )
-      isFnKeyPressed = true
-      let keyTime = ProcessInfo.processInfo.systemUptime
-      deliver { self.onPushToTalkStart?(keyTime) }
-    } else if !fnKeyCurrentlyPressed && isFnKeyPressed {
-      // FN key was just released
-      log(
-        "FN key released; stopping push-to-talk",
-        category: loggerCategory,
-        level: .debug
-      )
-      isFnKeyPressed = false
-      deliver { self.onPushToTalkStop?() }
+    guard fnKeyCurrentlyPressed != isFnKeyPressed else { return }
+    isFnKeyPressed = fnKeyCurrentlyPressed
+    guard !isToggleHotkeySuspended else { return }
+    let status = recordingStatus?() ?? .idle
+    switch status {
+    case .processing, .postProcessing:
+      fnGesture.reset()
+      return
+    default: break
     }
+    // A previous stop may still be unwinding after cancellation. Reject the
+    // whole gesture rather than latching a recording that never started.
+    var nextGesture = fnGesture
+    let action = fnKeyCurrentlyPressed
+      ? nextGesture.press(at: event.timestamp)
+      : nextGesture.release(at: event.timestamp)
+    if action == .start, canStartRecording?() == false { return }
+    fnGesture = nextGesture
+    if let action {
+      let keyTime = ProcessInfo.processInfo.systemUptime
+      deliver { self.onFnAction?(action, keyTime) }
+    }
+  }
+
+  func resetFnGesture() {
+    // Keep the physical key state: a held key must be released before restarting.
+    fnGesture.reset()
   }
 
   private func handleKeyDown(event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -203,22 +215,6 @@ class GlobalShortcutMonitor {
       )
       deliver { self.onActivateNextProfile?() }
       return nil
-    }
-
-    // Check for profile shortcuts first (only when not suspended)
-    if !isToggleHotkeySuspended {
-      for (profileId, parsed) in profileShortcuts {
-        if shortcutMatches(parsed, keyCode: keyCode, flags: flags) {
-          log(
-            "Profile shortcut matched for profile \(profileId) - isRecording: \(isRecording)",
-            category: loggerCategory,
-            level: .info
-          )
-          let keyTime = ProcessInfo.processInfo.systemUptime
-          deliver { self.onProfileShortcut?(profileId, keyTime) }
-          return nil  // Consume the event
-        }
-      }
     }
 
     switch keyCode {
@@ -293,6 +289,7 @@ class GlobalShortcutMonitor {
       level: .info
     )
     isToggleHotkeySuspended = true
+    interruptFnGesture()
   }
 
   func resumeToggleHotkey() {
@@ -325,31 +322,4 @@ class GlobalShortcutMonitor {
     )
   }
 
-  func loadProfileShortcuts(from profiles: [Profile]) {
-    var shortcuts: [(profileId: String, parsed: ShortcutUtils.ParsedShortcut)] = []
-
-    for profile in profiles {
-      guard profile.isEnabled,
-        let shortcutString = profile.shortcut,
-        !shortcutString.isEmpty,
-        let parsed = ShortcutUtils.parse(shortcutString)
-      else {
-        continue
-      }
-
-      shortcuts.append((profileId: profile.id, parsed: parsed))
-      log(
-        "Loaded shortcut for profile '\(profile.title)': \(shortcutString)",
-        category: loggerCategory,
-        level: .debug
-      )
-    }
-
-    profileShortcuts = shortcuts
-    log(
-      "Loaded \(shortcuts.count) profile shortcuts",
-      category: loggerCategory,
-      level: .info
-    )
-  }
 }

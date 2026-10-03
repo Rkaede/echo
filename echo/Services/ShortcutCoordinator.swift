@@ -41,11 +41,18 @@ final class ShortcutCoordinator {
   }
 
   func start() {
-    shortcutMonitor.onPushToTalkStart = { [weak self] keyTime in
-      self?.handlePushToTalkStart(keyTime: keyTime)
+    shortcutMonitor.recordingStatus = { [weak self] in
+      self?.appState.status ?? .idle
     }
-    shortcutMonitor.onPushToTalkStop = { [weak self] in
-      self?.handlePushToTalkStop()
+    shortcutMonitor.canStartRecording = { [weak self] in
+      self?.viewModel.canStartFnRecording ?? false
+    }
+    shortcutMonitor.onFnAction = { [weak self] action, keyTime in
+      guard let self else { return }
+      if action == .start {
+        self.overlayController.noteShowRequested(keyTime: keyTime)
+      }
+      self.viewModel.handleFnAction(action)
     }
     shortcutMonitor.onCancelRecording = { [weak self] in
       self?.handleCancelRecording()
@@ -59,21 +66,10 @@ final class ShortcutCoordinator {
     shortcutMonitor.onActivatePreviousProfile = { [weak self] in
       self?.handleProfileSwitch(direction: .previous)
     }
-    shortcutMonitor.onProfileShortcut = { [weak self] profileId, keyTime in
-      self?.handleProfileShortcut(profileId: profileId, keyTime: keyTime)
-    }
-
     // `$status` publishes from `willSet`, so the new value is passed in rather than read back
     appState.$status
       .sink { [weak self] status in
         self?.updateRecordingStateInGlobalShortcutMonitor(status: status)
-      }
-      .store(in: &cancellables)
-
-    // Publishes the current profiles on subscription, which also performs the initial load
-    profilesService.$profiles
-      .sink { [weak self] profiles in
-        self?.shortcutMonitor.loadProfileShortcuts(from: profiles)
       }
       .store(in: &cancellables)
 
@@ -86,44 +82,6 @@ final class ShortcutCoordinator {
 
   // MARK: - Handlers
 
-  private func handleProfileShortcut(profileId: String, keyTime: TimeInterval) {
-    let startTime = Date()
-    print("ShortcutCoordinator: [PERF] Profile shortcut handler started at \(startTime)")
-    overlayController.noteShowRequested(keyTime: keyTime)
-
-    Task {
-      print("ShortcutCoordinator: Profile shortcut triggered for profile \(profileId)")
-
-      // Activate the profile
-      profilesService.activateProfile(id: profileId)
-
-      print("ShortcutCoordinator: Triggering recording toggle for profile shortcut")
-      let toggleStart = Date()
-      await viewModel.toggleRecording()
-      let toggleDuration = Date().timeIntervalSince(toggleStart)
-      print("ShortcutCoordinator: [PERF] toggleRecording took \(toggleDuration * 1000)ms")
-
-      let totalDuration = Date().timeIntervalSince(startTime)
-      print("ShortcutCoordinator: [PERF] Profile shortcut handler total duration: \(totalDuration * 1000)ms")
-    }
-  }
-
-  private func handlePushToTalkStart(keyTime: TimeInterval) {
-    overlayController.noteShowRequested(keyTime: keyTime)
-
-    Task {
-      print("ShortcutCoordinator: Starting push-to-talk recording")
-      await viewModel.startRecordingOnly()
-    }
-  }
-
-  private func handlePushToTalkStop() {
-    Task {
-      print("ShortcutCoordinator: Stopping push-to-talk recording")
-      await viewModel.stopRecordingOnly()
-    }
-  }
-
   private func handleNotesModeToggle() {
     print("ShortcutCoordinator: Notes mode shortcut triggered")
     notesModeService.toggle()
@@ -133,6 +91,11 @@ final class ShortcutCoordinator {
     Task {
       print("ShortcutCoordinator: Escape key pressed - checking cancellation logic")
 
+      if appState.status == .initiatingRecording {
+        shortcutMonitor.resetFnGesture()
+        await viewModel.cancelRecording()
+        return
+      }
       switch (appState.recordingMode, appState.status) {
       case (.toggle, .recording), (.toggle, .processing):
         if appState.status == .confirmingCancel {
@@ -179,7 +142,11 @@ final class ShortcutCoordinator {
   }
 
   private func updateRecordingStateInGlobalShortcutMonitor(status: RecordingStatus) {
-    let isRecording = status == .recording || status == .processing || status == .confirmingCancel
+    let isRecording = status == .initiatingRecording || status == .recording
+      || status == .processing || status == .confirmingCancel
     shortcutMonitor.setRecording(isRecording)
+    if ![.initiatingRecording, .recording, .confirmingCancel].contains(status) {
+      shortcutMonitor.resetFnGesture()
+    }
   }
 }

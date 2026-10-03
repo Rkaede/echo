@@ -8,9 +8,25 @@ class TranscriptionViewModel: ObservableObject {
   private let transcriptionService: TranscriptionService
 
   private var cancellables = Set<AnyCancellable>()
-  /// Set when the push-to-talk key is released while the mic is still starting, so the
-  /// recording stops as soon as it is up instead of running on with the key already up.
-  private var pushToTalkStopPending = false
+  private lazy var fnCoordinator = FnRecordingCoordinator(
+    start: { [weak self] in await self?.startRecordingOnly() },
+    stop: { [weak self] in await self?.stopRecordingOnly() },
+    cancel: { [weak self] in
+      guard let self, [.recording, .confirmingCancel].contains(self.appState.status) else { return }
+      _ = await self.transcriptionService.cancelRecording()
+    },
+    setToggleMode: { [weak self] in
+      guard let self, [.initiatingRecording, .recording].contains(self.appState.status) else { return }
+      self.appState.setRecordingMode(.toggle)
+    }
+  )
+
+  func handleFnAction(_ action: FnRecordingGesture.Action) {
+    if appState.status == .confirmingCancel { appState.returnFromConfirmation() }
+    fnCoordinator.handle(action)
+  }
+
+  var canStartFnRecording: Bool { fnCoordinator.canStart }
 
   init(appState: AppState, settingsManager: SettingsManager, transcriptionService: TranscriptionService? = nil) {
     self.appState = appState
@@ -55,18 +71,7 @@ class TranscriptionViewModel: ObservableObject {
     // Allow immediate restart from transient completion states.
     switch appState.status {
     case .idle, .error, .inserted, .cancelled, .noSpeechDetected:
-      pushToTalkStopPending = false
       await startRecording(mode: .pushToTalk)
-      if pushToTalkStopPending {
-        pushToTalkStopPending = false
-        if appState.status == .recording {
-          print("TranscriptionViewModel: Push-to-talk key was released while starting - stopping now")
-          await stopRecording()
-        }
-      }
-    case .initiatingRecording where pushToTalkStopPending:
-      // Pressed again before the mic finished starting: the key is down, so keep recording
-      pushToTalkStopPending = false
     case .recording, .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
       // Don't start if already recording or processing
       print("TranscriptionViewModel: Cannot start push-to-talk recording - already in \(appState.status) state")
@@ -79,9 +84,6 @@ class TranscriptionViewModel: ObservableObject {
     switch appState.status {
     case .recording:
       await stopRecording()
-    case .initiatingRecording where appState.recordingMode == .pushToTalk:
-      // The mic is still starting; startRecordingOnly stops once it's up
-      pushToTalkStopPending = true
     case .idle, .error, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled,
       .noSpeechDetected, .confirmingCancel:
       // Don't stop if not recording
@@ -91,6 +93,7 @@ class TranscriptionViewModel: ObservableObject {
   }
   
   func cancelRecording() async {
+    if fnCoordinator.cancelDuringStartup() { return }
     // Only cancel if we're currently recording, processing, or confirming cancel
     switch appState.status {
     case .recording, .processing, .confirmingCancel:
@@ -111,7 +114,11 @@ class TranscriptionViewModel: ObservableObject {
   }
 
   private func startRecording(mode: RecordingMode = .toggle) async {
-    let result = await transcriptionService.startRecording(mode: mode)
+    let result = await transcriptionService.startRecording(mode: mode) { [weak self] in
+      // Fn startup owns deferred stop/cancel intent until the service returns. Suppress
+      // the sound even while the recording status still says the mic is ready.
+      self?.fnCoordinator.hasPendingEndRequest == false
+    }
     switch result {
     case .success:
       break // Service handles state updates

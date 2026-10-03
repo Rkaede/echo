@@ -42,7 +42,10 @@ class TranscriptionService: ObservableObject {
   /// yield this long to let the overlay render the new status before the stall.
   nonisolated static let overlayRenderYieldNanoseconds: UInt64 = 16_000_000
 
-  func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
+  func startRecording(
+    mode: RecordingMode = .toggle,
+    shouldPlayStartSound: () -> Bool = { true }
+  ) async -> TranscriptionServiceResult {
     log("------------------------------------------------------", category: loggerCategory, level: .info)
     log("startRecording called with mode: \(mode)", category: loggerCategory, level: .info)
 
@@ -115,7 +118,7 @@ class TranscriptionService: ObservableObject {
       // NOW play the start sound (if enabled), unless the recording was already stopped or
       // cancelled during the delay. The device is already in input mode, so playing a short
       // beep won't trigger another disruptive mode switch on Bluetooth devices
-      if appState.status == .recording {
+      if appState.status == .recording && shouldPlayStartSound() {
         soundManager.playRecordingStartSound()
       }
 

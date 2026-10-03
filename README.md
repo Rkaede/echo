@@ -14,7 +14,7 @@
 
 ---
 
-A lightweight macOS app for instant speech-to-text. Press Option+Space to toggle recording or hold the Fn key for push-to-talk.
+A lightweight macOS app for instant speech-to-text. Tap Fn to record hands-free, or hold Fn for push-to-talk. Recording uses the active profile.
 
 Your speech is transcribed via Groq's Whisper models and automatically pasted into your current app.
 
@@ -71,8 +71,9 @@ Models can be selected in the settings.
 
 ## ⌨️ Shortcuts
 
-- Toggle record: Option+Space
-- Push-to-talk: Fn key
+- Hands-free recording: tap and release Fn within 300 ms; press Fn again to stop.
+- Push-to-talk: hold Fn for 300 ms or longer; release to stop.
+- Previous profile recording shortcuts are preserved but inactive. Profile navigation remains available while recording.
 
 ## 🐛 Troubleshooting
 
@@ -83,12 +84,12 @@ Models can be selected in the settings.
 - Overlay not visible?
   - It appears at the bottom center of the active display. Display changes are monitored; try pressing the hotkey again after focusing any app.
 - Hotkeys not responding?
-  - Check Option+Space isn't used by other apps or system shortcuts.
-  - Fn push-to-talk, ensure Accessibility permission is granted.
+  - Check the macOS Fn/Globe setting for conflicting system actions.
+  - Fn recording, ensure Accessibility permission is granted.
 
 ## 🛣️ Roadmap
 
-- Profiles with Customizable hotkey and push-to-talk keys
+- Profiles with configurable recording settings and profile navigation shortcuts
 - LLM post processing
 - Per-app paste behavior (append newline, keep clipboard, etc.)
 - Dictionary/word replacements

@@ -92,7 +92,7 @@ struct ProfilesSettingsView: View {
                 Image(systemName: "info.circle")
                   .foregroundColor(.blue)
                 VStack(alignment: .leading, spacing: 2) {
-                  Text("The push-to-talk shortcut (Fn key) always uses the default profile.")
+                  Text("Fn recording uses the active profile. Tap to keep recording, or hold and release to stop.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                   Text(
@@ -156,7 +156,7 @@ struct ProfilesSettingsView: View {
                     Spacer()
                     if let sc = p.shortcut, !sc.isEmpty {
                       let formattedShortcut = ShortcutRecorderView.displayText(for: sc)
-                      Text(formattedShortcut).font(.caption).foregroundColor(.secondary)
+                      Text("\(formattedShortcut) · inactive").font(.caption).foregroundColor(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.1))
@@ -408,7 +408,7 @@ private struct ProfileEditor: View {
         Toggle("Default", isOn: $profile.isDefault)
           .disabled(!profile.isEnabled)
         HStack {
-          Text("Hotkey")
+          Text("Saved hotkey (inactive)")
           Spacer(minLength: 12)
           ShortcutRecorderView(
             shortcut: Binding(
@@ -417,6 +417,7 @@ private struct ProfileEditor: View {
             )
           )
           .frame(maxWidth: 150, alignment: .trailing)
+          .disabled(true)
         }
       }
 
