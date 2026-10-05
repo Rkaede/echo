@@ -16,7 +16,7 @@
 
 A lightweight macOS app for instant speech-to-text. Press Option+Space to toggle recording or hold the Fn key for push-to-talk.
 
-Your speech is transcribed via Groq's Whisper models and automatically pasted into your current app.
+Your speech is transcribed via Groq's Whisper models, optionally cleaned up by an LLM, and automatically pasted into your current app.
 
 - Fully open source
 - Native app (no electron, no webview)
@@ -24,18 +24,24 @@ Your speech is transcribed via Groq's Whisper models and automatically pasted in
 
 ## 🌟 Features
 
-- Minimal overlay
+- Minimal overlay with a live waveform, visible over full-screen apps
 - Push-to-talk OR toggle to start/stop recording
 - Input transcription into the current app (e.g. Slack, Cursor, etc.)
+- Profiles, each with its own shortcut, transcription model, icon and colour
+- Optional LLM post-processing to fix grammar and remove filler words
+- Notes Mode: collect dictations and screenshots into a note, exported as HTML and Markdown
+- Preferred and fallback microphone selection
 - History with audio playback and full-text search
 
 ## 📉 Costs
 
 Groq is a paid service.
 
-- Whisper Large V3 Turbo: $0.111/hour
+- Whisper Large V3 Turbo: $0.04/hour
+- Whisper Large V3: $0.111/hour
 - Minimum billable duration: 10 seconds
-- Roughly $10 ≈ 90 hours of audio, or ~32,400 10-second chunks
+- Roughly $10 ≈ 250 hours of audio on Turbo, or ~90 hours on Large V3
+- LLM post-processing is billed separately per token and is off by default
 - Typical usage: ~$1–$2/month for most people
 
 ## 🚨 Privacy (IMPORTANT)
@@ -47,14 +53,19 @@ What Echo does:
 - Stores your Groq API key in the system keychain (never in plain text)
 - Writes temporary WAV files to system temp directory (/tmp/echo/) with timestamped names, then deletes them after processing
 - Uses Accessibility for the push-to-talk shortcut and to simulate Cmd+V to paste text into the current app
+- When LLM post-processing is enabled, sends the transcribed text to Groq's chat completions API
+- Notes Mode only: uses Screen Recording to capture a screenshot when each dictation stops, saved with the note on your Mac
 
 ## 🤖 Models
 
-Models can be selected in the settings.
+Models can be selected per profile in the settings.
 
+Transcription:
+
+- Whisper Large V3 Turbo (default)
 - Whisper Large V3
-- Whisper Large V3 Turbo
-- Distil-Whisper English
+
+LLM post-processing uses Groq-hosted chat models such as GPT-OSS 20B (recommended), GPT-OSS 120B, Kimi K2 and Qwen3 32B.
 
 ## 📝 Requirements
 
@@ -71,8 +82,10 @@ Models can be selected in the settings.
 
 ## ⌨️ Shortcuts
 
-- Toggle record: Option+Space
+- Toggle record: Option+Space (configurable per profile)
 - Push-to-talk: Fn key
+- Cancel recording: Escape
+- Toggle Notes Mode: Ctrl+Option+N (configurable)
 
 ## 🐛 Troubleshooting
 
@@ -80,6 +93,8 @@ Models can be selected in the settings.
   - Confirm your Groq API key is valid and saved in Settings.
 - Auto-paste not working?
   - Ensure Accessibility permission is granted. Re-prompt from Settings > Permissions.
+- Using a Bluetooth headset?
+  - Pick a wired or built-in mic as your preferred or fallback device in Settings for faster starts.
 - Overlay not visible?
   - It appears at the bottom center of the active display. Display changes are monitored; try pressing the hotkey again after focusing any app.
 - Hotkeys not responding?
@@ -88,8 +103,8 @@ Models can be selected in the settings.
 
 ## 🛣️ Roadmap
 
-- Profiles with Customizable hotkey and push-to-talk keys
-- LLM post processing
+- Customizable push-to-talk key
+- Automatic profile switching per app
 - Per-app paste behavior (append newline, keep clipboard, etc.)
 - Dictionary/word replacements
 - Take screenshot for additional context
