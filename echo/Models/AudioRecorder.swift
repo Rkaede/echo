@@ -9,6 +9,33 @@ struct AudioRecorderCaptureRoute: Equatable {
   let deviceToRestore: AudioInputDevice?
 }
 
+/// Tick-to-tick timing of the metering poll over one recording.
+///
+/// The poll runs on the main actor, so its real interval stretches whenever the main thread
+/// is busy. A mean well above `RecordingSignal.meteringInterval` means the UI is falling
+/// behind, which makes this the cheapest regression signal for overlay and waveform lag.
+struct MeteringCadence: Equatable {
+  private(set) var tickCount = 0
+  private(set) var maxInterval: TimeInterval = 0
+  private var totalInterval: TimeInterval = 0
+  private var lastTickTime: TimeInterval?
+
+  /// Mean gap between consecutive ticks, or nil until there have been at least two.
+  var meanInterval: TimeInterval? {
+    tickCount > 1 ? totalInterval / Double(tickCount - 1) : nil
+  }
+
+  mutating func recordTick(at time: TimeInterval) {
+    if let lastTickTime {
+      let interval = time - lastTickTime
+      totalInterval += interval
+      maxInterval = max(maxInterval, interval)
+    }
+    lastTickTime = time
+    tickCount += 1
+  }
+}
+
 @MainActor
 class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private enum RecordingBackend {
@@ -21,14 +48,11 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   nonisolated private static let legacyMeteringIntervalNanoseconds = UInt64(
     RecordingSignal.meteringInterval * 1_000_000_000
   )
-  // Kept comfortably above the debug waveform's max bar-count slider (20) so
-  // OverlayWaveformView can always right-align to its most recent samples without ever
-  // running short of history.
-  nonisolated private static let legacyWaveformBarCount = 32
 
+  private let levelMeter = AudioLevelMeter.shared
   private var legacyRecorder: AVAudioRecorder?
   private var legacyMeteringTask: Task<Void, Never>?
-  private var legacyMeterHistory: [Float] = []
+  private var meteringCadence = MeteringCadence()
   private var activeRecordingBackend: RecordingBackend = .none
   private var peakPowerDecibels = RecordingSignal.silenceFloorDecibels
   private var voicedFrameCount = 0
@@ -39,8 +63,6 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
   @Published var isRecording = false
   @Published var hasPermission = false
-  @Published var currentLevel: CGFloat = 0
-  @Published var waveformSamples: [Float] = []
 
   private var audioFileURL: URL {
     let tempDirectory = FileManager.default.temporaryDirectory
@@ -125,18 +147,6 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     guard averagePower > -60 else { return 0 }
     let shaped = pow(10, averagePower / 40) * 1.25
     return CGFloat(max(0, min(1, shaped)))
-  }
-
-  nonisolated static func legacyWaveformSamples(
-    from history: [Float],
-    barCount: Int
-  ) -> [Float] {
-    guard barCount > 0 else { return [] }
-
-    let recentHistory = Array(history.suffix(barCount))
-    guard recentHistory.count < barCount else { return recentHistory }
-
-    return Array(repeating: 0, count: barCount - recentHistory.count) + recentHistory
   }
 
   nonisolated static func legacyRecorderRestartSettleDelayNanoseconds(
@@ -310,9 +320,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     recordingStartTime = Date()
     isRecording = true
     activeRecordingBackend = .legacyRecorder
-    currentLevel = 0
-    legacyMeterHistory = []
-    waveformSamples = []
+    levelMeter.reset()
     peakPowerDecibels = RecordingSignal.silenceFloorDecibels
     voicedFrameCount = 0
     startLegacyMetering()
@@ -457,26 +465,43 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   }
 
   private func startLegacyMetering() {
-    stopLegacyMetering(resetLevels: false)
+    legacyMeteringTask?.cancel()
+    meteringCadence = MeteringCadence()
     updateLegacyMetering()
 
     legacyMeteringTask = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: Self.legacyMeteringIntervalNanoseconds)
-        self?.updateLegacyMetering()
+        guard let self else { return }
+        self.updateLegacyMetering()
       }
     }
   }
 
-  private func stopLegacyMetering(resetLevels: Bool = true) {
+  private func stopLegacyMetering() {
+    let wasMetering = legacyMeteringTask != nil
     legacyMeteringTask?.cancel()
     legacyMeteringTask = nil
+    levelMeter.reset()
 
-    if resetLevels {
-      currentLevel = 0
-      legacyMeterHistory = []
-      waveformSamples = []
+    if wasMetering {
+      logMeteringCadence()
     }
+  }
+
+  private func logMeteringCadence() {
+    guard let meanInterval = meteringCadence.meanInterval else { return }
+    log(
+      String(
+        format: "Metering cadence: %ld ticks, mean %.1fms, max %.1fms (target %.0fms)",
+        meteringCadence.tickCount,
+        meanInterval * 1000,
+        meteringCadence.maxInterval * 1000,
+        RecordingSignal.meteringInterval * 1000
+      ),
+      category: "AudioRecorder",
+      level: .info
+    )
   }
 
   private func updateLegacyMetering() {
@@ -487,6 +512,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       return
     }
 
+    meteringCadence.recordTick(at: ProcessInfo.processInfo.systemUptime)
     legacyRecorder.updateMeters()
 
     // Peak rather than average for the speech gate: a single short word in an otherwise
@@ -500,19 +526,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     let level = Self.normalizedLegacyMeterLevel(
       averagePower: legacyRecorder.averagePower(forChannel: 0)
     )
-    currentLevel = level
-    appendLegacyMeterLevel(level)
-    waveformSamples = Self.legacyWaveformSamples(
-      from: legacyMeterHistory,
-      barCount: Self.legacyWaveformBarCount
-    )
-  }
-
-  private func appendLegacyMeterLevel(_ level: CGFloat) {
-    legacyMeterHistory.append(Float(level))
-    if legacyMeterHistory.count > Self.legacyWaveformBarCount {
-      legacyMeterHistory.removeFirst(legacyMeterHistory.count - Self.legacyWaveformBarCount)
-    }
+    levelMeter.append(Float(level))
   }
 
   /// Metering summary for the recording that just finished.

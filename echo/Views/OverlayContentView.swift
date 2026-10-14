@@ -1,6 +1,10 @@
 import SwiftUI
 
-/// Wrapper view that observes AppState and provides reactive updates to the overlay panel
+/// Wrapper view that observes AppState and provides reactive updates to the overlay panel.
+///
+/// The live mic level is deliberately not read here: `OverlayWaveformView` picks up
+/// `AudioLevelMeter` from the environment on its own, so only the bars re-render on each
+/// metering tick rather than this whole view.
 struct OverlayContentView: View {
   @EnvironmentObject var appState: AppState
   @EnvironmentObject var profilesService: ProfilesService
@@ -13,8 +17,6 @@ struct OverlayContentView: View {
         showingProfileName: appState.showingProfileName,
         showingProfileIconName: appState.showingProfileIconName,
         currentInputDevice: appState.currentInputDevice,
-        currentInputLevel: Float(appState.currentInputLevel),
-        waveformSamples: appState.waveformSamples,
         activeProfileIconName: profilesService.activeProfile?.iconName,
         errorCategory: appState.errorCategory
       )

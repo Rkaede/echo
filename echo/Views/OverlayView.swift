@@ -5,8 +5,6 @@ struct OverlayView: View {
   let showingProfileName: String?
   let showingProfileIconName: String?
   let currentInputDevice: String
-  let currentInputLevel: Float
-  let waveformSamples: [Float]
   let activeProfileIconName: String?
   let errorCategory: ErrorCategory?
 
@@ -15,8 +13,6 @@ struct OverlayView: View {
     showingProfileName: String? = nil,
     showingProfileIconName: String? = nil,
     currentInputDevice: String = "",
-    currentInputLevel: Float = 0.0,
-    waveformSamples: [Float] = [],
     activeProfileIconName: String? = nil,
     errorCategory: ErrorCategory? = nil
   ) {
@@ -24,8 +20,6 @@ struct OverlayView: View {
     self.showingProfileName = showingProfileName
     self.showingProfileIconName = showingProfileIconName
     self.currentInputDevice = currentInputDevice
-    self.currentInputLevel = currentInputLevel
-    self.waveformSamples = waveformSamples
     self.activeProfileIconName = activeProfileIconName
     self.errorCategory = errorCategory
   }
@@ -102,10 +96,11 @@ struct OverlayView: View {
               .frame(maxWidth: .infinity, alignment: .center)
           }
 
-          // Waveform indicator - only show once input is live.
+          // Waveform indicator - only show once input is live. It reads AudioLevelMeter from
+          // the environment itself so mic ticks don't re-render this view.
           if shouldShowWaveform && showContent {
             HStack(spacing: 4) {
-              OverlayWaveformView(level: CGFloat(currentInputLevel), samples: waveformSamples)
+              OverlayWaveformView()
             }
             .frame(width: 36, alignment: .trailing)
             .padding(.trailing, 10)
@@ -212,8 +207,7 @@ private struct OverlayViewRecordingPreview: View {
   var body: some View {
     return OverlayView(
       status: .recording,
-      currentInputDevice: deviceName,
-      currentInputLevel: 0.65
+      currentInputDevice: deviceName
     )
   }
 }
@@ -226,8 +220,7 @@ private struct OverlayViewProfilePreview: View {
     return OverlayView(
       status: .recording,
       showingProfileName: profileName,
-      showingProfileIconName: iconName,
-      currentInputLevel: 0.5
+      showingProfileIconName: iconName
     )
   }
 }
@@ -277,6 +270,7 @@ private struct OverlayViewProfilePreview: View {
   }
 
   return OverlayViewAnimatedPreview()
+    .environmentObject(AudioLevelMeter.shared)
 }
 
 #Preview("Static States") {
@@ -388,4 +382,5 @@ private struct OverlayViewProfilePreview: View {
   }
   .padding(40)
   .background(Constants.Colors.bg)
+  .environmentObject(AudioLevelMeter.shared)
 }

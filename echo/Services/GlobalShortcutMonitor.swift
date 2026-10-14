@@ -1,7 +1,7 @@
 import Cocoa
 import CoreGraphics
 
-class GlobalShortcutMonitor: ObservableObject {
+class GlobalShortcutMonitor {
   static let shared = GlobalShortcutMonitor()
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
@@ -16,13 +16,17 @@ class GlobalShortcutMonitor: ObservableObject {
   private var lastEventTimestamp: Date?
   private var eventTapCheckTimer: Timer?
 
-  @Published var shouldStartPushToTalk = false
-  @Published var shouldStopPushToTalk = false
-  @Published var shouldCancelRecording = false
-  @Published var shouldActivateNextProfile = false
-  @Published var shouldActivatePreviousProfile = false
-  @Published var shouldToggleNotesMode = false
-  @Published var triggeredProfileId: String? = nil
+  // Shortcut handlers, called on the main thread straight from the event tap. There is no
+  // `DispatchQueue.main.async` hop or SwiftUI update pass in between, which used to add
+  // 25–80ms before a hotkey took effect. `keyTime` is the `ProcessInfo.systemUptime` at which
+  // the tap saw the key, so the overlay can log how long it took to appear.
+  var onPushToTalkStart: (@MainActor (_ keyTime: TimeInterval) -> Void)?
+  var onPushToTalkStop: (@MainActor () -> Void)?
+  var onCancelRecording: (@MainActor () -> Void)?
+  var onToggleNotesMode: (@MainActor () -> Void)?
+  var onActivateNextProfile: (@MainActor () -> Void)?
+  var onActivatePreviousProfile: (@MainActor () -> Void)?
+  var onProfileShortcut: (@MainActor (_ profileId: String, _ keyTime: TimeInterval) -> Void)?
 
   init() {
     startMonitoring()
@@ -106,21 +110,18 @@ class GlobalShortcutMonitor: ObservableObject {
     }
   }
 
+  /// Runs a shortcut handler on the main thread. The tap's run loop source is added to the
+  /// main run loop, so this normally runs it synchronously, right inside the tap callback.
+  private func deliver(_ handler: @escaping @MainActor () -> Void) {
+    guard Thread.isMainThread else {
+      Task { @MainActor in handler() }
+      return
+    }
+    MainActor.assumeIsolated { handler() }
+  }
+
   private func handleEvent(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
     lastEventTimestamp = Date()
-
-    // Log key events for debugging
-    if type == .keyDown {
-      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-      if keyCode == 49 {  // Space key
-        let timestamp = event.timestamp
-        log(
-          "handleEvent received keyDown for space (keyCode: 49) at timestamp: \(timestamp)",
-          category: loggerCategory,
-          level: .debug
-        )
-      }
-    }
 
     switch type {
     case .flagsChanged:
@@ -146,9 +147,8 @@ class GlobalShortcutMonitor: ObservableObject {
         level: .debug
       )
       isFnKeyPressed = true
-      DispatchQueue.main.async {
-        self.shouldStartPushToTalk.toggle()
-      }
+      let keyTime = ProcessInfo.processInfo.systemUptime
+      deliver { self.onPushToTalkStart?(keyTime) }
     } else if !fnKeyCurrentlyPressed && isFnKeyPressed {
       // FN key was just released
       log(
@@ -157,9 +157,7 @@ class GlobalShortcutMonitor: ObservableObject {
         level: .debug
       )
       isFnKeyPressed = false
-      DispatchQueue.main.async {
-        self.shouldStopPushToTalk.toggle()
-      }
+      deliver { self.onPushToTalkStop?() }
     }
   }
 
@@ -177,9 +175,7 @@ class GlobalShortcutMonitor: ObservableObject {
         category: loggerCategory,
         level: .info
       )
-      DispatchQueue.main.async {
-        self.shouldToggleNotesMode.toggle()
-      }
+      deliver { self.onToggleNotesMode?() }
       return nil  // Consume the event
     }
 
@@ -192,9 +188,7 @@ class GlobalShortcutMonitor: ObservableObject {
         category: loggerCategory,
         level: .info
       )
-      DispatchQueue.main.async {
-        self.shouldActivatePreviousProfile.toggle()
-      }
+      deliver { self.onActivatePreviousProfile?() }
       return nil
     }
 
@@ -207,9 +201,7 @@ class GlobalShortcutMonitor: ObservableObject {
         category: loggerCategory,
         level: .info
       )
-      DispatchQueue.main.async {
-        self.shouldActivateNextProfile.toggle()
-      }
+      deliver { self.onActivateNextProfile?() }
       return nil
     }
 
@@ -222,13 +214,8 @@ class GlobalShortcutMonitor: ObservableObject {
             category: loggerCategory,
             level: .info
           )
-          DispatchQueue.main.async {
-            // Emit a nil first so repeated presses of the same shortcut still trigger observers
-            self.triggeredProfileId = nil
-            DispatchQueue.main.async {
-              self.triggeredProfileId = profileId
-            }
-          }
+          let keyTime = ProcessInfo.processInfo.systemUptime
+          deliver { self.onProfileShortcut?(profileId, keyTime) }
           return nil  // Consume the event
         }
       }
@@ -243,9 +230,7 @@ class GlobalShortcutMonitor: ObservableObject {
           category: loggerCategory,
           level: .info
         )
-        DispatchQueue.main.async {
-          self.shouldCancelRecording.toggle()
-        }
+        deliver { self.onCancelRecording?() }
         return nil  // Consume the event - don't let it reach other apps
       } else {
         log(

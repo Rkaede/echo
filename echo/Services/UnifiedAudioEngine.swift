@@ -1222,7 +1222,6 @@ class UnifiedAudioEngine: ObservableObject {
   }
 
   private func updateLevel(_ level: CGFloat) {
-    print("[WAVEFORM DEBUG] UnifiedAudioEngine.updateLevel: \(level)")
     currentInputLevel = level
   }
 

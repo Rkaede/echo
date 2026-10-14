@@ -1,20 +1,44 @@
 import AppKit
-import Combine
 import SwiftUI
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
-  var overlayPanel: OverlayPanel?
-  private var cancellables = Set<AnyCancellable>()
+  // The recording pipeline, overlay and hotkeys are owned here rather than by the SwiftUI
+  // `App`, so their state changes never re-run the app's scenes, menu bar or windows.
+  private var overlayController: OverlayPanelController?
+  private var shortcutCoordinator: ShortcutCoordinator?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     print("AppDelegate: Application finished launching")
 
-    // Observers will be set up from EchoApp once StateObjects are initialized
-  }
+    let appState = AppState()
+    let viewModel = TranscriptionViewModel(appState: appState)
 
-  func setupObservers(app: EchoApp) {
-    // This will be called from EchoApp after initialization
-    print("AppDelegate: Setting up observers")
+    // Build the overlay panel now so the first recording doesn't pay for creating it
+    let overlayController = OverlayPanelController(
+      appState: appState,
+      levelMeter: AudioLevelMeter.shared,
+      profilesService: ProfilesService.shared,
+      displayManager: DisplayManager.shared
+    )
+    overlayController.start()
+    self.overlayController = overlayController
+
+    let shortcutCoordinator = ShortcutCoordinator(
+      appState: appState,
+      viewModel: viewModel,
+      overlayController: overlayController,
+      shortcutMonitor: GlobalShortcutMonitor.shared,
+      profilesService: ProfilesService.shared,
+      notesModeService: NotesModeService.shared,
+      settings: SettingsManager.shared
+    )
+    shortcutCoordinator.start()
+    self.shortcutCoordinator = shortcutCoordinator
+
+    TempFileManager.shared.performStartupCleanup()
+    TempFileManager.shared.startPeriodicCleanup()
+    LoggingService.shared.cleanupOldLogs()
   }
 }
 
@@ -60,6 +84,10 @@ class OverlayPanel: NSPanel {
 
     // Immediate appearance without animation
     self.animationBehavior = .none
+
+    // Owners hold a strong reference and may close() the panel, so AppKit must not also
+    // release it on close
+    self.isReleasedWhenClosed = false
 
     // Set up SwiftUI content
     let hostingView = NSHostingView(rootView: content())

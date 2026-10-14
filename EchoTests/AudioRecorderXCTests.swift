@@ -100,17 +100,20 @@ final class AudioRecorderXCTests: XCTestCase {
     XCTAssertLessThan(AudioRecorder.normalizedLegacyMeterLevel(averagePower: -10), 0.8)
   }
 
-  func testLegacyWaveformSamplesUseRollingMeterHistory() {
-    let samples = AudioRecorder.legacyWaveformSamples(
-      from: [0.1, 0.4, 0.2],
-      barCount: 5
-    )
+  func testMeteringCadenceReportsMeanAndMaxTickInterval() {
+    var cadence = MeteringCadence()
+    XCTAssertNil(cadence.meanInterval)
 
-    XCTAssertEqual(samples, [0, 0, 0.1, 0.4, 0.2])
-    XCTAssertEqual(
-      AudioRecorder.legacyWaveformSamples(from: [0.1, 0.2, 0.3], barCount: 2),
-      [0.2, 0.3]
-    )
+    cadence.recordTick(at: 10.000)
+    XCTAssertNil(cadence.meanInterval, "a single tick has no interval yet")
+
+    cadence.recordTick(at: 10.030)
+    cadence.recordTick(at: 10.060)
+    cadence.recordTick(at: 10.135)
+
+    XCTAssertEqual(cadence.tickCount, 4)
+    XCTAssertEqual(cadence.meanInterval ?? 0, 0.045, accuracy: 0.0001)
+    XCTAssertEqual(cadence.maxInterval, 0.075, accuracy: 0.0001)
   }
 
   func testLegacyRecorderRestartDelayOnlyAppliesWhenCleaningUpExistingRecorder() {

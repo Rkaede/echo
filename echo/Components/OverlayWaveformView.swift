@@ -1,9 +1,8 @@
-import Combine
 import SwiftUI
 
 struct OverlayWaveformView: View {
-  let level: CGFloat
-  let samples: [Float]
+  // The only view that observes the meter, so mic ticks re-render the bars and nothing else.
+  @EnvironmentObject private var meter: AudioLevelMeter
   let color: Color
 
   // Default values (used in RELEASE builds)
@@ -13,7 +12,6 @@ struct OverlayWaveformView: View {
   private static let defaultIdleHeight: CGFloat = 0
   private static let defaultBarWidth: CGFloat = 1.9733333333333334
   private static let defaultSpacing: CGFloat = 0.9523809523809523
-  private static let defaultUpdateInterval: TimeInterval = 0.11482142857142859
   private static let defaultNoiseFloor: CGFloat = 0.09523809523809523
   private static let defaultResponseExponent: CGFloat = 0.5
   private static let defaultSilenceThreshold: CGFloat = 0.0035714285714285713
@@ -48,66 +46,71 @@ struct OverlayWaveformView: View {
   private var updateDuration: TimeInterval { Self.defaultUpdateDuration }
   #endif
 
+  /// One eased tween of every bar from `from` toward `to`, finishing at `settleDeadline`.
+  private struct BarTween {
+    var from: [CGFloat]
+    var to: [CGFloat]
+    var start: Date
+    var settleDeadline: Date
+
+    /// The tween's value at `date` rather than at a specific frame, so it stays correct no
+    /// matter how often the TimelineView actually redraws.
+    func heights(at date: Date) -> [CGFloat] {
+      guard date < settleDeadline else { return to }
+      let duration = settleDeadline.timeIntervalSince(start)
+      guard duration > 0 else { return to }
+      let t = min(1, max(0, date.timeIntervalSince(start) / duration))
+      let eased = 1 - pow(1 - t, 3)
+      return zip(from, to).map { $0 + ($1 - $0) * eased }
+    }
+  }
+
   // New metering data only arrives every ~30ms (AudioRecorder's poll rate), which reads as a
   // visible stutter if the bars simply snap to it. Instead every update starts a short tween
   // from wherever the bars currently are toward the new target, and a TimelineView repaints
   // that tween on every display frame — so the waveform looks as smooth as the screen's
-  // refresh rate regardless of how often real data actually arrives.
-  @State private var previousHeights: [CGFloat]
-  @State private var targetHeights: [CGFloat]
-  @State private var transitionStart = Date()
-  @State private var transitionDuration: TimeInterval = 0
-  @State private var isAnimating = false
-  @State private var animationGeneration = 0
+  // refresh rate regardless of how often real data actually arrives. The waveform is only on
+  // screen while recording, when data never stops arriving, so the timeline simply runs for
+  // as long as the view exists.
+  @State private var tween: BarTween
 
-  private let timer = Timer.publish(every: Self.defaultUpdateInterval, on: .main, in: .common)
-    .autoconnect()
-
-  init(
-    level: CGFloat = 0,
-    samples: [Float] = [],
-    color: Color = Color(red: 0.882, green: 0.325, blue: 0.373, opacity: 1.0)
-  ) {
-    self.level = level
-    self.samples = samples
+  init(color: Color = Color(red: 0.882, green: 0.325, blue: 0.373, opacity: 1.0)) {
     self.color = color
     let idle = Array(repeating: Self.defaultIdleHeight, count: Self.defaultBarCount)
-    _previousHeights = State(initialValue: idle)
-    _targetHeights = State(initialValue: idle)
+    _tween = State(
+      initialValue: BarTween(from: idle, to: idle, start: .distantPast, settleDeadline: .distantPast)
+    )
   }
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isAnimating)) { timeline in
-      let heights = currentHeights(at: timeline.date)
-      HStack(alignment: .center, spacing: spacing) {
-        ForEach(0..<barCount, id: \.self) { index in
-          Capsule()
-            .fill(color)
-            .frame(width: barWidth, height: index < heights.count ? heights[index] : idleHeight)
+    TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+      let heights = Array(tween.heights(at: timeline.date).prefix(barCount))
+      let barWidth = barWidth
+      let pitch = barWidth + spacing
+      let color = color
+      // One Canvas draw per frame instead of laying out a view per bar.
+      Canvas { context, size in
+        let scale = context.environment.displayScale
+        func pixelAligned(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+
+        for (index, height) in heights.enumerated() where height > 0 {
+          let rect = CGRect(
+            x: pixelAligned(CGFloat(index) * pitch),
+            y: (size.height - height) / 2,
+            width: max(pixelAligned(barWidth), 1 / scale),
+            height: height
+          )
+          context.fill(Capsule().path(in: rect), with: .color(color))
         }
       }
       .frame(width: totalWidth, height: maxHeight)
     }
     .accessibilityHidden(true)
     .onAppear {
-      ensureBarCount()
-      updateBarsFromSamples()
+      updateBars(from: meter.samples)
     }
-    .onChange(of: samples) { _, _ in
-      updateBarsFromSamples()
-    }
-    .onChange(of: level) {
-      // Fallback to level-based if no samples
-      if samples.isEmpty {
-        updateBars(with: level)
-      }
-    }
-    .onReceive(timer) { _ in
-      ensureBarCount()
-      // Only use timer-based updates if no samples provided
-      if samples.isEmpty {
-        updateBars(with: level)
-      }
+    .onChange(of: meter.samples) { _, samples in
+      updateBars(from: samples)
     }
     #if DEBUG
     .onChange(of: settings.barCount) { _, _ in
@@ -122,56 +125,29 @@ struct OverlayWaveformView: View {
   }
 
   private func ensureBarCount() {
-    guard targetHeights.count != barCount else { return }
+    guard tween.to.count != barCount else { return }
     beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: 0)
   }
 
-  /// The tween's current value: `previousHeights` eased toward `targetHeights` over
-  /// `transitionDuration`, evaluated at `date` rather than tied to a specific frame so it
-  /// stays correct no matter how often the TimelineView actually redraws.
-  private func currentHeights(at date: Date) -> [CGFloat] {
-    guard transitionDuration > 0 else { return targetHeights }
-    let elapsed = date.timeIntervalSince(transitionStart)
-    let t = min(1, max(0, elapsed / transitionDuration))
-    let eased = 1 - pow(1 - t, 3)
-    return zip(previousHeights, targetHeights).map { $0 + ($1 - $0) * eased }
-  }
-
-  /// Starts a new tween from wherever the bars visually are right now toward `heights`, and
-  /// schedules the TimelineView to stop ticking once it settles — unless a later update
-  /// supersedes it first — so the waveform doesn't spin the display link while idle.
+  /// Starts a new tween from wherever the bars visually are right now toward `heights`.
   private func beginTransition(to heights: [CGFloat], duration: TimeInterval) {
     let now = Date()
-    previousHeights = currentHeights(at: now)
-    targetHeights = heights
-    transitionStart = now
-    transitionDuration = duration
-    isAnimating = true
+    // Already resting on this target (e.g. silence after the bars have decayed): writing the
+    // same tween again would only invalidate the view for nothing.
+    if heights == tween.to && now >= tween.settleDeadline { return }
 
-    animationGeneration += 1
-    let generation = animationGeneration
-    guard duration > 0 else {
-      isAnimating = false
-      return
-    }
-    Task { @MainActor in
-      try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-      if generation == animationGeneration {
-        isAnimating = false
-      }
-    }
+    tween = BarTween(
+      from: tween.heights(at: now),
+      to: heights,
+      start: now,
+      settleDeadline: now.addingTimeInterval(duration)
+    )
   }
 
-  private func updateBarsFromSamples() {
+  private func updateBars(from samples: [Float]) {
     ensureBarCount()
 
-    // If no samples, fall back to level-based rendering
-    guard !samples.isEmpty else {
-      updateBars(with: level)
-      return
-    }
-
-    // Check if all samples are below threshold (silence)
+    // Silence, including the empty history before the first metering tick
     let maxSample = samples.max() ?? 0
     if maxSample <= Float(silenceThreshold) {
       beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: decayDuration)
@@ -179,7 +155,7 @@ struct OverlayWaveformView: View {
     }
 
     // Right-align to the most recently captured samples so the newest reading always lands
-    // in the rightmost bar, regardless of how much history AudioRecorder keeps around.
+    // in the rightmost bar, regardless of how much history AudioLevelMeter keeps around.
     let recent = Array(samples.suffix(barCount))
     let padded = recent.count < barCount
       ? Array(repeating: Float(0), count: barCount - recent.count) + recent
@@ -195,49 +171,21 @@ struct OverlayWaveformView: View {
 
     beginTransition(to: newHeights, duration: updateDuration)
   }
-
-  private func updateBars(with rawLevel: CGFloat) {
-    ensureBarCount()
-    let clamped = max(0, min(rawLevel, 1))
-
-    if clamped <= silenceThreshold {
-      beginTransition(to: Array(repeating: idleHeight, count: barCount), duration: decayDuration)
-      return
-    }
-
-    // Update all bars in place with slight variations for natural look
-    let newHeights = (0..<barCount).map { _ in generateHeight(for: clamped) }
-    beginTransition(to: newHeights, duration: updateDuration)
-  }
-
-  private func generateHeight(for level: CGFloat) -> CGFloat {
-    let dynamicRange = maxHeight - minHeight
-
-    // Suppress readings near the noise floor before shaping the curve
-    let normalized = max(level - noiseFloor, 0) / (1 - noiseFloor)
-    let eased = CGFloat(pow(Double(normalized), Double(responseExponent)))
-    let base = minHeight + dynamicRange * eased
-
-    // Keep jitter minimal while still allowing subtle motion
-    let varianceScale = eased < 0.25 ? 0.015 : 0.04
-    let variance = dynamicRange * varianceScale
-    let randomOffset = CGFloat.random(in: -variance...variance)
-    let candidate = base + randomOffset
-    return min(max(candidate, minHeight), maxHeight)
-  }
 }
 
 #Preview("Live Level") {
   struct PreviewWrapper: View {
-    @State private var level: CGFloat = 0
+    @StateObject private var meter = AudioLevelMeter()
 
     var body: some View {
-      OverlayWaveformView(level: level)
+      OverlayWaveformView()
+        .environmentObject(meter)
         .padding()
         .background(Color.black)
-        .onAppear {
-          Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            level = CGFloat.random(in: 0...1)
+        .task {
+          while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(RecordingSignal.meteringInterval * 1_000_000_000))
+            meter.append(Float.random(in: 0...1))
           }
         }
     }

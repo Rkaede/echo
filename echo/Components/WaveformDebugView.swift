@@ -25,6 +25,11 @@ class WaveformSettings: ObservableObject {
 struct WaveformDebugView: View {
   @ObservedObject var settings = WaveformSettings.shared
   @State private var currentLevel: CGFloat = 0
+  // A private meter fed synthetic readings at the real metering cadence, so the preview
+  // exercises the same samples path as a live recording without touching the mic. Held in
+  // @State rather than @StateObject so this panel doesn't re-render on every tick; only the
+  // waveform observes it.
+  @State private var previewMeter = AudioLevelMeter()
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -47,13 +52,17 @@ struct WaveformDebugView: View {
 
         HStack {
           Spacer()
-          OverlayWaveformView(level: currentLevel)
+          OverlayWaveformView()
+            .environmentObject(previewMeter)
             .frame(height: 40)
           Spacer()
         }
         .padding()
         .background(Color.black.opacity(0.8))
         .cornerRadius(8)
+        .task {
+          await feedSyntheticSamples()
+        }
 
         // Test level slider
         HStack {
@@ -144,6 +153,17 @@ struct WaveformDebugView: View {
       }
     }
     .frame(width: 400, height: 600)
+  }
+
+  /// Appends the test level, with a little jitter so neighbouring bars differ the way real
+  /// speech does, once per metering interval until the window closes.
+  private func feedSyntheticSamples() async {
+    let interval = UInt64(RecordingSignal.meteringInterval * 1_000_000_000)
+    while !Task.isCancelled {
+      try? await Task.sleep(nanoseconds: interval)
+      let jitter = Float.random(in: 0.85...1.15)
+      previewMeter.append(min(1, max(0, Float(currentLevel) * jitter)))
+    }
   }
 }
 

@@ -16,7 +16,6 @@ class TranscriptionService: ObservableObject {
   private let notesModeService = NotesModeService.shared
   private let loggerCategory = "TranscriptionService"
 
-  private var cancellables = Set<AnyCancellable>()
   private var isCancelled = false
   private var transcriptionTask: Task<TranscriptionServiceResult, Never>?
   private var transcriptionToken: UUID?
@@ -25,22 +24,9 @@ class TranscriptionService: ObservableObject {
   private var transcriptionStartTime: Date?
 
   init(appState: AppState) {
+    // The waveform reads mic levels straight from AudioLevelMeter, so nothing is forwarded
+    // into AppState here.
     self.appState = appState
-
-    // Monitor audio level changes for waveform visualization
-    audioRecorder.$currentLevel
-      .sink { [weak self] level in
-        print("[WAVEFORM DEBUG] TranscriptionService received level: \(level)")
-        self?.appState.currentInputLevel = level
-      }
-      .store(in: &cancellables)
-
-    // Forward waveform samples to AppState
-    audioRecorder.$waveformSamples
-      .sink { [weak self] samples in
-        self?.appState.waveformSamples = samples
-      }
-      .store(in: &cancellables)
   }
 
   // MARK: - Public Interface
@@ -50,6 +36,11 @@ class TranscriptionService: ObservableObject {
   ) -> UInt64? {
     inputIsWireless ? 250_000_000 : nil
   }
+
+  /// About one display frame. Starting the mic (~140ms) and cold-starting the playback engine
+  /// for the start sound (70–150ms) both block the main thread, so each is preceded by a
+  /// yield this long to let the overlay render the new status before the stall.
+  nonisolated static let overlayRenderYieldNanoseconds: UInt64 = 16_000_000
 
   func startRecording(mode: RecordingMode = .toggle) async -> TranscriptionServiceResult {
     log("------------------------------------------------------", category: loggerCategory, level: .info)
@@ -69,6 +60,9 @@ class TranscriptionService: ObservableObject {
     // Update status immediately so animation starts before any blocking work
     appState.updateStatus(.initiatingRecording)
     appState.transcriptionText = ""
+
+    // Give the overlay a frame to render "Preparing mic..." before the blocking mic start
+    try? await Task.sleep(nanoseconds: Self.overlayRenderYieldNanoseconds)
 
     // Ensure API key is loaded before starting recording
     log("Ensuring API key is loaded...", category: loggerCategory, level: .debug)
@@ -111,17 +105,19 @@ class TranscriptionService: ObservableObject {
 
       // Bluetooth inputs need time to stabilize in input mode before the start sound
       // plays — playing too early triggers "reconfig pending" errors. Wired inputs
-      // don't mode-switch, so they skip the delay.
-      if let settleDelay = Self.recordingStartSoundSettleDelayNanoseconds(
+      // don't mode-switch, so they only wait a frame: enough for the overlay to show
+      // "Speak now" before the playback engine's cold start blocks the main thread.
+      let startSoundDelay = Self.recordingStartSoundSettleDelayNanoseconds(
         inputIsWireless: audioRecorder.isCurrentCaptureInputWireless()
-      ) {
-        try? await Task.sleep(nanoseconds: settleDelay)
-      }
+      ) ?? Self.overlayRenderYieldNanoseconds
+      try? await Task.sleep(nanoseconds: startSoundDelay)
 
-      // NOW play the start sound (if enabled)
-      // The device is already in input mode, so playing a short beep won't
-      // trigger another disruptive mode switch on Bluetooth devices
-      soundManager.playRecordingStartSound()
+      // NOW play the start sound (if enabled), unless the recording was already stopped or
+      // cancelled during the delay. The device is already in input mode, so playing a short
+      // beep won't trigger another disruptive mode switch on Bluetooth devices
+      if appState.status == .recording {
+        soundManager.playRecordingStartSound()
+      }
 
       return .success(())
 

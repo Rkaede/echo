@@ -68,17 +68,27 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
 }
 
 extension TranscriptionHistory {
-    var formattedTimestamp: String {
+    // Shared because these are read from view bodies for every row on every render, and
+    // building a formatter costs far more than using one.
+    private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        return formatter.string(from: timestamp)
-    }
-    
-    var relativeTimestamp: String {
+        return formatter
+    }()
+
+    private static let relativeTimestampFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: timestamp, relativeTo: Date())
+        return formatter
+    }()
+
+    var formattedTimestamp: String {
+        Self.timestampFormatter.string(from: timestamp)
+    }
+
+    var relativeTimestamp: String {
+        Self.relativeTimestampFormatter.localizedString(for: timestamp, relativeTo: Date())
     }
     
     var formattedDuration: String {

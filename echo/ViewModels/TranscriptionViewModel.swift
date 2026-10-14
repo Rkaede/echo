@@ -8,6 +8,9 @@ class TranscriptionViewModel: ObservableObject {
   private let transcriptionService: TranscriptionService
 
   private var cancellables = Set<AnyCancellable>()
+  /// Set when the push-to-talk key is released while the mic is still starting, so the
+  /// recording stops as soon as it is up instead of running on with the key already up.
+  private var pushToTalkStopPending = false
 
   init(appState: AppState, settingsManager: SettingsManager, transcriptionService: TranscriptionService? = nil) {
     self.appState = appState
@@ -52,7 +55,18 @@ class TranscriptionViewModel: ObservableObject {
     // Allow immediate restart from transient completion states.
     switch appState.status {
     case .idle, .error, .inserted, .cancelled, .noSpeechDetected:
+      pushToTalkStopPending = false
       await startRecording(mode: .pushToTalk)
+      if pushToTalkStopPending {
+        pushToTalkStopPending = false
+        if appState.status == .recording {
+          print("TranscriptionViewModel: Push-to-talk key was released while starting - stopping now")
+          await stopRecording()
+        }
+      }
+    case .initiatingRecording where pushToTalkStopPending:
+      // Pressed again before the mic finished starting: the key is down, so keep recording
+      pushToTalkStopPending = false
     case .recording, .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
       // Don't start if already recording or processing
       print("TranscriptionViewModel: Cannot start push-to-talk recording - already in \(appState.status) state")
@@ -65,6 +79,9 @@ class TranscriptionViewModel: ObservableObject {
     switch appState.status {
     case .recording:
       await stopRecording()
+    case .initiatingRecording where appState.recordingMode == .pushToTalk:
+      // The mic is still starting; startRecordingOnly stops once it's up
+      pushToTalkStopPending = true
     case .idle, .error, .initiatingRecording, .processing, .postProcessing, .inserted, .cancelled,
       .noSpeechDetected, .confirmingCancel:
       // Don't stop if not recording

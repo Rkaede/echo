@@ -169,13 +169,18 @@ struct HistoryView: View {
   }
 
   private var historyListWithoutSearch: some View {
-    ScrollView {
+    // Built once per render; rows read their position from the index instead of
+    // re-deriving the list for every row
+    let transcriptions = visibleTranscriptions
+    let page = Array(transcriptions.prefix((currentPage + 1) * itemsPerPage))
+
+    return ScrollView {
       LazyVStack(spacing: 0) {
-        ForEach(paginatedTranscriptions) { transcription in
+        ForEach(Array(page.enumerated()), id: \.element.id) { index, transcription in
           HistoryRowView(
             transcription: transcription,
             isSelected: selectedTranscription?.id == transcription.id,
-            isFirstItem: transcription.id == paginatedTranscriptions.first?.id
+            isFirstItem: index == 0
           )
           .onTapGesture {
             selectedTranscription = transcription
@@ -191,9 +196,9 @@ struct HistoryView: View {
           }
         }
 
-        if hasMorePages {
+        if transcriptions.count > page.count {
           loadingTriggerView
-        } else if !filteredAndSortedTranscriptions.isEmpty {
+        } else if !transcriptions.isEmpty {
           noMoreItemsView
         }
       }
@@ -229,24 +234,17 @@ struct HistoryView: View {
       .padding()
   }
 
-  private var filteredAndSortedTranscriptions: [TranscriptionHistory] {
+  private var visibleTranscriptions: [TranscriptionHistory] {
     if !searchText.isEmpty {
       return searchResults
     } else {
-      // Return all transcriptions sorted by date (newest first)
-      return historyManager.allTranscriptions.sorted { lhs, rhs in
-        lhs.timestamp > rhs.timestamp
-      }
+      // Already newest first: HistoryRepository queries ORDER BY timestamp DESC
+      return historyManager.allTranscriptions
     }
   }
 
-  private var paginatedTranscriptions: [TranscriptionHistory] {
-    let endIndex = min((currentPage + 1) * itemsPerPage, filteredAndSortedTranscriptions.count)
-    return Array(filteredAndSortedTranscriptions.prefix(endIndex))
-  }
-
   private var hasMorePages: Bool {
-    filteredAndSortedTranscriptions.count > (currentPage + 1) * itemsPerPage
+    visibleTranscriptions.count > (currentPage + 1) * itemsPerPage
   }
 
   private func detailView(for transcription: TranscriptionHistory) -> some View {

@@ -58,15 +58,11 @@ class AppState: ObservableObject {
     @Published var errorCategory: ErrorCategory? = nil
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
-    @Published var currentInputLevel: CGFloat = 0
-    @Published var waveformSamples: [Float] = []
+    // The live mic level is deliberately not published here: it changes ~33 times a second
+    // and would re-render everything observing AppState. See AudioLevelMeter.
     @Published var showingProfileName: String? = nil
     @Published var showingProfileIconName: String? = nil
     @Published var showingProfileColorToken: String? = nil
-
-    @Published var isHistoryWindowOpen: Bool = false
-    @Published var historyCount: Int = 0
-    @Published var recentTranscriptions: [TranscriptionHistory] = []
 
     private var confirmationTimeoutTask: Task<Void, Never>?
     private var statusResetTask: Task<Void, Never>?
@@ -210,19 +206,8 @@ class AppState: ObservableObject {
         status = .idle
         recordingMode = nil
         showingProfileName = nil
-        currentInputLevel = 0
-        waveformSamples = []
         showingProfileIconName = nil
         showingProfileColorToken = nil
-    }
-    
-    func updateHistoryState(count: Int, recent: [TranscriptionHistory]) {
-        historyCount = count
-        recentTranscriptions = recent
-    }
-    
-    func toggleHistoryWindow() {
-        isHistoryWindowOpen.toggle()
     }
     
     func showProfileSwitch(_ profile: Profile) {

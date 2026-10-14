@@ -286,9 +286,10 @@ final class LoggingService {
     let suffix = isPartial ? " [partial]" : ""
     let logEntry = "\(timestamp) [\(streamName)] \(line)\(suffix)\n"
 
+    // FileHandle.write is an unbuffered write(2), so each line already reaches the kernel
+    // and survives an app crash. No per-line fsync: at console volume it is all disk churn.
     if let data = logEntry.data(using: .utf8) {
       consoleFileHandle?.write(data)
-      try? consoleFileHandle?.synchronize()
     }
   }
 
@@ -350,10 +351,9 @@ final class LoggingService {
         logEntry = "\(timestamp) \(levelLabel) \(message)\n"
       }
 
-      // Write to file
+      // Write to file (unbuffered, so it survives an app crash without an fsync per line)
       if let data = logEntry.data(using: .utf8) {
         self.fileHandle?.write(data)
-        try? self.fileHandle?.synchronize()
       }
     }
   }
