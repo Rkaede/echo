@@ -60,6 +60,9 @@ final class ShortcutCoordinator {
     shortcutMonitor.onToggleNotesMode = { [weak self] in
       self?.handleNotesModeToggle()
     }
+    shortcutMonitor.onDrawModifierChanged = { [weak self] isPressed in
+      self?.notesModeService.setDrawModifierPressed(isPressed)
+    }
     shortcutMonitor.onActivateNextProfile = { [weak self] in
       self?.handleProfileSwitch(direction: .next)
     }
@@ -70,6 +73,7 @@ final class ShortcutCoordinator {
     appState.$status
       .sink { [weak self] status in
         self?.updateRecordingStateInGlobalShortcutMonitor(status: status)
+        self?.updateRecordingStateInNotesMode(status: status)
       }
       .store(in: &cancellables)
 
@@ -138,6 +142,18 @@ final class ShortcutCoordinator {
       newProfile.id != previousProfile?.id
     {
       appState.showProfileSwitch(newProfile)
+    }
+  }
+
+  private func updateRecordingStateInNotesMode(status: RecordingStatus) {
+    switch status {
+    case .recording:
+      notesModeService.setRecording(true)
+    case .confirmingCancel:
+      // Unchanged: the recording carries on unless the cancel is confirmed
+      break
+    default:
+      notesModeService.setRecording(false)
     }
   }
 

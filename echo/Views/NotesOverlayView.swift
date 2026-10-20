@@ -37,11 +37,20 @@ struct NotesOverlayView: View {
         .buttonStyle(.plain)
       }
 
-      Text(lastTranscriptionText)
-        .font(.system(size: 12))
-        .foregroundStyle(notesMode.lastTranscription == nil ? .secondary : .primary)
-        .lineLimit(3)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      HStack(alignment: .firstTextBaseline, spacing: 5) {
+        if notesMode.lastEntryHasScreenshot {
+          Image(systemName: "photo")
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Has screenshot")
+        }
+
+        Text(lastTranscriptionText)
+          .font(.system(size: 12))
+          .foregroundStyle(notesMode.lastTranscription == nil ? .secondary : .primary)
+          .lineLimit(3)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
 
       if !notesMode.screenshotsAvailable {
         Label(
@@ -50,6 +59,14 @@ struct NotesOverlayView: View {
         )
         .font(.system(size: 10))
         .foregroundStyle(.orange)
+      } else if notesMode.isDrawing {
+        Label("Drawing — goes into this recording's screenshot", systemImage: "pencil.tip")
+          .font(.system(size: 10))
+          .foregroundStyle(Color.accentColor)
+      } else {
+        Label("Hold ⇧ while recording to draw", systemImage: "pencil.tip")
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
       }
     }
     .padding(12)

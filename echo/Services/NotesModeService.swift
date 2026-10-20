@@ -3,16 +3,19 @@ import SwiftUI
 
 /// Manages notes mode: while active, each recording's transcription is appended to a
 /// single note (with a screenshot taken when the recording stopped) instead of being
-/// pasted. Stopping the mode exports the note as an HTML file in the temp folder and
-/// opens it.
+/// pasted. Holding Shift while recording draws over the screen; the drawing goes into
+/// that recording's screenshot, which is cropped to the marked area. Stopping the mode
+/// exports the note as an HTML file in the temp folder and opens it.
 @MainActor
 final class NotesModeService: ObservableObject {
   static let shared = NotesModeService()
 
   @Published private(set) var isActive = false
   @Published private(set) var lastTranscription: String?
+  @Published private(set) var lastEntryHasScreenshot = false
   @Published private(set) var entryCount = 0
   @Published private(set) var screenshotsAvailable = true
+  @Published private(set) var isDrawing = false
 
   private var entries: [NoteEntry] = []
   private var sessionDirectory: URL?
@@ -21,9 +24,18 @@ final class NotesModeService: ObservableObject {
   private var pendingScreenshotFileName: String?
   private var screenshotCounter = 0
   private var overlayPanel: OverlayPanel?
+  private let annotationOverlay = ScreenAnnotationOverlay()
+  private var isRecording = false
+  private var isDrawModifierPressed = false
+  /// The drawing from the recording that just ended, waiting for its screenshot.
+  private var pendingAnnotation: ScreenAnnotation?
   private let loggerCategory = "NotesModeService"
 
-  private init() {}
+  private init() {
+    annotationOverlay.onDrawingInterrupted = { [weak self] in
+      self?.setDrawModifierPressed(false)
+    }
+  }
 
   func toggle() {
     if isActive {
@@ -63,6 +75,7 @@ final class NotesModeService: ObservableObject {
     entries = []
     entryCount = 0
     lastTranscription = nil
+    lastEntryHasScreenshot = false
     pendingScreenshotFileName = nil
     screenshotCounter = 0
     screenshotsAvailable = ScreenshotService.requestPermissionIfNeeded()
@@ -79,6 +92,9 @@ final class NotesModeService: ObservableObject {
   func stop() {
     guard isActive else { return }
     isActive = false
+    isDrawing = false
+    annotationOverlay.close()
+    pendingAnnotation = nil
     hideOverlay()
     discardPendingScreenshot()
 
@@ -92,6 +108,7 @@ final class NotesModeService: ObservableObject {
     entries = []
     entryCount = 0
     lastTranscription = nil
+    lastEntryHasScreenshot = false
 
     guard let exportDirectory else { return }
 
@@ -173,7 +190,9 @@ final class NotesModeService: ObservableObject {
     let fileName = "screenshot-\(screenshotCounter).png"
     let fileURL = imagesDirectory.appendingPathComponent(fileName)
 
-    guard await ScreenshotService.capturePNG(to: fileURL) else { return }
+    let annotation = pendingAnnotation
+    pendingAnnotation = nil
+    guard await ScreenshotService.capturePNG(to: fileURL, annotation: annotation) else { return }
 
     if isActive {
       pendingScreenshotFileName = fileName
@@ -195,6 +214,7 @@ final class NotesModeService: ObservableObject {
     entries.append(entry)
     entryCount = entries.count
     lastTranscription = text
+    lastEntryHasScreenshot = entry.screenshotFileName != nil
     log("Added entry #\(entries.count) to note", category: loggerCategory, level: .info)
   }
 
@@ -206,6 +226,31 @@ final class NotesModeService: ObservableObject {
     if let imagesDirectory {
       try? FileManager.default.removeItem(at: imagesDirectory.appendingPathComponent(fileName))
     }
+  }
+
+  // MARK: - Drawing
+
+  /// Follows the Shift key, which turns the pointer into a pen while recording.
+  func setDrawModifierPressed(_ pressed: Bool) {
+    isDrawModifierPressed = pressed
+    updateDrawing()
+  }
+
+  /// A drawing belongs to one recording. When the recording ends the drawing leaves the
+  /// screen, held for the screenshot taken if the recording goes on to be transcribed.
+  func setRecording(_ recording: Bool) {
+    guard recording != isRecording else { return }
+    isRecording = recording
+    updateDrawing()
+    pendingAnnotation = recording ? nil : annotationOverlay.takeAnnotation()
+  }
+
+  /// Drawing is pointless without screenshots, so it stays off when they are.
+  private func updateDrawing() {
+    let enabled = isDrawModifierPressed && isRecording && isActive && screenshotsAvailable
+    guard enabled != isDrawing else { return }
+    isDrawing = enabled
+    annotationOverlay.setDrawingEnabled(enabled)
   }
 
   // MARK: - Overlay

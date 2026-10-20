@@ -44,11 +44,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Custom NSPanel subclass for overlay that appears over fullscreen apps
 class OverlayPanel: NSPanel {
-  init<Content: View>(
+  convenience init<Content: View>(
     contentRect: NSRect,
     backing: NSWindow.BackingStoreType = .buffered,
     defer flag: Bool = false,
     @ViewBuilder content: () -> Content
+  ) {
+    self.init(
+      contentRect: contentRect,
+      contentView: NSHostingView(rootView: content()),
+      backing: backing,
+      defer: flag
+    )
+  }
+
+  init(
+    contentRect: NSRect,
+    contentView: NSView,
+    backing: NSWindow.BackingStoreType = .buffered,
+    defer flag: Bool = false
   ) {
     super.init(
       contentRect: contentRect,
@@ -89,9 +103,7 @@ class OverlayPanel: NSPanel {
     // release it on close
     self.isReleasedWhenClosed = false
 
-    // Set up SwiftUI content
-    let hostingView = NSHostingView(rootView: content())
-    self.contentView = hostingView
+    self.contentView = contentView
 
     print("OverlayPanel: Created with level \(self.level.rawValue)")
   }

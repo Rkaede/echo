@@ -7,6 +7,7 @@ class GlobalShortcutMonitor {
   private var runLoopSource: CFRunLoopSource?
   private let loggerCategory = "GlobalShortcutMonitor"
   private var isFnKeyPressed = false
+  private var isDrawModifierPressed = false
   private var fnGesture = FnRecordingGesture()
   var onFnAction: (@MainActor (_ action: FnRecordingGesture.Action, _ keyTime: TimeInterval) -> Void)?
   var recordingStatus: (() -> RecordingStatus)?
@@ -23,6 +24,7 @@ class GlobalShortcutMonitor {
   // update pass. Fn actions also carry the uptime at which the tap saw the key.
   var onCancelRecording: (@MainActor () -> Void)?
   var onToggleNotesMode: (@MainActor () -> Void)?
+  var onDrawModifierChanged: (@MainActor (_ isPressed: Bool) -> Void)?
   var onActivateNextProfile: (@MainActor () -> Void)?
   var onActivatePreviousProfile: (@MainActor () -> Void)?
 
@@ -54,6 +56,7 @@ class GlobalShortcutMonitor {
           // Check if event tap was disabled by timeout
           if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             monitor.interruptFnGesture()
+            monitor.releaseDrawModifier()
             log(
               "Event tap disabled by timeout; attempting to re-enable",
               category: monitor.loggerCategory,
@@ -142,6 +145,8 @@ class GlobalShortcutMonitor {
 
   private func handleFlagsChanged(event: CGEvent) {
     let flags = event.flags
+    updateDrawModifier(flags: flags)
+
     let fnKeyCurrentlyPressed = flags.contains(.maskSecondaryFn)
 
     guard fnKeyCurrentlyPressed != isFnKeyPressed else { return }
@@ -166,6 +171,26 @@ class GlobalShortcutMonitor {
       let keyTime = ProcessInfo.processInfo.systemUptime
       deliver { self.onFnAction?(action, keyTime) }
     }
+  }
+
+  /// Shift on its own arms notes-mode drawing while recording. Fn may be held too, so
+  /// drawing works while holding Fn to record; other modifiers mean a shortcut like
+  /// Cmd-Shift-4.
+  private func updateDrawModifier(flags: CGEventFlags) {
+    let isPressed =
+      flags.contains(.maskShift)
+      && flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty
+    guard isPressed != isDrawModifierPressed else { return }
+    isDrawModifierPressed = isPressed
+    deliver { self.onDrawModifierChanged?(isPressed) }
+  }
+
+  /// A disabled tap can miss the Shift release, which would leave the drawing panel
+  /// swallowing clicks.
+  private func releaseDrawModifier() {
+    guard isDrawModifierPressed else { return }
+    isDrawModifierPressed = false
+    deliver { self.onDrawModifierChanged?(false) }
   }
 
   func resetFnGesture() {

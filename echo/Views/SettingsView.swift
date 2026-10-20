@@ -406,7 +406,7 @@ struct ShortcutsSettingsView: View {
         }
 
         Text(
-          "While notes mode is on, each recording is added to a note with a screenshot instead of being pasted."
+          "While notes mode is on, each recording is added to a note with a screenshot instead of being pasted. Hold Shift while recording and drag to draw on the screen: the drawing is included in that recording's screenshot, which is cropped to the area you marked."
         )
         .font(.caption)
         .foregroundColor(.secondary)
