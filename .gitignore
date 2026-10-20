@@ -175,6 +175,9 @@ exports/
 *.coverage
 *.lcov
 
+# Python
+__pycache__/
+
 # Documentation
 docs/build/
 
