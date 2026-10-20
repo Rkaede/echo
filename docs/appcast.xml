@@ -3,6 +3,15 @@
   <channel>
     <title>Echo</title>
     <item>
+      <title>0.0.3</title>
+      <pubDate>Tue, 20 Oct 2026 15:49:01 +1100</pubDate>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>0.0.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.3/Echo.dmg" length="2578820" type="application/octet-stream" sparkle:edSignature="fpfZFQByvqfSnh7BRxyE4UnoDPLUKzpIoGD+XSlynSyur6OhxCtW6ykb3qC8a+vmEc2qAXwOxCRkbWY2MvGeBw=="/>
+      <sparkle:releaseNotesLink>https://rkaede.github.io/echo/Echo-0.0.3.html</sparkle:releaseNotesLink>
+    </item>
+    <item>
       <title>0.0.2</title>
       <pubDate>Mon, 01 Sep 2025 11:37:30 +1000</pubDate>
       <sparkle:version>2</sparkle:version>
