@@ -1,90 +1,90 @@
 import SwiftUI
 
-/// Compact floating panel shown while notes mode is active: displays the last
-/// transcription added to the note and a button to stop the mode.
+/// Notes bar shown above the recording pill while notes mode is active: the entry
+/// count, the last entry added (or the drawing hint while recording), and a button to
+/// stop the mode. Styled to match the pill, which keeps its light look in dark mode.
 struct NotesOverlayView: View {
+  let status: RecordingStatus
+
   @EnvironmentObject var notesMode: NotesModeService
 
+  private static let mutedText = Constants.Colors.text.opacity(0.55)
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    if notesMode.isActive {
       HStack(spacing: 6) {
         Image(systemName: "note.text")
+          .font(.system(size: 12, weight: .semibold))
           .foregroundStyle(Color.accentColor)
-        Text("Notes Mode")
-          .font(.system(size: 13, weight: .semibold))
-
-        Spacer()
 
         Text("\(notesMode.entryCount)")
           .font(.system(size: 11, weight: .semibold).monospacedDigit())
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 7)
-          .padding(.vertical, 2)
-          .background(Capsule().fill(Color.secondary.opacity(0.15)))
+          .foregroundStyle(Constants.Colors.text)
+
+        message
+          .frame(maxWidth: .infinity, alignment: .leading)
 
         Button(action: { notesMode.stop() }) {
-          HStack(spacing: 4) {
-            Image(systemName: "stop.fill")
-              .font(.system(size: 9, weight: .bold))
-            Text("Stop")
-              .font(.system(size: 12, weight: .medium))
-          }
-          .foregroundStyle(.white)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 4)
-          .background(Capsule().fill(Color.red.opacity(0.85)))
+          Image(systemName: "stop.circle.fill")
+            .font(.system(size: 16))
+            .foregroundStyle(Color.red.opacity(0.85))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Stop notes mode")
       }
-
-      HStack(alignment: .firstTextBaseline, spacing: 5) {
-        if notesMode.lastEntryHasScreenshot {
-          Image(systemName: "photo")
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("Has screenshot")
-        }
-
-        Text(lastTranscriptionText)
-          .font(.system(size: 12))
-          .foregroundStyle(notesMode.lastTranscription == nil ? .secondary : .primary)
-          .lineLimit(3)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      if !notesMode.screenshotsAvailable {
-        Label(
-          "Screenshots off — grant Screen Recording in System Settings",
-          systemImage: "exclamationmark.triangle.fill"
-        )
-        .font(.system(size: 10))
-        .foregroundStyle(.orange)
-      } else if notesMode.isDrawing {
-        Label("Drawing — goes into this recording's screenshot", systemImage: "pencil.tip")
-          .font(.system(size: 10))
-          .foregroundStyle(Color.accentColor)
-      } else {
-        Label("Hold ⇧ while recording to draw", systemImage: "pencil.tip")
-          .font(.system(size: 10))
-          .foregroundStyle(.secondary)
-      }
+      .padding(.leading, 12)
+      .padding(.trailing, 8)
+      .frame(width: 280, height: 30)
+      .background(
+        Capsule()
+          .fill(Constants.Colors.bg)
+          .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+          .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
+      )
     }
-    .padding(12)
-    .frame(width: 340, height: 116, alignment: .top)
-    .background(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(.regularMaterial)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-    )
   }
 
-  private var lastTranscriptionText: String {
-    if let last = notesMode.lastTranscription, !last.isEmpty {
-      return last
+  @ViewBuilder
+  private var message: some View {
+    if notesMode.isDrawing {
+      line("Drawing — goes into this screenshot", icon: "pencil.tip", color: .accentColor)
+    } else if status == .recording {
+      if notesMode.screenshotsAvailable {
+        line("Hold ⇧ to draw on screen", icon: "pencil.tip", color: Self.mutedText)
+      } else {
+        screenshotsOffWarning
+      }
+    } else if let last = notesMode.lastTranscription, !last.isEmpty {
+      line(
+        last,
+        icon: notesMode.lastEntryHasScreenshot ? "photo" : nil,
+        color: Constants.Colors.text,
+        iconColor: Self.mutedText
+      )
+    } else if !notesMode.screenshotsAvailable {
+      screenshotsOffWarning
+    } else {
+      line("Press Fn to add an entry", icon: nil, color: Self.mutedText)
     }
-    return "Record to add the first entry…"
+  }
+
+  private var screenshotsOffWarning: some View {
+    line("Screenshots off — allow Screen Recording", icon: "exclamationmark.triangle.fill", color: .orange)
+  }
+
+  /// One line of text, with an optional icon in front of it.
+  private func line(_ text: String, icon: String?, color: Color, iconColor: Color? = nil) -> some View {
+    HStack(spacing: 5) {
+      if let icon {
+        Image(systemName: icon)
+          .font(.system(size: 10))
+          .foregroundStyle(iconColor ?? color)
+      }
+      Text(text)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(color)
+        .lineLimit(1)
+        .truncationMode(.tail)
+    }
   }
 }

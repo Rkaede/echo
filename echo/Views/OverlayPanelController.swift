@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 
 /// Owns the recording overlay panel and shows or hides it straight from `AppState.status`.
+/// Notes mode keeps it up between recordings, for the notes bar above the status pill.
 ///
 /// This lives in AppKit rather than in `.onChange` modifiers on a SwiftUI scene, so showing
 /// the overlay never waits for a scene update pass. The panel is created once at launch, and
@@ -10,8 +11,8 @@ import SwiftUI
 /// changed the status.
 @MainActor
 final class OverlayPanelController {
-  private static let panelWidth: CGFloat = 300
-  private static let panelHeight: CGFloat = 72
+  private static let panelWidth: CGFloat = OverlayContentView.width
+  private static let panelHeight: CGFloat = OverlayContentView.height
   private static let fadeInDuration: TimeInterval = 0.08
   private static let fadeOutDuration: TimeInterval = 0.3
   /// A hotkey older than this is assumed not to be what made the overlay appear.
@@ -20,11 +21,13 @@ final class OverlayPanelController {
   private let appState: AppState
   private let levelMeter: AudioLevelMeter
   private let profilesService: ProfilesService
+  private let notesModeService: NotesModeService
   private let displayManager: DisplayManager
   private let loggerCategory = "OverlayPanelController"
 
   private var panel: OverlayPanel?
   private var lastStatus: RecordingStatus = .idle
+  private var isNotesModeActive = false
   private var pendingShowKeyTime: TimeInterval?
   private var cancellables = Set<AnyCancellable>()
 
@@ -32,22 +35,33 @@ final class OverlayPanelController {
     appState: AppState,
     levelMeter: AudioLevelMeter,
     profilesService: ProfilesService,
+    notesModeService: NotesModeService,
     displayManager: DisplayManager
   ) {
     self.appState = appState
     self.levelMeter = levelMeter
     self.profilesService = profilesService
+    self.notesModeService = notesModeService
     self.displayManager = displayManager
   }
 
   func start() {
-    createPanel()
     lastStatus = appState.status
+    isNotesModeActive = notesModeService.isActive
+    createPanel()
 
     // `$status` publishes from `willSet`, so the new value is passed in rather than read back
     appState.$status
       .sink { [weak self] status in
         self?.statusDidChange(to: status)
+      }
+      .store(in: &cancellables)
+
+    // Also publishes from `willSet`
+    notesModeService.$isActive
+      .dropFirst()
+      .sink { [weak self] isActive in
+        self?.notesModeDidChange(isActive: isActive)
       }
       .store(in: &cancellables)
 
@@ -85,10 +99,11 @@ final class OverlayPanelController {
         .environmentObject(self.appState)
         .environmentObject(self.profilesService)
         .environmentObject(self.levelMeter)
+        .environmentObject(self.notesModeService)
     }
 
-    // Stays ordered in while idle, just transparent, so it keeps working over fullscreen apps
-    panel.alphaValue = appState.status == .idle ? 0 : 1
+    // Stays ordered in while hidden, just transparent, so it keeps working over fullscreen apps
+    panel.alphaValue = isShown ? 1 : 0
     panel.orderFrontRegardless()
     self.panel = panel
 
@@ -108,19 +123,43 @@ final class OverlayPanelController {
     guard let panel else { return }
 
     if newStatus == .idle && oldStatus != .idle {
-      // Fade out to transparent when returning to idle (keep panel visible for fullscreen)
-      NSAnimationContext.runAnimationGroup { context in
-        context.duration = Self.fadeOutDuration
-        panel.animator().alphaValue = 0
-      }
+      if !isShown { fadeOut(panel) }
     } else if newStatus != .idle && oldStatus == .idle {
-      moveToActiveScreen(panel)
-      panel.orderFrontRegardless()
-      NSAnimationContext.runAnimationGroup { context in
-        context.duration = Self.fadeInDuration
-        panel.animator().alphaValue = 1
-      }
+      // Even when notes mode already has it up, a recording brings it to the current screen
+      fadeIn(panel)
       logShowLatency(since: showKeyTime)
+    }
+  }
+
+  private func notesModeDidChange(isActive: Bool) {
+    isNotesModeActive = isActive
+    guard let panel, lastStatus == .idle else { return }
+    if isActive {
+      fadeIn(panel)
+    } else {
+      fadeOut(panel)
+    }
+  }
+
+  private var isShown: Bool {
+    lastStatus != .idle || isNotesModeActive
+  }
+
+  private func fadeIn(_ panel: OverlayPanel) {
+    moveToActiveScreen(panel)
+    panel.orderFrontRegardless()
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = Self.fadeInDuration
+      panel.animator().alphaValue = 1
+    }
+  }
+
+  /// Fades to transparent rather than ordering out, so the panel keeps working over
+  /// fullscreen apps.
+  private func fadeOut(_ panel: OverlayPanel) {
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = Self.fadeOutDuration
+      panel.animator().alphaValue = 0
     }
   }
 

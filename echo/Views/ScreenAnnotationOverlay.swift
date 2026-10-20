@@ -61,7 +61,7 @@ final class ScreenAnnotationOverlay {
     }
 
     let panel = OverlayPanel(contentRect: frame, contentView: canvas)
-    // Just below Echo's status overlays, so the notes panel's Stop button stays clickable
+    // Just below Echo's status overlay, so the notes bar's stop button stays clickable
     panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
     panel.ignoresMouseEvents = true
 

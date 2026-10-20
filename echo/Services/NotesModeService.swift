@@ -23,7 +23,6 @@ final class NotesModeService: ObservableObject {
   private var sessionStartDate: Date?
   private var pendingScreenshotFileName: String?
   private var screenshotCounter = 0
-  private var overlayPanel: OverlayPanel?
   private let annotationOverlay = ScreenAnnotationOverlay()
   private var isRecording = false
   private var isDrawModifierPressed = false
@@ -81,7 +80,6 @@ final class NotesModeService: ObservableObject {
     screenshotsAvailable = ScreenshotService.requestPermissionIfNeeded()
     isActive = true
 
-    showOverlay()
     log("Notes mode started, session at \(sessionDir.path)", category: loggerCategory, level: .info)
   }
 
@@ -95,7 +93,6 @@ final class NotesModeService: ObservableObject {
     isDrawing = false
     annotationOverlay.close()
     pendingAnnotation = nil
-    hideOverlay()
     discardPendingScreenshot()
 
     let exportEntries = entries
@@ -251,45 +248,5 @@ final class NotesModeService: ObservableObject {
     guard enabled != isDrawing else { return }
     isDrawing = enabled
     annotationOverlay.setDrawingEnabled(enabled)
-  }
-
-  // MARK: - Overlay
-
-  private static let overlayWidth: CGFloat = 340
-  private static let overlayHeight: CGFloat = 116
-
-  private func showOverlay() {
-    guard overlayPanel == nil else {
-      overlayPanel?.orderFrontRegardless()
-      return
-    }
-
-    let panel = OverlayPanel(contentRect: overlayRect()) {
-      NotesOverlayView()
-        .environmentObject(self)
-    }
-    panel.orderFrontRegardless()
-    overlayPanel = panel
-  }
-
-  private func hideOverlay() {
-    overlayPanel?.orderOut(nil)
-    overlayPanel = nil
-  }
-
-  private func overlayRect() -> NSRect {
-    let width = Self.overlayWidth
-    let height = Self.overlayHeight
-    guard let screen = DisplayManager.shared.getActiveScreen() else {
-      return NSRect(x: 100, y: 100, width: width, height: height)
-    }
-    // Top-right corner, clear of the menu bar and the bottom-center recording overlay
-    let frame = screen.visibleFrame
-    return NSRect(
-      x: frame.maxX - width - 16,
-      y: frame.maxY - height - 16,
-      width: width,
-      height: height
-    )
   }
 }

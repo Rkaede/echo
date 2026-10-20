@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       appState: appState,
       levelMeter: AudioLevelMeter.shared,
       profilesService: ProfilesService.shared,
+      notesModeService: NotesModeService.shared,
       displayManager: DisplayManager.shared
     )
     overlayController.start()
