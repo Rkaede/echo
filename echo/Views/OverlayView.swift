@@ -7,6 +7,7 @@ struct OverlayView: View {
   let currentInputDevice: String
   let activeProfileIconName: String?
   let errorCategory: ErrorCategory?
+  let errorRecoveryHint: String?
 
   init(
     status: RecordingStatus,
@@ -14,7 +15,8 @@ struct OverlayView: View {
     showingProfileIconName: String? = nil,
     currentInputDevice: String = "",
     activeProfileIconName: String? = nil,
-    errorCategory: ErrorCategory? = nil
+    errorCategory: ErrorCategory? = nil,
+    errorRecoveryHint: String? = nil
   ) {
     self.status = status
     self.showingProfileName = showingProfileName
@@ -22,6 +24,7 @@ struct OverlayView: View {
     self.currentInputDevice = currentInputDevice
     self.activeProfileIconName = activeProfileIconName
     self.errorCategory = errorCategory
+    self.errorRecoveryHint = errorRecoveryHint
   }
 
   var body: some View {
@@ -59,7 +62,7 @@ struct OverlayView: View {
             .padding(.leading, 4)
 
           // Text content - centered in remaining space
-          if let profileName = showingProfileName {
+          if let profileName = showingProfileName, status != .error {
             HStack(spacing: 6) {
               Image(systemName: profileDisplaySymbol)
                 .font(.system(size: 12, weight: .semibold))
@@ -75,13 +78,13 @@ struct OverlayView: View {
           } else if status == .error && errorCategory != nil {
             // Error state with category subtitle
             VStack(spacing: 2) {
-              Text(displayText)
+              Text(errorRecoveryHint == nil ? displayText : "Paste failed")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Constants.Colors.text)
                 .lineLimit(1)
 
               if let category = errorCategory {
-                Text(category.rawValue)
+                Text(errorRecoveryHint ?? category.rawValue)
                   .font(.system(size: 10, weight: .regular))
                   .foregroundColor(Constants.Colors.text.opacity(0.7))
                   .lineLimit(1)

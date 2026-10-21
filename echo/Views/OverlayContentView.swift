@@ -25,12 +25,14 @@ struct OverlayContentView: View {
         showingProfileIconName: appState.showingProfileIconName,
         currentInputDevice: appState.currentInputDevice,
         activeProfileIconName: profilesService.activeProfile?.iconName,
-        errorCategory: appState.errorCategory
+        errorCategory: appState.errorCategory,
+        errorRecoveryHint: appState.errorRecoveryHint
       )
       // Notes mode keeps the panel up between recordings, so the pill hides itself.
       // Appearing stays instant; only the fade out is animated.
       .opacity(isIdle ? 0 : 1)
       .animation(isIdle ? .easeOut(duration: 0.3) : nil, value: isIdle)
+      .help(appState.status == .error ? appState.errorMessage : "")
     }
     .padding(.bottom, 12)
     .frame(width: Self.width, height: Self.height)

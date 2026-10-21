@@ -155,6 +155,9 @@ class TranscriptionService: ObservableObject {
 
   func stopRecordingAndTranscribe() async -> TranscriptionServiceResult {
     log("Stopping recording", category: loggerCategory, level: .info)
+    // Capture the destination before stopping the mic or awaiting the network. Later
+    // app switches must not send the transcript into an unrelated application.
+    let targetApp = NSWorkspace.shared.frontmostApplication
     let recordingEndTime = Date()
 
     guard let audioFileURL = await audioRecorder.stopRecording() else {
@@ -210,7 +213,10 @@ class TranscriptionService: ObservableObject {
     }
 
     // Get active application context
-    let activeApp = getActiveApplicationName()
+    let activeApp = targetApp?.localizedName
+    let targetProcessIdentifier = targetApp?.processIdentifier
+    log("Paste target: \(targetApp?.bundleIdentifier ?? "unknown"), PID: \(targetProcessIdentifier ?? -1)",
+        category: loggerCategory, level: .info)
 
     let token = UUID()
     transcriptionToken = token
@@ -221,6 +227,7 @@ class TranscriptionService: ObservableObject {
         audioFileURL: audioFileURL,
         recordingDuration: recordingDuration,
         activeApp: activeApp,
+        targetProcessIdentifier: targetProcessIdentifier,
         token: token
       )
     }
@@ -292,6 +299,7 @@ class TranscriptionService: ObservableObject {
     audioFileURL: URL,
     recordingDuration: TimeInterval,
     activeApp: String?,
+    targetProcessIdentifier: pid_t?,
     token: UUID
   ) async -> TranscriptionServiceResult {
     let localToken = token
@@ -473,12 +481,25 @@ class TranscriptionService: ObservableObject {
           notesModeService.addTranscription(finalText)
           soundManager.playTranscriptionCompleteSound()
         } else {
-          let pasteSuccess = await performAutoPaste(text: finalText)
-          if !pasteSuccess {
-            log("Auto-paste failed, but transcription succeeded", category: loggerCategory, level: .warning)
-          } else {
-            // Play completion sound only if paste was successful
+          let outcome = await pasteService.pasteToFocusedApp(
+            finalText, targetProcessIdentifier: targetProcessIdentifier,
+            restoreClipboard: settingsManager.restoreClipboard)
+          guard shouldContinue(stage: "paste result") else { return .success(()) }
+          switch outcome {
+          case .posted:
             soundManager.playTranscriptionCompleteSound()
+          case .cancelled:
+            return .success(())
+          case .failed(let failure, let copied):
+            if failure == .accessibilityPermission {
+              pasteService.promptForAccessibilityPermission()
+            }
+            let message = failure.errorMessage(
+              copiedToClipboard: copied, historyEnabled: settingsManager.enableHistory)
+            let error = TranscriptionError.autoPasteFailed(message)
+            appState.setError(message, recoveryHint: failure.recoveryHint(
+              copiedToClipboard: copied, historyEnabled: settingsManager.enableHistory))
+            return .failure(error)
           }
         }
       } else {
@@ -512,44 +533,6 @@ class TranscriptionService: ObservableObject {
       return .failure(transcriptionError)
     }
   }
-
-  private func getActiveApplicationName() -> String? {
-    guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-      return nil
-    }
-    return frontmostApp.localizedName
-  }
-
-  private func performAutoPaste(text: String) async -> Bool {
-    log("Attempting to paste transcribed text", category: loggerCategory, level: .debug)
-
-    // Check and request accessibility permissions if needed
-    if !pasteService.checkAccessibilityPermissions() {
-      log("No accessibility permissions, requesting...", category: loggerCategory, level: .warning)
-      // Request permission - this should show the system prompt
-      let granted = pasteService.promptForAccessibilityPermission()
-      if !granted {
-        log("Accessibility permission denied", category: loggerCategory, level: .error)
-        appState.setError(
-          "Please grant accessibility permissions in System Settings to enable auto-paste")
-        // Also open the preferences to make it easier
-        pasteService.openAccessibilityPreferences()
-        return false
-      } else {
-        log("Accessibility permission granted, attempting paste", category: loggerCategory, level: .info)
-        let success = await pasteService.pasteToFocusedApp(
-          text, restoreClipboard: settingsManager.restoreClipboard)
-        log("Paste success: \(success)", category: loggerCategory, level: .info)
-        return success
-      }
-    } else {
-      log("Accessibility permissions already granted, pasting", category: loggerCategory, level: .debug)
-      let success = await pasteService.pasteToFocusedApp(
-        text, restoreClipboard: settingsManager.restoreClipboard)
-      log("Paste success: \(success)", category: loggerCategory, level: .info)
-      return success
-    }
-  }
 }
 
 // MARK: - Result Types
@@ -565,6 +548,7 @@ enum TranscriptionError: LocalizedError {
   case recordingFailed(Error)
   case recordingStopFailed
   case transcriptionFailed(Error)
+  case autoPasteFailed(String)
 
   var errorDescription: String? {
     switch self {
@@ -578,6 +562,8 @@ enum TranscriptionError: LocalizedError {
       return "Failed to stop recording"
     case .transcriptionFailed(let error):
       return "Transcription failed: \(error.localizedDescription)"
+    case .autoPasteFailed(let message):
+      return message
     }
   }
 }

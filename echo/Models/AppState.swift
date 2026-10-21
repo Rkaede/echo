@@ -56,6 +56,7 @@ class AppState: ObservableObject {
     @Published var transcriptionText: String = ""
     @Published var errorMessage: String = ""
     @Published var errorCategory: ErrorCategory? = nil
+    @Published var errorRecoveryHint: String? = nil
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
     // The live mic level is deliberately not published here: it changes ~33 times a second
@@ -89,6 +90,7 @@ class AppState: ObservableObject {
         if status == .error && newStatus != .error {
             errorMessage = ""
             errorCategory = nil
+            errorRecoveryHint = nil
         }
 
         // Any non-transient transition should cancel pending auto-reset from a previous status.
@@ -121,7 +123,7 @@ class AppState: ObservableObject {
         }
     }
     
-    func setError(_ message: String) {
+    func setError(_ message: String, recoveryHint: String? = nil) {
         // Prevent overwriting cancelled state with error
         if status == .cancelled {
             log("Ignoring error '\(message)' due to cancelled state", category: loggerCategory, level: .warning)
@@ -131,6 +133,7 @@ class AppState: ObservableObject {
         log("Setting error: \(message)", category: loggerCategory, level: .error)
         errorMessage = message
         errorCategory = ErrorCategory.categorize(from: message)
+        errorRecoveryHint = recoveryHint
         status = .error
         log("Error categorized as: \(errorCategory?.rawValue ?? "Unknown")", category: loggerCategory, level: .debug)
     }
@@ -138,6 +141,7 @@ class AppState: ObservableObject {
     func clearError() {
         errorMessage = ""
         errorCategory = nil
+        errorRecoveryHint = nil
         if status == .error {
             status = .idle
         }
@@ -203,6 +207,7 @@ class AppState: ObservableObject {
         _previousStatusBeforeConfirmation = nil
         errorMessage = ""
         errorCategory = nil
+        errorRecoveryHint = nil
         status = .idle
         recordingMode = nil
         showingProfileName = nil
