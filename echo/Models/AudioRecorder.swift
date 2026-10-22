@@ -216,6 +216,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     )
   }
 
+  /// The name of the mic in use, or an empty string when none can be found.
   func getCurrentInputDevice() -> String {
     if let currentCaptureInputDevice {
       return currentCaptureInputDevice.name
@@ -225,7 +226,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
       return defaultDevice.name
     }
 
-    return AVCaptureDevice.default(for: .audio)?.localizedName ?? "Unknown"
+    return AVCaptureDevice.default(for: .audio)?.localizedName ?? ""
   }
 
   /// Whether the device feeding the active capture route (or the system default input when

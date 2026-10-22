@@ -22,12 +22,16 @@ final class OverlayPresentationXCTests: XCTestCase {
     XCTAssertEqual(OverlayPresentation.statusTone(for: .initiatingRecording), .preparing)
   }
 
-  func testRecordingCommunicatesWhenUserCanSpeak() {
+  func testRecordingNamesTheMicInUse() {
     XCTAssertEqual(
       OverlayPresentation.displayText(
         status: .recording,
         currentInputDevice: "Corey's AirPods"
       ),
+      "Corey's AirPods"
+    )
+    XCTAssertEqual(
+      OverlayPresentation.displayText(status: .recording, currentInputDevice: ""),
       "Speak now"
     )
     XCTAssertTrue(OverlayPresentation.shouldShowWaveform(for: .recording))

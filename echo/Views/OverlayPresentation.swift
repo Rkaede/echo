@@ -87,10 +87,15 @@ struct OverlayPresentation {
   static func displayText(
     status: RecordingStatus,
     showingProfileName: String? = nil,
-    currentInputDevice _: String = ""
+    currentInputDevice: String = ""
   ) -> String {
     if let profileName = showingProfileName {
       return profileName
+    }
+
+    // Naming the mic lets a wrong one be caught before anything is said
+    if status == .recording && !currentInputDevice.isEmpty {
+      return currentInputDevice
     }
 
     return statusText(for: status)

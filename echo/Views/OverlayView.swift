@@ -100,6 +100,8 @@ struct OverlayView: View {
               .font(.system(size: 12, weight: .medium))
               .foregroundColor(Constants.Colors.text)
               .lineLimit(1)
+              // Shrinks a little before truncating, enough for "MacBook Pro Microphone"
+              .minimumScaleFactor(0.85)
               .frame(maxWidth: .infinity, alignment: .center)
           }
 
