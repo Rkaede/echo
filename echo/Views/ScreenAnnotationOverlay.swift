@@ -1,15 +1,17 @@
 import AppKit
 
-/// Lets the user draw over the screen in notes mode. A transparent panel covers one
-/// screen and takes mouse input only while drawing is enabled (Shift held while
-/// recording); the rest of the time clicks pass through and the strokes stay visible
-/// until the recording ends and they are taken for its screenshot.
 @MainActor
-final class ScreenAnnotationOverlay {
-  /// Called when a click arrives without Shift held, meaning the release was missed
-  /// and the panel would otherwise keep swallowing clicks.
-  var onDrawingInterrupted: (() -> Void)?
+protocol ScreenAnnotationPresenting: AnyObject {
+  func setDrawingEnabled(_ enabled: Bool)
+  func takeAnnotation() -> ScreenAnnotation?
+  func close()
+}
 
+/// Lets the user draw over the screen in notes mode. A transparent panel covers one
+/// screen and takes mouse input throughout a recording. When recording ends, clicks
+/// pass through and the strokes are taken for its screenshot.
+@MainActor
+final class ScreenAnnotationOverlay: ScreenAnnotationPresenting {
   private var panel: OverlayPanel?
   private var canvas: AnnotationCanvasView?
   private var screen: NSScreen?
@@ -56,9 +58,6 @@ final class ScreenAnnotationOverlay {
   private func makePanel(frame: NSRect) {
     let canvas = AnnotationCanvasView(frame: NSRect(origin: .zero, size: frame.size))
     canvas.autoresizingMask = [.width, .height]
-    canvas.onClickWithoutShift = { [weak self] in
-      self?.onDrawingInterrupted?()
-    }
 
     let panel = OverlayPanel(contentRect: frame, contentView: canvas)
     // Just below Echo's status overlay, so the notes bar's stop button stays clickable
@@ -71,8 +70,7 @@ final class ScreenAnnotationOverlay {
 }
 
 /// Collects freehand strokes from mouse drags and draws them.
-private final class AnnotationCanvasView: NSView {
-  var onClickWithoutShift: (() -> Void)?
+final class AnnotationCanvasView: NSView {
   private(set) var strokes: [[CGPoint]] = []
   private var isStroking = false
 
@@ -80,10 +78,6 @@ private final class AnnotationCanvasView: NSView {
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
   override func mouseDown(with event: NSEvent) {
-    guard event.modifierFlags.contains(.shift) else {
-      onClickWithoutShift?()
-      return
-    }
     strokes.append([convert(event.locationInWindow, from: nil)])
     isStroking = true
     invalidateLatestSegment()

@@ -47,13 +47,9 @@ struct NotesOverlayView: View {
   @ViewBuilder
   private var message: some View {
     if notesMode.isDrawing {
-      line("Drawing — goes into this screenshot", icon: "pencil.tip", color: .accentColor)
-    } else if status == .recording {
-      if notesMode.screenshotsAvailable {
-        line("Hold ⇧ to draw on screen", icon: "pencil.tip", color: Self.mutedText)
-      } else {
-        screenshotsOffWarning
-      }
+      line("Drag to draw on screen", icon: "pencil.tip", color: .accentColor)
+    } else if status == .recording && !notesMode.screenshotsAvailable {
+      screenshotsOffWarning
     } else if let last = notesMode.lastTranscription, !last.isEmpty {
       line(
         last,

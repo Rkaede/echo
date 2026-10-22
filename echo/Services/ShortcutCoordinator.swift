@@ -60,9 +60,6 @@ final class ShortcutCoordinator {
     shortcutMonitor.onToggleNotesMode = { [weak self] in
       self?.handleNotesModeToggle()
     }
-    shortcutMonitor.onDrawModifierChanged = { [weak self] isPressed in
-      self?.notesModeService.setDrawModifierPressed(isPressed)
-    }
     shortcutMonitor.onActivateNextProfile = { [weak self] in
       self?.handleProfileSwitch(direction: .next)
     }
