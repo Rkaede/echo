@@ -2,7 +2,6 @@ import SwiftUI
 
 /// What the pill shows between recordings while notes mode is on.
 struct OverlayNotesMode {
-  let entryCount: Int
   let screenshotsAvailable: Bool
   let stop: @MainActor () -> Void
 }
@@ -144,7 +143,7 @@ struct OverlayView: View {
   /// Laid out like the error state, with the stop button where the waveform goes.
   private func notesModeContent(_ notesMode: OverlayNotesMode) -> some View {
     HStack(spacing: 0) {
-      iconSlot("note.text", color: .accentColor)
+      iconSlot("scribble.variable", color: .accentColor)
 
       VStack(spacing: 2) {
         Text("Notes mode")
@@ -152,17 +151,12 @@ struct OverlayView: View {
           .foregroundColor(Constants.Colors.text)
           .lineLimit(1)
 
-        Text(
-          OverlayPresentation.notesModeDetail(
-            entryCount: notesMode.entryCount,
-            screenshotsAvailable: notesMode.screenshotsAvailable
-          )
-        )
-        .font(.system(size: 10, weight: .regular))
-        .foregroundColor(
-          notesMode.screenshotsAvailable ? Constants.Colors.text.opacity(0.7) : .orange
-        )
-        .lineLimit(1)
+        if !notesMode.screenshotsAvailable {
+          Text("Screenshots off")
+            .font(.system(size: 10, weight: .regular))
+            .foregroundColor(.orange)
+            .lineLimit(1)
+        }
       }
       .frame(maxWidth: .infinity, alignment: .center)
 
@@ -390,7 +384,6 @@ private struct OverlayViewProfilePreview: View {
 
   struct NotesModePreviewRow: View {
     let label: String
-    let entryCount: Int
     let screenshotsAvailable: Bool
     var body: some View {
       HStack {
@@ -408,7 +401,6 @@ private struct OverlayViewProfilePreview: View {
             OverlayView(
               status: .idle,
               notesMode: OverlayNotesMode(
-                entryCount: entryCount,
                 screenshotsAvailable: screenshotsAvailable,
                 stop: {}
               )
@@ -460,9 +452,8 @@ private struct OverlayViewProfilePreview: View {
       StaticPreviewRow(status: status)
     }
 
-    NotesModePreviewRow(label: "Notes mode", entryCount: 0, screenshotsAvailable: true)
-    NotesModePreviewRow(label: "Notes mode, 3 entries", entryCount: 3, screenshotsAvailable: true)
-    NotesModePreviewRow(label: "Notes, no screenshots", entryCount: 3, screenshotsAvailable: false)
+    NotesModePreviewRow(label: "Notes mode", screenshotsAvailable: true)
+    NotesModePreviewRow(label: "Notes, no screenshots", screenshotsAvailable: false)
 
     DevicePreviewRow(label: "Recording with Built-in Mic", deviceName: "Built-in Microphone")
     ProfilePreviewRow(

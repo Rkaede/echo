@@ -11,7 +11,6 @@ final class NotesModeService: ObservableObject {
   static let shared = NotesModeService()
 
   @Published private(set) var isActive = false
-  @Published private(set) var entryCount = 0
   @Published private(set) var screenshotsAvailable = true
   @Published private(set) var isDrawing = false
 
@@ -87,7 +86,6 @@ final class NotesModeService: ObservableObject {
     imagesDirectory = imagesDir
     sessionStartDate = startDate
     entries = []
-    entryCount = 0
     pendingScreenshotFileName = nil
     screenshotCounter = 0
     screenshotsAvailable = requestScreenshotPermission()
@@ -117,7 +115,6 @@ final class NotesModeService: ObservableObject {
     imagesDirectory = nil
     sessionStartDate = nil
     entries = []
-    entryCount = 0
 
     guard let exportDirectory else { return }
 
@@ -221,7 +218,6 @@ final class NotesModeService: ObservableObject {
     )
     pendingScreenshotFileName = nil
     entries.append(entry)
-    entryCount = entries.count
     log("Added entry #\(entries.count) to note", category: loggerCategory, level: .info)
   }
 

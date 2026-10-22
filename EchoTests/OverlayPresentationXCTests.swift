@@ -52,27 +52,4 @@ final class OverlayPresentationXCTests: XCTestCase {
       "Meeting Notes"
     )
   }
-
-  func testNotesModeDetailCountsEntriesAndFlagsMissingScreenshots() {
-    XCTAssertEqual(
-      OverlayPresentation.notesModeDetail(entryCount: 0, screenshotsAvailable: true),
-      "Press Fn to add an entry"
-    )
-    XCTAssertEqual(
-      OverlayPresentation.notesModeDetail(entryCount: 1, screenshotsAvailable: true),
-      "1 entry"
-    )
-    XCTAssertEqual(
-      OverlayPresentation.notesModeDetail(entryCount: 3, screenshotsAvailable: true),
-      "3 entries"
-    )
-    XCTAssertEqual(
-      OverlayPresentation.notesModeDetail(entryCount: 0, screenshotsAvailable: false),
-      "Screenshots off"
-    )
-    XCTAssertEqual(
-      OverlayPresentation.notesModeDetail(entryCount: 2, screenshotsAvailable: false),
-      "2 entries, no screenshots"
-    )
-  }
 }

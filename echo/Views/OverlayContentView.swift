@@ -37,7 +37,6 @@ struct OverlayContentView: View {
   private var notesModeContent: OverlayNotesMode? {
     guard notesMode.isActive else { return nil }
     return OverlayNotesMode(
-      entryCount: notesMode.entryCount,
       screenshotsAvailable: notesMode.screenshotsAvailable,
       stop: { notesMode.stop() }
     )
