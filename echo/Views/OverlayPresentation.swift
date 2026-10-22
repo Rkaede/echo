@@ -99,4 +99,20 @@ struct OverlayPresentation {
   static func shouldShowWaveform(for status: RecordingStatus) -> Bool {
     status == .recording
   }
+
+  /// The line under "Notes mode" between recordings: what the note holds so far, and
+  /// whether screenshots are off because Screen Recording isn't allowed.
+  static func notesModeDetail(entryCount: Int, screenshotsAvailable: Bool) -> String {
+    let entries = entryCount == 1 ? "1 entry" : "\(entryCount) entries"
+    switch (entryCount, screenshotsAvailable) {
+    case (0, true):
+      return "Press Fn to add an entry"
+    case (0, false):
+      return "Screenshots off"
+    case (_, true):
+      return entries
+    case (_, false):
+      return "\(entries), no screenshots"
+    }
+  }
 }

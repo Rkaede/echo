@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// What the pill shows between recordings while notes mode is on.
+struct OverlayNotesMode {
+  let entryCount: Int
+  let screenshotsAvailable: Bool
+  let stop: @MainActor () -> Void
+}
+
 struct OverlayView: View {
   let status: RecordingStatus
   let showingProfileName: String?
@@ -8,6 +15,9 @@ struct OverlayView: View {
   let activeProfileIconName: String?
   let errorCategory: ErrorCategory?
   let errorRecoveryHint: String?
+  /// Set while notes mode is on. Recordings show their usual status; in between, the
+  /// pill shows the mode and a button to stop it.
+  let notesMode: OverlayNotesMode?
 
   init(
     status: RecordingStatus,
@@ -16,7 +26,8 @@ struct OverlayView: View {
     currentInputDevice: String = "",
     activeProfileIconName: String? = nil,
     errorCategory: ErrorCategory? = nil,
-    errorRecoveryHint: String? = nil
+    errorRecoveryHint: String? = nil,
+    notesMode: OverlayNotesMode? = nil
   ) {
     self.status = status
     self.showingProfileName = showingProfileName
@@ -25,6 +36,7 @@ struct OverlayView: View {
     self.activeProfileIconName = activeProfileIconName
     self.errorCategory = errorCategory
     self.errorRecoveryHint = errorRecoveryHint
+    self.notesMode = notesMode
   }
 
   var body: some View {
@@ -47,19 +59,11 @@ struct OverlayView: View {
         .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
 
       // Content
-      if showContent {
+      if status == .idle, let notesMode {
+        notesModeContent(notesMode)
+      } else if showContent {
         HStack(spacing: 0) {
-          // Icon container - fixed width to match right padding
-          Circle()
-            .fill(statusColor.opacity(0.0))
-            .frame(width: 28, height: 28)
-            .overlay(
-              Image(systemName: statusIcon)
-                .font(.system(size: iconFontSize, weight: .medium))
-                .foregroundColor(statusIconColor)
-            )
-            .frame(width: 36, alignment: .leading)  // Match the right padding width
-            .padding(.leading, 4)
+          iconSlot(statusIcon, color: statusIconColor)
 
           // Text content - centered in remaining space
           if let profileName = showingProfileName, status != .error {
@@ -119,6 +123,57 @@ struct OverlayView: View {
       width: Constants.Overlay.activeWidth,
       height: Constants.Overlay.activeHeight
     )
+  }
+
+  /// Icon container - fixed width to match the right slot
+  private func iconSlot(_ systemName: String, color: Color) -> some View {
+    Circle()
+      .fill(Color.clear)
+      .frame(width: 28, height: 28)
+      .overlay(
+        Image(systemName: systemName)
+          .font(.system(size: iconFontSize, weight: .medium))
+          .foregroundColor(color)
+      )
+      .frame(width: 36, alignment: .leading)  // Match the right padding width
+      .padding(.leading, 4)
+  }
+
+  /// Laid out like the error state, with the stop button where the waveform goes.
+  private func notesModeContent(_ notesMode: OverlayNotesMode) -> some View {
+    HStack(spacing: 0) {
+      iconSlot("note.text", color: .accentColor)
+
+      VStack(spacing: 2) {
+        Text("Notes mode")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(Constants.Colors.text)
+          .lineLimit(1)
+
+        Text(
+          OverlayPresentation.notesModeDetail(
+            entryCount: notesMode.entryCount,
+            screenshotsAvailable: notesMode.screenshotsAvailable
+          )
+        )
+        .font(.system(size: 10, weight: .regular))
+        .foregroundColor(
+          notesMode.screenshotsAvailable ? Constants.Colors.text.opacity(0.7) : .orange
+        )
+        .lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      Button(action: notesMode.stop) {
+        Image(systemName: "stop.circle.fill")
+          .font(.system(size: 18))
+          .foregroundStyle(Color.red.opacity(0.85))
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Stop notes mode")
+      .frame(width: 36, alignment: .trailing)
+      .padding(.trailing, 10)
+    }
   }
 
   private var statusIcon: String {
@@ -331,6 +386,41 @@ private struct OverlayViewProfilePreview: View {
     }
   }
 
+  struct NotesModePreviewRow: View {
+    let label: String
+    let entryCount: Int
+    let screenshotsAvailable: Bool
+    var body: some View {
+      HStack {
+        Text(label)
+          .font(.caption)
+          .foregroundColor(.primary)
+          .frame(width: 120, alignment: .leading)
+
+        Spacer()
+
+        VStack {
+          Spacer()
+          HStack {
+            Spacer()
+            OverlayView(
+              status: .idle,
+              notesMode: OverlayNotesMode(
+                entryCount: entryCount,
+                screenshotsAvailable: screenshotsAvailable,
+                stop: {}
+              )
+            )
+            Spacer()
+          }
+        }
+        .frame(width: Constants.Overlay.activeWidth, height: Constants.Overlay.previewFrameHeight)
+        .background(Color.black.opacity(0.1))
+        .border(Color.gray.opacity(0.3))
+      }
+    }
+  }
+
   struct DevicePreviewRow: View {
     let label: String
     let deviceName: String
@@ -367,6 +457,10 @@ private struct OverlayViewProfilePreview: View {
     ) { status in
       StaticPreviewRow(status: status)
     }
+
+    NotesModePreviewRow(label: "Notes mode", entryCount: 0, screenshotsAvailable: true)
+    NotesModePreviewRow(label: "Notes mode, 3 entries", entryCount: 3, screenshotsAvailable: true)
+    NotesModePreviewRow(label: "Notes, no screenshots", entryCount: 3, screenshotsAvailable: false)
 
     DevicePreviewRow(label: "Recording with Built-in Mic", deviceName: "Built-in Microphone")
     ProfilePreviewRow(

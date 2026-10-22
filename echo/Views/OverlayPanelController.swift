@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 /// Owns the recording overlay panel and shows or hides it straight from `AppState.status`.
-/// Notes mode keeps it up between recordings, for the notes bar above the status pill.
+/// Notes mode keeps it up between recordings, with the pill showing the mode.
 ///
 /// This lives in AppKit rather than in `.onChange` modifiers on a SwiftUI scene, so showing
 /// the overlay never waits for a scene update pass. The panel is created once at launch, and

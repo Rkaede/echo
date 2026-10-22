@@ -60,7 +60,7 @@ final class ScreenAnnotationOverlay: ScreenAnnotationPresenting {
     canvas.autoresizingMask = [.width, .height]
 
     let panel = OverlayPanel(contentRect: frame, contentView: canvas)
-    // Just below Echo's status overlay, so the notes bar's stop button stays clickable
+    // Just below Echo's status overlay, so the pill stays on top of a drawing
     panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
     panel.ignoresMouseEvents = true
 

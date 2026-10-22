@@ -1,24 +1,22 @@
 import SwiftUI
 
 /// Wrapper view that observes AppState and provides reactive updates to the overlay panel.
-/// In notes mode the notes bar sits above the status pill.
+/// In notes mode the panel stays up between recordings, and the pill shows the mode.
 ///
 /// The live mic level is deliberately not read here: `OverlayWaveformView` picks up
 /// `AudioLevelMeter` from the environment on its own, so only the bars re-render on each
 /// metering tick rather than this whole view.
 struct OverlayContentView: View {
   static let width: CGFloat = 300
-  static let height: CGFloat = 108
+  static let height: CGFloat = 72
 
   @EnvironmentObject var appState: AppState
   @EnvironmentObject var profilesService: ProfilesService
+  @EnvironmentObject var notesMode: NotesModeService
 
   var body: some View {
-    let isIdle = appState.status == .idle
-
-    VStack(spacing: 6) {
-      Spacer(minLength: 0)
-      NotesOverlayView(status: appState.status)
+    VStack {
+      Spacer()
       OverlayView(
         status: appState.status,
         showingProfileName: appState.showingProfileName,
@@ -26,16 +24,22 @@ struct OverlayContentView: View {
         currentInputDevice: appState.currentInputDevice,
         activeProfileIconName: profilesService.activeProfile?.iconName,
         errorCategory: appState.errorCategory,
-        errorRecoveryHint: appState.errorRecoveryHint
+        errorRecoveryHint: appState.errorRecoveryHint,
+        notesMode: notesModeContent
       )
-      // Notes mode keeps the panel up between recordings, so the pill hides itself.
-      // Appearing stays instant; only the fade out is animated.
-      .opacity(isIdle ? 0 : 1)
-      .animation(isIdle ? .easeOut(duration: 0.3) : nil, value: isIdle)
       .help(appState.status == .error ? appState.errorMessage : "")
     }
     .padding(.bottom, 12)
     .frame(width: Self.width, height: Self.height)
     .background(Color.clear)
+  }
+
+  private var notesModeContent: OverlayNotesMode? {
+    guard notesMode.isActive else { return nil }
+    return OverlayNotesMode(
+      entryCount: notesMode.entryCount,
+      screenshotsAvailable: notesMode.screenshotsAvailable,
+      stop: { notesMode.stop() }
+    )
   }
 }
