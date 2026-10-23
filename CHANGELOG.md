@@ -1,5 +1,17 @@
 # Changelog
 
+## Echo 0.0.4
+
+### Improvements
+
+- **Drawing in notes mode is always on while recording.** You no longer need to hold Shift. Just drag to draw on the screen, and the drawing goes into that entry's screenshot.
+- **Notes mode lives in the recording pill.** The separate notes bar is gone. Between recordings the pill shows "Notes mode" and a stop button, plus a "Screenshots off" line if Screen Recording isn't allowed.
+- **The pill shows your microphone name while recording**, so a wrong mic is easy to spot before you start speaking.
+
+### Fixes
+
+- Pasting a transcription into the active app is more reliable.
+
 ## Echo 0.0.3
 
 ### Recording Shortcut Change
