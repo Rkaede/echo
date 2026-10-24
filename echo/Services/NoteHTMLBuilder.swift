@@ -13,7 +13,7 @@ struct NoteEntry: Identifiable {
 /// companion file. Screenshots are referenced relatively from an `images/` folder
 /// next to the exported files. The HTML offers three views of the note — the full
 /// note with screenshots, the plain transcript, and an LLM-cleaned version — each
-/// copyable to the clipboard, along with the markdown file's path.
+/// copyable to the clipboard, along with a change title and the markdown file's path.
 enum NoteHTMLBuilder {
   /// All transcriptions joined into a single plain-text transcript.
   static func plainTranscript(entries: [NoteEntry]) -> String {
@@ -47,11 +47,13 @@ enum NoteHTMLBuilder {
     entries: [NoteEntry],
     startedAt: Date,
     cleanedText: String?,
-    markdownFilePath: String
+    markdownFilePath: String,
+    changeTitle: String?
   ) -> String {
     let titleFormatter = DateFormatter()
     titleFormatter.dateStyle = .full
     titleFormatter.timeStyle = .short
+    let title = changeTitle ?? "Echo Note — \(titleFormatter.string(from: startedAt))"
 
     let timeFormatter = DateFormatter()
     timeFormatter.dateFormat = "h:mm:ss a"
@@ -97,7 +99,7 @@ enum NoteHTMLBuilder {
       noteMarkdown: renderMarkdown(entries: entries, startedAt: startedAt),
       transcript: transcript,
       cleaned: cleanedText,
-      markdownPath: markdownFilePath
+      markdownReference: "\(title)\n\(markdownFilePath)"
     )
 
     return """
@@ -139,6 +141,7 @@ enum NoteHTMLBuilder {
           main { max-width: 760px; margin: 0 auto; }
           header { margin-bottom: 24px; }
           header h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+          header .change-title { font-size: 1.1rem; font-weight: 600; margin: 8px 0 4px; overflow-wrap: anywhere; }
           header .subtitle { color: var(--muted); font-size: 0.95rem; }
           .toolbar {
             display: flex;
@@ -226,6 +229,7 @@ enum NoteHTMLBuilder {
         <main>
           <header>
             <h1>Echo Note</h1>
+            <div class="change-title">\(escape(title))</div>
             <div class="subtitle">\(escape(titleFormatter.string(from: startedAt))) · \(entries.count) \(entries.count == 1 ? "entry" : "entries")</div>
           </header>
           <div class="toolbar">
@@ -236,7 +240,7 @@ enum NoteHTMLBuilder {
             </div>
             <div class="toolbar-actions">
               <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
-              <button class="action-btn" id="copy-md-path" title="Copy the path of the markdown file saved next to this page">Copy Markdown Path</button>
+              <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
             </div>
           </div>
           <section class="view active" id="view-note">
@@ -307,7 +311,7 @@ enum NoteHTMLBuilder {
           });
 
           document.getElementById('copy-md-path').addEventListener('click', (event) => {
-            copyText(copyData.markdownPath, event.currentTarget);
+            copyText(copyData.markdownReference, event.currentTarget);
           });
         </script>
       </body>
@@ -330,12 +334,12 @@ enum NoteHTMLBuilder {
     noteMarkdown: String,
     transcript: String,
     cleaned: String?,
-    markdownPath: String
+    markdownReference: String
   ) -> String {
     var payload: [String: String] = [
       "note": noteMarkdown,
       "transcript": transcript,
-      "markdownPath": markdownPath,
+      "markdownReference": markdownReference,
     ]
     if let cleaned {
       payload["cleaned"] = cleaned

@@ -6,13 +6,15 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
   private func render(
     entries: [NoteEntry],
     cleanedText: String? = "Cleaned version",
-    markdownFilePath: String = "/tmp/echo/notes/note-test/note.md"
+    markdownFilePath: String = "/tmp/echo/notes/note-test/note.md",
+    changeTitle: String? = "Keep Notes Controls Visible While Recording"
   ) -> String {
     NoteHTMLBuilder.render(
       entries: entries,
       startedAt: Date(),
       cleanedText: cleanedText,
-      markdownFilePath: markdownFilePath
+      markdownFilePath: markdownFilePath,
+      changeTitle: changeTitle
     )
   }
 
@@ -102,6 +104,43 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     ]
 
     XCTAssertEqual(NoteHTMLBuilder.plainTranscript(entries: entries), "First\n\nSecond")
+  }
+
+  func testTitleAndPathAreCopiedTogetherWithoutChangingViewContents() throws {
+    let entries = [NoteEntry(timestamp: Date(), text: "Raw note", screenshotFileName: nil)]
+    let title = "Improve \"Notes\" & 日本語 </script>"
+    let path = "/tmp/notes with spaces/note.md"
+    let html = render(entries: entries, markdownFilePath: path, changeTitle: title)
+    let payload = try copyPayload(html)
+
+    XCTAssertTrue(html.contains("<div class=\"change-title\">\(NoteHTMLBuilder.escape(title))</div>"))
+    XCTAssertTrue(html.contains(">Copy Title + Path</button>"))
+    XCTAssertTrue(html.contains("copyText(copyData.markdownReference, event.currentTarget)"))
+    XCTAssertEqual(payload["markdownReference"], "\(title)\n\(path)")
+    XCTAssertEqual(payload["transcript"], "Raw note")
+    XCTAssertEqual(payload["cleaned"], "Cleaned version")
+    XCTAssertTrue(try XCTUnwrap(payload["note"]).hasPrefix("# Echo Note — "))
+    XCTAssertFalse(try XCTUnwrap(payload["note"]).contains(title))
+  }
+
+  func testMissingTitleUsesDatedFallbackInDisplayAndClipboard() throws {
+    let html = render(entries: [], changeTitle: nil)
+    let reference = try XCTUnwrap(copyPayload(html)["markdownReference"])
+    let lines = reference.components(separatedBy: "\n")
+
+    XCTAssertEqual(lines.count, 2)
+    XCTAssertTrue(lines[0].hasPrefix("Echo Note — "))
+    XCTAssertEqual(lines[1], "/tmp/echo/notes/note-test/note.md")
+    XCTAssertTrue(html.contains("<div class=\"change-title\">\(NoteHTMLBuilder.escape(lines[0]))</div>"))
+  }
+
+  private func copyPayload(_ html: String) throws -> [String: String] {
+    let json = html.components(separatedBy: "id=\"copy-data\" type=\"application/json\">")[1]
+      .components(separatedBy: "</script>")[0]
+    XCTAssertFalse(json.contains("<"))
+    return try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String]
+    )
   }
 
   func testRenderMarkdownIncludesEntriesAndImages() {
