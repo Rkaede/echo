@@ -26,11 +26,12 @@ struct AppAssignment: Identifiable, Codable, Equatable {
     let createdAt: Date
 }
 
-enum ProfileValidationError: LocalizedError {
+enum ProfileValidationError: LocalizedError, Equatable {
     case invalidTitle
     case duplicateTitle
     case reservedShortcut
     case duplicateShortcut
+    case invalidShortcut
     case invalidModel
     case invalidPostProcessingModel
     case invalidIcon
@@ -44,6 +45,7 @@ enum ProfileValidationError: LocalizedError {
         case .duplicateTitle: return "Another profile already uses this title."
         case .reservedShortcut: return "This shortcut is reserved."
         case .duplicateShortcut: return "Another action or profile already uses this shortcut."
+        case .invalidShortcut: return "This shortcut is not supported. Choose another key combination."
         case .invalidModel: return "Selected model is not supported."
         case .invalidPostProcessingModel: return "Selected post-processing model is not supported."
         case .invalidIcon: return "Invalid icon name."
@@ -56,8 +58,20 @@ enum ProfileValidationError: LocalizedError {
 
 enum ShortcutUtils {
     static let reserved: Set<String> = [
-        "cmd+q", "cmd+w", "cmd+h", "cmd+m"
+        "cmd+q", "cmd+w", "cmd+h", "cmd+m", "fn", "esc", "escape"
     ]
+
+    static func validate(_ shortcut: String?, against others: [String?]) throws {
+        guard let shortcut, !shortcut.isEmpty else { return }
+        let normalized = normalize(shortcut)
+        if reserved.contains(normalized) { throw ProfileValidationError.reservedShortcut }
+        guard let parsed = parse(normalized) else { throw ProfileValidationError.invalidShortcut }
+        if others.compactMap({ $0.flatMap(parse) }).contains(where: {
+            $0.keyCode == parsed.keyCode && $0.modifiers == parsed.modifiers
+        }) {
+            throw ProfileValidationError.duplicateShortcut
+        }
+    }
 
     static func normalize(_ raw: String) -> String {
         let parts = raw.lowercased()

@@ -353,7 +353,6 @@ struct ShortcutsSettingsView: View {
         ForEach(profilesService.profiles) { profile in
           LabeledContent {
             ShortcutRecorderView(shortcut: shortcutBinding(for: profile))
-              .disabled(true)
               .frame(width: 220)
           } label: {
             VStack(alignment: .leading, spacing: 2) {
@@ -374,7 +373,7 @@ struct ShortcutsSettingsView: View {
               }
 
               Text(
-                "Saved shortcut (inactive)"
+                profile.isEnabled ? "Start with this profile; stop recording" : "Enable this profile to use its shortcut"
               )
               .font(.caption)
               .foregroundColor(.secondary)
@@ -393,7 +392,7 @@ struct ShortcutsSettingsView: View {
         }
 
         Text(
-          "Recording uses Fn with the active profile. Previous and next profile shortcuts apply while recording. Legacy profile recording shortcuts remain saved but are inactive."
+          "Press a profile shortcut to select it and start dictation. Press a profile shortcut again to stop. Fn tap and hold controls remain available. Previous and next profile shortcuts apply while recording."
         )
         .font(.caption)
         .foregroundColor(.secondary)
@@ -461,18 +460,10 @@ struct ShortcutsSettingsView: View {
       set: { newValue in
         let normalized = normalizedShortcut(newValue)
 
-        if let normalized, ShortcutUtils.reserved.contains(normalized) {
-          errorMessage = ProfileValidationError.reservedShortcut.localizedDescription
-          return
-        }
-
-        if let normalized,
-          normalized == normalizedShortcut(settings.previousProfileShortcut)
-            || normalized == normalizedShortcut(settings.nextProfileShortcut)
-        {
-          errorMessage = ProfileValidationError.duplicateShortcut.localizedDescription
-          return
-        }
+        guard validateShortcut(normalized, against:
+          profilesService.profiles.map(\.shortcut) + [
+            settings.previousProfileShortcut, settings.nextProfileShortcut
+          ]) else { return }
 
         settings.notesModeShortcut = normalized ?? ""
         GlobalShortcutMonitor.shared.loadNotesModeShortcut(normalized)
@@ -483,15 +474,6 @@ struct ShortcutsSettingsView: View {
 
   private func updateShortcut(_ shortcut: String?, for profileID: String) {
     let normalized = normalizedShortcut(shortcut)
-
-    if let normalized,
-      normalized == normalizedShortcut(settings.notesModeShortcut)
-        || normalized == normalizedShortcut(settings.previousProfileShortcut)
-        || normalized == normalizedShortcut(settings.nextProfileShortcut)
-    {
-      errorMessage = ProfileValidationError.duplicateShortcut.localizedDescription
-      return
-    }
 
     Task { @MainActor in
       guard var profile = profilesService.profiles.first(where: { $0.id == profileID }) else {
@@ -539,17 +521,9 @@ struct ShortcutsSettingsView: View {
         isPrevious ? settings.nextProfileShortcut : settings.previousProfileShortcut
       )
 
-    if let normalized,
-      ShortcutUtils.reserved.contains(normalized)
-        || normalized == normalizedShortcut(settings.notesModeShortcut)
-        || normalized == otherShortcut
-    {
-      errorMessage =
-        ShortcutUtils.reserved.contains(normalized)
-        ? ProfileValidationError.reservedShortcut.localizedDescription
-        : ProfileValidationError.duplicateShortcut.localizedDescription
-      return
-    }
+    guard validateShortcut(normalized, against:
+      profilesService.profiles.map(\.shortcut) + [settings.notesModeShortcut, otherShortcut]
+    ) else { return }
 
     if isPrevious {
       settings.previousProfileShortcut = normalized ?? ""
@@ -562,6 +536,16 @@ struct ShortcutsSettingsView: View {
       next: normalizedShortcut(settings.nextProfileShortcut)
     )
     errorMessage = nil
+  }
+
+  private func validateShortcut(_ shortcut: String?, against others: [String?]) -> Bool {
+    do {
+      try ShortcutUtils.validate(shortcut, against: others)
+      return true
+    } catch {
+      errorMessage = error.localizedDescription
+      return false
+    }
   }
 
   private func normalizedShortcut(_ shortcut: String?) -> String? {

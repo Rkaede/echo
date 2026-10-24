@@ -54,6 +54,20 @@ final class ShortcutCoordinator {
       }
       self.viewModel.handleFnAction(action)
     }
+    shortcutMonitor.onProfileRecordingShortcut = { [weak self] profileID, keyTime in
+      guard let self,
+        self.profilesService.profiles.contains(where: { $0.id == profileID && $0.isEnabled })
+      else { return }
+      let action = self.viewModel.handleProfileRecordingShortcut {
+        self.profilesService.activateProfile(id: profileID)
+        self.overlayController.noteShowRequested(keyTime: keyTime)
+      }
+      switch action {
+      case .start: self.shortcutMonitor.latchFnRecording()
+      case .stop: self.shortcutMonitor.resetFnGesture()
+      default: break
+      }
+    }
     shortcutMonitor.onCancelRecording = { [weak self] in
       self?.handleCancelRecording()
     }
@@ -71,6 +85,14 @@ final class ShortcutCoordinator {
       .sink { [weak self] status in
         self?.updateRecordingStateInGlobalShortcutMonitor(status: status)
         self?.updateRecordingStateInNotesMode(status: status)
+      }
+      .store(in: &cancellables)
+
+    // The publisher immediately supplies existing bindings and republishes after
+    // bootstrap, edits, deletion, enable/disable, and reset to defaults.
+    profilesService.$profiles
+      .sink { [weak self] profiles in
+        self?.shortcutMonitor.loadProfileShortcuts(profiles)
       }
       .store(in: &cancellables)
 

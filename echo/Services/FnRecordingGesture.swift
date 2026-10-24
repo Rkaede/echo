@@ -34,6 +34,12 @@ struct FnRecordingGesture {
   }
 
   mutating func reset() { self = Self() }
+
+  /// A profile shortcut starts a hands-free session that Fn can stop too.
+  mutating func latchRecording() {
+    reset()
+    latched = true
+  }
 }
 
 /// Owns startup until it settles; no subsequent session can inherit pending intent.
@@ -60,7 +66,7 @@ final class FnRecordingCoordinator {
     self.setToggleMode = setToggleMode
   }
 
-  func handle(_ action: FnRecordingGesture.Action) {
+  func handle(_ action: FnRecordingGesture.Action, start startOverride: (() async -> Void)? = nil) {
     switch action {
     case .start:
       guard !starting && !stopping else { return }
@@ -68,8 +74,9 @@ final class FnRecordingCoordinator {
       pendingLatch = false
       pendingStop = false
       pendingCancel = false
+      let startRecording = startOverride ?? start
       Task {
-        await start()
+        await startRecording()
         if pendingLatch { setToggleMode() }
         if pendingCancel { await cancel() }
         else if pendingStop { await stop() }
@@ -90,6 +97,28 @@ final class FnRecordingCoordinator {
           stopping = false
         }
       }
+    }
+  }
+
+  /// Uses the same startup/stop serialization as Fn, including a second press while
+  /// microphone permission or audio startup is still pending.
+  func toggle(status: RecordingStatus, beforeStart: () -> Void,
+              start: @escaping () async -> Void) -> FnRecordingGesture.Action? {
+    guard !stopping else { return nil }
+    if starting {
+      handle(.stop)
+      return .stop
+    }
+    switch status {
+    case .idle, .error, .inserted, .cancelled, .noSpeechDetected:
+      beforeStart()
+      handle(.start, start: start)
+      return .start
+    case .recording:
+      handle(.stop)
+      return .stop
+    case .initiatingRecording, .processing, .postProcessing, .confirmingCancel:
+      return nil
     }
   }
 

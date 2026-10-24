@@ -16,6 +16,7 @@ class GlobalShortcutMonitor {
   private var notesModeShortcut: ShortcutUtils.ParsedShortcut?
   private var previousProfileShortcut: ShortcutUtils.ParsedShortcut?
   private var nextProfileShortcut: ShortcutUtils.ParsedShortcut?
+  private var profileShortcuts: [(id: String, shortcut: ShortcutUtils.ParsedShortcut)] = []
   private var lastEventTimestamp: Date?
   private var eventTapCheckTimer: Timer?
 
@@ -25,9 +26,10 @@ class GlobalShortcutMonitor {
   var onToggleNotesMode: (@MainActor () -> Void)?
   var onActivateNextProfile: (@MainActor () -> Void)?
   var onActivatePreviousProfile: (@MainActor () -> Void)?
+  var onProfileRecordingShortcut: (@MainActor (_ profileID: String, _ keyTime: TimeInterval) -> Void)?
 
-  init() {
-    startMonitoring()
+  init(startMonitoring: Bool = true) {
+    if startMonitoring { self.startMonitoring() }
   }
 
   deinit {
@@ -126,7 +128,7 @@ class GlobalShortcutMonitor {
     MainActor.assumeIsolated { handler() }
   }
 
-  private func handleEvent(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
+  func handleEvent(event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
     lastEventTimestamp = Date()
 
     switch type {
@@ -174,6 +176,10 @@ class GlobalShortcutMonitor {
     fnGesture.reset()
   }
 
+  func latchFnRecording() {
+    fnGesture.latchRecording()
+  }
+
   private func handleKeyDown(event: CGEvent) -> Unmanaged<CGEvent>? {
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags
@@ -215,6 +221,19 @@ class GlobalShortcutMonitor {
         level: .info
       )
       deliver { self.onActivateNextProfile?() }
+      return nil
+    }
+
+    if !isToggleHotkeySuspended,
+      let binding = profileShortcuts.first(where: {
+        shortcutMatches($0.shortcut, keyCode: keyCode, flags: flags)
+      })
+    {
+      // Holding a toggle shortcut must not repeatedly start and stop dictation.
+      if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+        let keyTime = ProcessInfo.processInfo.systemUptime
+        deliver { self.onProfileRecordingShortcut?(binding.id, keyTime) }
+      }
       return nil
     }
 
@@ -311,6 +330,16 @@ class GlobalShortcutMonitor {
     }
     notesModeShortcut = parsed
     log("Loaded notes mode shortcut: \(shortcut)", category: loggerCategory, level: .info)
+  }
+
+  func loadProfileShortcuts(_ profiles: [Profile]) {
+    profileShortcuts = profiles.compactMap { profile in
+      guard profile.isEnabled, let shortcut = profile.shortcut,
+        !ShortcutUtils.reserved.contains(ShortcutUtils.normalize(shortcut)),
+        let parsed = ShortcutUtils.parse(shortcut)
+      else { return nil }
+      return (profile.id, parsed)
+    }
   }
 
   func loadProfileNavigationShortcuts(previous: String?, next: String?) {

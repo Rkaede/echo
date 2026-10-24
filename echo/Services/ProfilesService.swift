@@ -159,7 +159,12 @@ class ProfilesService: ObservableObject {
             throw ProfileValidationError.duplicateTitle
         }
 
-        // Legacy recording shortcuts remain stored, but are no longer registered.
+        try ShortcutUtils.validate(profile.shortcut, against:
+            profiles.filter { $0.id != ignoreId }.map(\.shortcut) + [
+                settings.notesModeShortcut,
+                settings.previousProfileShortcut,
+                settings.nextProfileShortcut
+            ])
 
         // model (basic check against current supported)
         // For now, accept anything; integration can narrow this to Constants.API models

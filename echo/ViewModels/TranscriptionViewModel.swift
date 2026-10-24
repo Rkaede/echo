@@ -28,6 +28,13 @@ class TranscriptionViewModel: ObservableObject {
 
   var canStartFnRecording: Bool { fnCoordinator.canStart }
 
+  func handleProfileRecordingShortcut(activateProfile: () -> Void) -> FnRecordingGesture.Action? {
+    if appState.status == .confirmingCancel { appState.returnFromConfirmation() }
+    return fnCoordinator.toggle(status: appState.status, beforeStart: activateProfile) { [weak self] in
+      await self?.startRecording(mode: .toggle)
+    }
+  }
+
   init(appState: AppState, settingsManager: SettingsManager, transcriptionService: TranscriptionService? = nil) {
     self.appState = appState
     self.settingsManager = settingsManager
