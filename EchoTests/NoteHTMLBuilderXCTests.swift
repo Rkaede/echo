@@ -97,6 +97,40 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertEqual(parsed["transcript"], "Sneaky </script> content")
   }
 
+  func testRenderIncludesCopyHTMLButtonAndRichPayload() throws {
+    let entries = [
+      NoteEntry(timestamp: Date(), text: "Line one\nLine <two>", screenshotFileName: "shot.png"),
+      NoteEntry(timestamp: Date(), text: "Second", screenshotFileName: nil),
+    ]
+    let html = render(entries: entries, cleanedText: "Para one\n\nPara two")
+    let payload = try copyPayload(html)
+
+    XCTAssertTrue(html.contains("id=\"copy-html\""))
+    XCTAssertTrue(html.contains(">Copy HTML</button>"))
+    XCTAssertTrue(html.contains("ClipboardItem"))
+
+    let noteHTML = try XCTUnwrap(payload["noteHTML"])
+    XCTAssertTrue(noteHTML.contains("<h2>Keep Notes Controls Visible While Recording</h2>"))
+    XCTAssertTrue(noteHTML.contains("<p>Line one<br>Line &lt;two&gt;</p>"))
+    XCTAssertTrue(noteHTML.contains("<p>Second</p>"))
+    XCTAssertFalse(noteHTML.contains("<img"))
+    XCTAssertEqual(noteHTML.components(separatedBy: "<h3>").count - 1, 2)
+
+    XCTAssertEqual(
+      payload["transcriptHTML"],
+      "<p>Line one<br>Line &lt;two&gt;</p>\n<p>Second</p>"
+    )
+    XCTAssertEqual(payload["cleanedHTML"], "<p>Para one</p>\n<p>Para two</p>")
+  }
+
+  func testCopyHTMLPayloadOmitsCleanedWhenUnavailable() throws {
+    let entries = [NoteEntry(timestamp: Date(), text: "Raw", screenshotFileName: nil)]
+    let payload = try copyPayload(render(entries: entries, cleanedText: nil))
+
+    XCTAssertNil(payload["cleanedHTML"])
+    XCTAssertNotNil(payload["noteHTML"])
+  }
+
   func testPlainTranscriptJoinsEntriesWithBlankLines() {
     let entries = [
       NoteEntry(timestamp: Date(), text: "First", screenshotFileName: "screenshot-1.png"),

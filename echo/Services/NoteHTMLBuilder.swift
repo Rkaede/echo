@@ -13,7 +13,8 @@ struct NoteEntry: Identifiable {
 /// companion file. Screenshots are referenced relatively from an `images/` folder
 /// next to the exported files. The HTML offers three views of the note — the full
 /// note with screenshots, the plain transcript, and an LLM-cleaned version — each
-/// copyable to the clipboard, along with a change title and the markdown file's path.
+/// copyable to the clipboard (as text or as rich HTML for pasting into email and chat
+/// apps), along with a change title and the markdown file's path.
 enum NoteHTMLBuilder {
   /// All transcriptions joined into a single plain-text transcript.
   static func plainTranscript(entries: [NoteEntry]) -> String {
@@ -97,6 +98,7 @@ enum NoteHTMLBuilder {
 
     let copyData = copyDataJSON(
       noteMarkdown: renderMarkdown(entries: entries, startedAt: startedAt),
+      noteHTML: renderClipboardHTML(entries: entries, startedAt: startedAt, title: title),
       transcript: transcript,
       cleaned: cleanedText,
       markdownReference: "\(title)\n\(markdownFilePath)"
@@ -240,6 +242,7 @@ enum NoteHTMLBuilder {
             </div>
             <div class="toolbar-actions">
               <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
+              <button class="action-btn" id="copy-html" title="Copy the current view as formatted text to paste into email or chat apps such as Gmail, Teams, and Slack">Copy HTML</button>
               <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
             </div>
           </div>
@@ -310,6 +313,44 @@ enum NoteHTMLBuilder {
             }
           });
 
+          async function copyRichText(html, plain, button) {
+            try {
+              await navigator.clipboard.write([
+                new ClipboardItem({
+                  'text/html': new Blob([html], { type: 'text/html' }),
+                  'text/plain': new Blob([plain], { type: 'text/plain' }),
+                }),
+              ]);
+              flash(button, 'Copied!');
+            } catch (error) {
+              // Fall back to copying a rendered selection, which carries text/html too.
+              const holder = document.createElement('div');
+              holder.innerHTML = html;
+              holder.style.position = 'fixed';
+              holder.style.opacity = '0';
+              document.body.appendChild(holder);
+              const range = document.createRange();
+              range.selectNodeContents(holder);
+              const selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+              const ok = document.execCommand('copy');
+              selection.removeAllRanges();
+              document.body.removeChild(holder);
+              flash(button, ok ? 'Copied!' : 'Copy failed');
+            }
+          }
+
+          document.getElementById('copy-html').addEventListener('click', (event) => {
+            const button = event.currentTarget;
+            const html = copyData[currentView + 'HTML'];
+            if (html) {
+              copyRichText(html, copyData[currentView === 'note' ? 'transcript' : currentView], button);
+            } else {
+              flash(button, 'Nothing to copy');
+            }
+          });
+
           document.getElementById('copy-md-path').addEventListener('click', (event) => {
             copyText(copyData.markdownReference, event.currentTarget);
           });
@@ -327,22 +368,54 @@ enum NoteHTMLBuilder {
       .replacingOccurrences(of: "\"", with: "&quot;")
   }
 
+  /// A paragraph of rich-text-safe HTML. Email and chat editors (Gmail, Teams, Slack)
+  /// drop `<style>` blocks and relative resources, so the markup is plain and unstyled.
+  private static func paragraphHTML(_ text: String) -> String {
+    "<p>\(escape(text).replacingOccurrences(of: "\n", with: "<br>"))</p>"
+  }
+
+  /// The note as a paste-friendly HTML fragment: a heading per entry followed by its
+  /// text. Screenshots are left out because they only exist as local files.
+  static func renderClipboardHTML(entries: [NoteEntry], startedAt: Date, title: String) -> String {
+    let timeFormatter = DateFormatter()
+    timeFormatter.dateFormat = "h:mm:ss a"
+
+    var parts = ["<h2>\(escape(title))</h2>"]
+    for entry in entries {
+      parts.append("<h3>\(escape(timeFormatter.string(from: entry.timestamp)))</h3>")
+      parts.append(paragraphHTML(entry.text))
+    }
+    return parts.joined(separator: "\n")
+  }
+
+  /// A paste-friendly HTML fragment for free text such as the transcript or cleaned note.
+  static func renderClipboardHTML(text: String) -> String {
+    text.components(separatedBy: "\n\n")
+      .map(paragraphHTML)
+      .joined(separator: "\n")
+  }
+
   /// JSON payload the page's copy buttons read from. The "note" view copies the
   /// markdown representation since it is the closest text equivalent of the note.
+  /// The `*HTML` entries feed the Copy HTML button, which puts rich text on the clipboard.
   /// `<` is escaped so note content can never terminate the embedding script tag.
   private static func copyDataJSON(
     noteMarkdown: String,
+    noteHTML: String,
     transcript: String,
     cleaned: String?,
     markdownReference: String
   ) -> String {
     var payload: [String: String] = [
       "note": noteMarkdown,
+      "noteHTML": noteHTML,
       "transcript": transcript,
+      "transcriptHTML": renderClipboardHTML(text: transcript),
       "markdownReference": markdownReference,
     ]
     if let cleaned {
       payload["cleaned"] = cleaned
+      payload["cleanedHTML"] = renderClipboardHTML(text: cleaned)
     }
     guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     else {
