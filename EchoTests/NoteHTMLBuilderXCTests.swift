@@ -7,14 +7,16 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     entries: [NoteEntry],
     cleanedText: String? = "Cleaned version",
     markdownFilePath: String = "/tmp/echo/notes/note-test/note.md",
-    changeTitle: String? = "Keep Notes Controls Visible While Recording"
+    changeTitle: String? = "Keep Notes Controls Visible While Recording",
+    screenshots: [String: Data] = [:]
   ) -> String {
     NoteHTMLBuilder.render(
       entries: entries,
       startedAt: Date(),
       cleanedText: cleanedText,
       markdownFilePath: markdownFilePath,
-      changeTitle: changeTitle
+      changeTitle: changeTitle,
+      screenshots: screenshots
     )
   }
 
@@ -102,7 +104,12 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
       NoteEntry(timestamp: Date(), text: "Line one\nLine <two>", screenshotFileName: "shot.png"),
       NoteEntry(timestamp: Date(), text: "Second", screenshotFileName: nil),
     ]
-    let html = render(entries: entries, cleanedText: "Para one\n\nPara two")
+    let image = try XCTUnwrap(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    let html = render(
+      entries: entries, cleanedText: "Para one\n\nPara two", screenshots: ["shot.png": image]
+    )
     let payload = try copyPayload(html)
 
     XCTAssertTrue(html.contains("id=\"copy-html\""))
@@ -113,7 +120,9 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertTrue(noteHTML.contains("<h2>Keep Notes Controls Visible While Recording</h2>"))
     XCTAssertTrue(noteHTML.contains("<p>Line one<br>Line &lt;two&gt;</p>"))
     XCTAssertTrue(noteHTML.contains("<p>Second</p>"))
-    XCTAssertFalse(noteHTML.contains("<img"))
+    XCTAssertTrue(noteHTML.contains("<img src=\"data:image/png;base64,\(image.base64EncodedString())\""))
+    XCTAssertFalse(noteHTML.contains("images/"))
+    XCTAssertFalse(noteHTML.contains("file:"))
     XCTAssertEqual(noteHTML.components(separatedBy: "<h3>").count - 1, 2)
 
     XCTAssertEqual(
@@ -121,6 +130,53 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
       "<p>Line one<br>Line &lt;two&gt;</p>\n<p>Second</p>"
     )
     XCTAssertEqual(payload["cleanedHTML"], "<p>Para one</p>\n<p>Para two</p>")
+  }
+
+  func testClipboardScreenshotsKeepTheirBytesAndEntryOrder() throws {
+    let first = try XCTUnwrap(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    let second = try XCTUnwrap(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC"
+    ))
+    let entries = [
+      NoteEntry(timestamp: Date(), text: "First <entry>", screenshotFileName: "first & shot.png"),
+      NoteEntry(timestamp: Date(), text: "Text only", screenshotFileName: nil),
+      NoteEntry(timestamp: Date(), text: "Last entry", screenshotFileName: "last.png"),
+    ]
+    let payload = try copyPayload(render(
+      entries: entries, screenshots: ["first & shot.png": first, "last.png": second]
+    ))
+    let html = try XCTUnwrap(payload["noteHTML"])
+    let sections = html.components(separatedBy: "<h3>")
+    XCTAssertEqual(sections.count, 4)
+    XCTAssertTrue(sections[1].contains("First &lt;entry&gt;</p>\n<p><img"))
+    XCTAssertFalse(sections[2].contains("<img"))
+    XCTAssertTrue(sections[3].contains("Last entry</p>\n<p><img"))
+    let images = html.components(separatedBy: "data:image/png;base64,").dropFirst()
+      .map { String($0.prefix(while: { $0 != "\"" })) }
+    XCTAssertEqual(images.compactMap { Data(base64Encoded: $0) }, [first, second])
+    XCTAssertFalse(html.contains("first & shot.png"))
+    XCTAssertFalse(html.contains("last.png"))
+    XCTAssertFalse(html.contains("images/"))
+    XCTAssertFalse(try XCTUnwrap(payload["transcriptHTML"]).contains("<img"))
+    XCTAssertFalse(try XCTUnwrap(payload["cleanedHTML"]).contains("<img"))
+  }
+
+  func testUnavailableScreenshotIsExplicitWithoutDroppingEntries() throws {
+    let entries = [
+      NoteEntry(timestamp: Date(), text: "Missing image", screenshotFileName: "missing.png"),
+      NoteEntry(timestamp: Date(), text: "Empty image", screenshotFileName: "empty.png"),
+      NoteEntry(timestamp: Date(), text: "No screenshot", screenshotFileName: nil),
+    ]
+    let html = try XCTUnwrap(copyPayload(render(
+      entries: entries, screenshots: ["empty.png": Data()]
+    ))["noteHTML"])
+    XCTAssertEqual(html.components(separatedBy: "Screenshot unavailable").count - 1, 2)
+    XCTAssertEqual(html.components(separatedBy: "<h3>").count - 1, 3)
+    XCTAssertTrue(html.contains("<p>No screenshot</p>"))
+    XCTAssertFalse(html.contains("<img"))
+    XCTAssertFalse(html.contains("images/"))
   }
 
   func testCopyHTMLPayloadOmitsCleanedWhenUnavailable() throws {

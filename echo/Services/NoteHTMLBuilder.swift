@@ -49,7 +49,8 @@ enum NoteHTMLBuilder {
     startedAt: Date,
     cleanedText: String?,
     markdownFilePath: String,
-    changeTitle: String?
+    changeTitle: String?,
+    screenshots: [String: Data] = [:]
   ) -> String {
     let titleFormatter = DateFormatter()
     titleFormatter.dateStyle = .full
@@ -98,7 +99,9 @@ enum NoteHTMLBuilder {
 
     let copyData = copyDataJSON(
       noteMarkdown: renderMarkdown(entries: entries, startedAt: startedAt),
-      noteHTML: renderClipboardHTML(entries: entries, startedAt: startedAt, title: title),
+      noteHTML: renderClipboardHTML(
+        entries: entries, startedAt: startedAt, title: title, screenshots: screenshots
+      ),
       transcript: transcript,
       cleaned: cleanedText,
       markdownReference: "\(title)\n\(markdownFilePath)"
@@ -242,7 +245,7 @@ enum NoteHTMLBuilder {
             </div>
             <div class="toolbar-actions">
               <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
-              <button class="action-btn" id="copy-html" title="Copy the current view as formatted text to paste into email or chat apps such as Gmail, Teams, and Slack">Copy HTML</button>
+              <button class="action-btn" id="copy-html" title="Copy formatted text and, in Note view, screenshots to paste into email or chat apps">Copy HTML</button>
               <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
             </div>
           </div>
@@ -263,6 +266,23 @@ enum NoteHTMLBuilder {
         <script>
           const copyData = JSON.parse(document.getElementById('copy-data').textContent);
           let currentView = 'note';
+
+          // Preload embedded PNGs before the click so selection copying stays inside
+          // the user gesture. Safari packages the loaded resources in a WebArchive:
+          // https://webkit.org/blog/8170/clipboard-api-improvements/
+          const noteCopySource = document.createElement('div');
+          noteCopySource.innerHTML = copyData.noteHTML;
+          noteCopySource.setAttribute('aria-hidden', 'true');
+          noteCopySource.style.cssText = 'position:absolute;left:-10000px;top:0;width:760px';
+          document.body.appendChild(noteCopySource);
+          const noteCopyImages = Array.from(noteCopySource.querySelectorAll('img'));
+          let noteImagesReady = noteCopyImages.length === 0;
+          let noteImagesFailed = false;
+          Promise.all(noteCopyImages.map((image) => image.decode())).then(() => {
+            noteImagesReady = true;
+          }).catch(() => {
+            noteImagesFailed = true;
+          });
 
           document.querySelectorAll('.seg-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -313,7 +333,31 @@ enum NoteHTMLBuilder {
             }
           });
 
-          async function copyRichText(html, plain, button) {
+          function copySelection(holder) {
+            const selection = window.getSelection();
+            const previousRanges = Array.from({ length: selection.rangeCount }, (_, i) =>
+              selection.getRangeAt(i).cloneRange());
+            try {
+              const range = document.createRange();
+              range.selectNodeContents(holder);
+              selection.removeAllRanges();
+              selection.addRange(range);
+              return document.execCommand('copy');
+            } catch (error) {
+              return false;
+            } finally {
+              selection.removeAllRanges();
+              previousRanges.forEach((range) => selection.addRange(range));
+            }
+          }
+
+          async function copyRichText(html, plain, button, imageSource) {
+            // Let the browser include image resources alongside the formatted text,
+            // rather than copying local paths or separate, unordered image items.
+            if (imageSource && copySelection(imageSource)) {
+              flash(button, 'Copied!');
+              return;
+            }
             try {
               await navigator.clipboard.write([
                 new ClipboardItem({
@@ -324,19 +368,14 @@ enum NoteHTMLBuilder {
               flash(button, 'Copied!');
             } catch (error) {
               // Fall back to copying a rendered selection, which carries text/html too.
-              const holder = document.createElement('div');
-              holder.innerHTML = html;
-              holder.style.position = 'fixed';
-              holder.style.opacity = '0';
-              document.body.appendChild(holder);
-              const range = document.createRange();
-              range.selectNodeContents(holder);
-              const selection = window.getSelection();
-              selection.removeAllRanges();
-              selection.addRange(range);
-              const ok = document.execCommand('copy');
-              selection.removeAllRanges();
-              document.body.removeChild(holder);
+              const holder = imageSource || document.createElement('div');
+              if (!imageSource) {
+                holder.innerHTML = html;
+                holder.style.cssText = 'position:absolute;left:-10000px;top:0;width:760px';
+                document.body.appendChild(holder);
+              }
+              const ok = copySelection(holder);
+              if (!imageSource) holder.remove();
               flash(button, ok ? 'Copied!' : 'Copy failed');
             }
           }
@@ -344,8 +383,13 @@ enum NoteHTMLBuilder {
           document.getElementById('copy-html').addEventListener('click', (event) => {
             const button = event.currentTarget;
             const html = copyData[currentView + 'HTML'];
+            const imageSource = currentView === 'note' && noteCopyImages.length ? noteCopySource : null;
+            if (imageSource && !noteImagesReady) {
+              flash(button, noteImagesFailed ? 'Image unavailable' : 'Images loading');
+              return;
+            }
             if (html) {
-              copyRichText(html, copyData[currentView === 'note' ? 'transcript' : currentView], button);
+              copyRichText(html, copyData[currentView === 'note' ? 'transcript' : currentView], button, imageSource);
             } else {
               flash(button, 'Nothing to copy');
             }
@@ -375,8 +419,11 @@ enum NoteHTMLBuilder {
   }
 
   /// The note as a paste-friendly HTML fragment: a heading per entry followed by its
-  /// text. Screenshots are left out because they only exist as local files.
-  static func renderClipboardHTML(entries: [NoteEntry], startedAt: Date, title: String) -> String {
+  /// text and embedded PNG. Data URLs carry the bytes across the clipboard without
+  /// requiring the destination to read the export's local images directory.
+  static func renderClipboardHTML(
+    entries: [NoteEntry], startedAt: Date, title: String, screenshots: [String: Data] = [:]
+  ) -> String {
     let timeFormatter = DateFormatter()
     timeFormatter.dateFormat = "h:mm:ss a"
 
@@ -384,6 +431,16 @@ enum NoteHTMLBuilder {
     for entry in entries {
       parts.append("<h3>\(escape(timeFormatter.string(from: entry.timestamp)))</h3>")
       parts.append(paragraphHTML(entry.text))
+      if let fileName = entry.screenshotFileName {
+        if let data = screenshots[fileName], !data.isEmpty {
+          parts.append(
+            "<p><img src=\"data:image/png;base64,\(data.base64EncodedString())\" "
+              + "alt=\"Screenshot\" style=\"max-width:100%;height:auto\"></p>"
+          )
+        } else {
+          parts.append("<p><em>Screenshot unavailable</em></p>")
+        }
+      }
     }
     return parts.joined(separator: "\n")
   }

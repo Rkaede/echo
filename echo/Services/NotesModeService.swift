@@ -174,13 +174,29 @@ final class NotesModeService: ObservableObject {
 
     let markdownURL = directory.appendingPathComponent("note.md")
     let htmlURL = directory.appendingPathComponent("note.html")
+    // Use this export's directory: another notes session may already be active.
+    var screenshots: [String: Data] = [:]
+    for fileName in Set(entries.compactMap(\.screenshotFileName)) {
+      do {
+        screenshots[fileName] = try Data(
+          contentsOf: directory.appendingPathComponent("images").appendingPathComponent(fileName)
+        )
+      } catch {
+        log(
+          "Could not embed note screenshot \(fileName): \(error)",
+          category: loggerCategory,
+          level: .warning
+        )
+      }
+    }
     let markdown = NoteHTMLBuilder.renderMarkdown(entries: entries, startedAt: startedAt)
     let html = NoteHTMLBuilder.render(
       entries: entries,
       startedAt: startedAt,
       cleanedText: cleanedText,
       markdownFilePath: markdownURL.path,
-      changeTitle: changeTitle
+      changeTitle: changeTitle,
+      screenshots: screenshots
     )
 
     do {

@@ -190,6 +190,40 @@ struct NotesModeServiceTests {
     #expect(fixture.openedDocuments.isEmpty)
   }
 
+  @Test func exportEmbedsScreenshotsFromItsOwnSessionBeforeOpening() async throws {
+    let image = try #require(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    let fixture = try Fixture(screenshotData: image)
+    defer { fixture.cleanUp() }
+    fixture.service.start()
+    await fixture.service.captureScreenshotForNextEntry()
+    fixture.service.addTranscription("First screenshot")
+    await fixture.service.captureScreenshotForNextEntry()
+    fixture.service.addTranscription("Second screenshot")
+    let export = try #require(fixture.service.stop())
+    fixture.service.start()
+    await export.value
+
+    let htmlURL = try #require(fixture.openedDocuments.first)
+    // The copied fragment must remain usable after the export's images are removed.
+    try FileManager.default.removeItem(
+      at: htmlURL.deletingLastPathComponent().appendingPathComponent("images")
+    )
+    let html = try String(contentsOf: htmlURL, encoding: .utf8)
+    let json = try #require(
+      html.components(separatedBy: "id=\"copy-data\" type=\"application/json\">").last
+    ).components(separatedBy: "</script>")[0]
+    let payload = try #require(
+      JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String]
+    )
+    let noteHTML = try #require(payload["noteHTML"])
+    #expect(noteHTML.components(separatedBy: "data:image/png;base64,\(image.base64EncodedString())").count - 1 == 2)
+    #expect(!noteHTML.contains("images/"))
+    #expect(!noteHTML.contains("Screenshot unavailable"))
+    #expect(fixture.service.isActive)
+  }
+
   @Test func exportRemainsIsolatedWhenAnotherSessionStarts() async throws {
     let fixture = try Fixture()
     defer { fixture.cleanUp() }
@@ -228,7 +262,8 @@ struct NotesModeServiceTests {
       screenshotsAvailable: Bool = true,
       title: String = "Keep Notes Controls Visible",
       titleFails: Bool = false,
-      cleanupFails: Bool = false
+      cleanupFails: Bool = false,
+      screenshotData: Data? = nil
     ) throws {
       directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("notes-drawing-tests-\(UUID().uuidString)", isDirectory: true)
@@ -237,8 +272,16 @@ struct NotesModeServiceTests {
         annotationOverlay: overlay,
         requestScreenshotPermission: { screenshotsAvailable },
         sessionRootDirectory: directory,
-        captureScreenshot: { [unowned self] _, annotation in
+        captureScreenshot: { [unowned self] url, annotation in
           captures.append(annotation)
+          if let screenshotData {
+            do {
+              try screenshotData.write(to: url)
+              return true
+            } catch {
+              return false
+            }
+          }
           return false
         },
         processText: { [unowned self] text, prompt, model in
