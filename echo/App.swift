@@ -82,9 +82,7 @@ struct EchoApp: App {
 
       Divider()
 
-      Button(notesModeService.isActive ? "Stop Notes Mode" : "Start Notes Mode") {
-        notesModeService.toggle()
-      }
+      notesModeMenuItem
 
       Divider()
 
@@ -108,6 +106,22 @@ struct EchoApp: App {
       }
       .keyboardShortcut("q", modifiers: .command)
     }
+  }
+
+  // The global shortcut is handled by GlobalShortcutMonitor; this only shows it in the menu.
+  // Keys SwiftUI cannot display natively (function keys) are appended to the title instead.
+  private var notesModeMenuItem: some View {
+    let title = notesModeService.isActive ? "Stop Notes Mode" : "Start Notes Mode"
+    let shortcut = settings.notesModeShortcut
+    let menuShortcut = ShortcutUtils.menuShortcut(for: shortcut)
+    let needsTitleHint = !shortcut.isEmpty && menuShortcut == nil
+    let label =
+      needsTitleHint ? "\(title)  \(ShortcutRecorderView.displayText(for: shortcut))" : title
+
+    return Button(label) {
+      notesModeService.toggle()
+    }
+    .keyboardShortcut(menuShortcut)
   }
 
   #if DEBUG
