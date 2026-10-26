@@ -37,7 +37,9 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertTrue(html.contains("First &lt;note&gt;"))
     XCTAssertTrue(html.contains("Second note"))
     XCTAssertTrue(html.contains("images/screenshot-1.png"))
-    XCTAssertTrue(html.contains("2 entries"))
+    XCTAssertFalse(html.contains("2 entries"))
+    XCTAssertFalse(html.contains("entry-time"))
+    XCTAssertTrue(html.contains(".entry:last-child { border-bottom: 0; }"))
 
     let noteView = html.components(separatedBy: "id=\"view-note\"")[1]
       .components(separatedBy: "id=\"view-transcript\"")[0]
@@ -45,11 +47,12 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertEqual(html.components(separatedBy: "<img").count - 1, 1)
   }
 
-  func testRenderSingleEntryUsesSingularLabel() {
+  func testRenderOmitsEntryCount() {
     let entries = [NoteEntry(timestamp: Date(), text: "Only one", screenshotFileName: nil)]
     let html = render(entries: entries)
 
-    XCTAssertTrue(html.contains("1 entry"))
+    XCTAssertFalse(html.contains("1 entry"))
+    XCTAssertFalse(html.contains("entries</div>"))
   }
 
   func testRenderIncludesFormatTabsAndCopyControls() {
@@ -123,7 +126,8 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertTrue(noteHTML.contains("<img src=\"data:image/png;base64,\(image.base64EncodedString())\""))
     XCTAssertFalse(noteHTML.contains("images/"))
     XCTAssertFalse(noteHTML.contains("file:"))
-    XCTAssertEqual(noteHTML.components(separatedBy: "<h3>").count - 1, 2)
+    XCTAssertFalse(noteHTML.contains("<h3>"))
+    XCTAssertEqual(noteHTML.components(separatedBy: "<h2>").count - 1, 1)
 
     XCTAssertEqual(
       payload["transcriptHTML"],
@@ -148,11 +152,12 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
       entries: entries, screenshots: ["first & shot.png": first, "last.png": second]
     ))
     let html = try XCTUnwrap(payload["noteHTML"])
-    let sections = html.components(separatedBy: "<h3>")
-    XCTAssertEqual(sections.count, 4)
-    XCTAssertTrue(sections[1].contains("First &lt;entry&gt;</p>\n<p><img"))
-    XCTAssertFalse(sections[2].contains("<img"))
-    XCTAssertTrue(sections[3].contains("Last entry</p>\n<p><img"))
+    XCTAssertFalse(html.contains("<h3>"))
+    let sections = html.components(separatedBy: "Text only</p>")
+    XCTAssertEqual(sections.count, 2)
+    XCTAssertTrue(sections[0].contains("First &lt;entry&gt;</p>\n<p><img"))
+    XCTAssertFalse(try XCTUnwrap(sections[1].components(separatedBy: "Last entry").first).contains("<img"))
+    XCTAssertTrue(sections[1].contains("Last entry</p>\n<p><img"))
     let images = html.components(separatedBy: "data:image/png;base64,").dropFirst()
       .map { String($0.prefix(while: { $0 != "\"" })) }
     XCTAssertEqual(images.compactMap { Data(base64Encoded: $0) }, [first, second])
@@ -173,10 +178,50 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
       entries: entries, screenshots: ["empty.png": Data()]
     ))["noteHTML"])
     XCTAssertEqual(html.components(separatedBy: "Screenshot unavailable").count - 1, 2)
-    XCTAssertEqual(html.components(separatedBy: "<h3>").count - 1, 3)
+    XCTAssertFalse(html.contains("<h3>"))
     XCTAssertTrue(html.contains("<p>No screenshot</p>"))
     XCTAssertFalse(html.contains("<img"))
     XCTAssertFalse(html.contains("images/"))
+  }
+
+  func testCopySourceIsIsolatedFromThemedPageStyles() throws {
+    let entries = [NoteEntry(timestamp: Date(), text: "Hi", screenshotFileName: "a.png")]
+    let html = render(entries: entries)
+
+    let rule = try XCTUnwrap(
+      html.components(separatedBy: ".copy-source {")[1].components(separatedBy: "}")[0]
+    )
+    XCTAssertTrue(rule.contains("all: initial;"))
+    XCTAssertTrue(rule.contains("color-scheme: light;"))
+    XCTAssertTrue(rule.contains("background: transparent;"))
+    XCTAssertFalse(rule.contains("var(--"))
+
+    // Selection copying and the clipboard fallback share one neutral source builder.
+    XCTAssertEqual(html.components(separatedBy: "function createCopySource(").count - 1, 1)
+    XCTAssertTrue(html.contains("createCopySource(copyData.noteHTML)"))
+    XCTAssertTrue(html.contains("imageSource || createCopySource(html)"))
+    XCTAssertFalse(html.contains("holder.style.cssText"))
+
+    // `inert` makes the source unselectable, so the copy silently succeeds with nothing.
+    XCTAssertFalse(html.contains("inert"))
+    XCTAssertTrue(html.contains("if (selection.isCollapsed) return false;"))
+    XCTAssertFalse(html.contains("Created with Echo notes mode"))
+  }
+
+  func testClipboardHTMLCarriesNoThemeStyling() throws {
+    let image = try XCTUnwrap(Data(base64Encoded:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    let entries = [NoteEntry(timestamp: Date(), text: "Hi", screenshotFileName: "a.png")]
+    let payload = try copyPayload(render(entries: entries, screenshots: ["a.png": image]))
+
+    for key in ["noteHTML", "transcriptHTML", "cleanedHTML"] {
+      let html = try XCTUnwrap(payload[key])
+      XCTAssertFalse(html.contains("background"), key)
+      XCTAssertFalse(html.contains("color"), key)
+      XCTAssertFalse(html.contains("class="), key)
+      XCTAssertFalse(html.contains("<style"), key)
+    }
   }
 
   func testCopyHTMLPayloadOmitsCleanedWhenUnavailable() throws {
@@ -233,7 +278,7 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     )
   }
 
-  func testRenderMarkdownIncludesEntriesAndImages() {
+  func testRenderMarkdownIncludesEntriesAndImages() throws {
     let entries = [
       NoteEntry(timestamp: Date(), text: "First note", screenshotFileName: "screenshot-1.png"),
       NoteEntry(timestamp: Date(), text: "Second note", screenshotFileName: nil),
@@ -244,7 +289,11 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertTrue(markdown.contains("First note"))
     XCTAssertTrue(markdown.contains("Second note"))
     XCTAssertTrue(markdown.contains("![Screenshot](images/screenshot-1.png)"))
-    XCTAssertEqual(markdown.components(separatedBy: "\n## ").count - 1, 2)
+    XCTAssertFalse(markdown.contains("\n## "))
+    let first = try XCTUnwrap(markdown.range(of: "First note"))
+    let image = try XCTUnwrap(markdown.range(of: "![Screenshot]"))
+    let second = try XCTUnwrap(markdown.range(of: "Second note"))
+    XCTAssertTrue(first.upperBound <= image.lowerBound && image.upperBound <= second.lowerBound)
     XCTAssertEqual(markdown.components(separatedBy: "![Screenshot]").count - 1, 1)
   }
 }

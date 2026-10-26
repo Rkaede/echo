@@ -21,19 +21,14 @@ enum NoteHTMLBuilder {
     entries.map(\.text).joined(separator: "\n\n")
   }
 
-  /// The note as markdown: timestamped sections with embedded screenshot images.
+  /// The note as markdown: each entry's text followed by its embedded screenshot image.
   static func renderMarkdown(entries: [NoteEntry], startedAt: Date) -> String {
     let titleFormatter = DateFormatter()
     titleFormatter.dateStyle = .full
     titleFormatter.timeStyle = .short
 
-    let timeFormatter = DateFormatter()
-    timeFormatter.dateFormat = "h:mm:ss a"
-
     var lines = ["# Echo Note — \(titleFormatter.string(from: startedAt))", ""]
     for entry in entries {
-      lines.append("## \(timeFormatter.string(from: entry.timestamp))")
-      lines.append("")
       lines.append(entry.text)
       lines.append("")
       if let fileName = entry.screenshotFileName {
@@ -57,13 +52,9 @@ enum NoteHTMLBuilder {
     titleFormatter.timeStyle = .short
     let title = changeTitle ?? "Echo Note — \(titleFormatter.string(from: startedAt))"
 
-    let timeFormatter = DateFormatter()
-    timeFormatter.dateFormat = "h:mm:ss a"
-
     let entriesHTML = entries.map { entry -> String in
       var block = """
             <article class="entry">
-              <div class="entry-time">\(escape(timeFormatter.string(from: entry.timestamp)))</div>
               <p class="entry-text">\(escape(entry.text))</p>
         """
       if let fileName = entry.screenshotFileName,
@@ -71,7 +62,7 @@ enum NoteHTMLBuilder {
       {
         block += """
 
-              <a href="images/\(encoded)" target="_blank">
+              <a class="shot" href="images/\(encoded)" target="_blank">
                 <img class="entry-screenshot" src="images/\(encoded)" alt="Screenshot" loading="lazy">
               </a>
           """
@@ -114,140 +105,147 @@ enum NoteHTMLBuilder {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Echo Note — \(escape(titleFormatter.string(from: startedAt)))</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500&display=swap">
         <style>
+          /* One reading column: copy buttons, title, then entries separated by hairlines.
+             Only class selectors are used so nothing here can reach the hidden copy source. */
           :root {
             color-scheme: light dark;
-            --bg: #f5f5f7;
-            --card-bg: #ffffff;
-            --text: #1d1d1f;
-            --muted: #6e6e73;
-            --accent: #0071e3;
-            --border: rgba(0, 0, 0, 0.08);
+            --bg: #ffffff;
+            --ink: #15171c;
+            --muted: #646975;
+            --line: #e7e8ec;
+            --wash: #f6f7f9;
+            --focus: #2f5bd3;
+            --display: "Newsreader", Georgia, "Times New Roman", serif;
+            --text: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
           }
           @media (prefers-color-scheme: dark) {
             :root {
-              --bg: #161617;
-              --card-bg: #1f1f21;
-              --text: #f5f5f7;
-              --muted: #a1a1a6;
-              --accent: #2997ff;
-              --border: rgba(255, 255, 255, 0.1);
+              --bg: #111214;
+              --ink: #ececef;
+              --muted: #9ea2ad;
+              --line: #26282e;
+              --wash: #1a1b1f;
+              --focus: #7a9bff;
             }
           }
-          * { box-sizing: border-box; }
+          .page, .page * { box-sizing: border-box; }
+          html, body { background: var(--bg); color: var(--ink); }
           body {
             margin: 0;
-            padding: 48px 24px 96px;
-            background: var(--bg);
-            color: var(--text);
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-            line-height: 1.55;
+            font-family: var(--text);
+            font-size: 17px;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
           }
-          main { max-width: 760px; margin: 0 auto; }
-          header { margin-bottom: 24px; }
-          header h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -0.02em; }
-          header .change-title { font-size: 1.1rem; font-weight: 600; margin: 8px 0 4px; overflow-wrap: anywhere; }
-          header .subtitle { color: var(--muted); font-size: 0.95rem; }
-          .toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 24px;
-          }
-          .segmented {
-            display: inline-flex;
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 3px;
-            gap: 2px;
-          }
-          .seg-btn {
-            border: none;
-            background: transparent;
-            color: var(--muted);
-            font: inherit;
-            font-size: 0.9rem;
-            padding: 5px 14px;
-            border-radius: 7px;
-            cursor: pointer;
-          }
-          .seg-btn.active {
-            background: var(--accent);
-            color: #ffffff;
-          }
-          .toolbar-actions { display: inline-flex; gap: 8px; }
+          .page { max-width: 760px; margin: 0 auto; padding: 32px 20px 96px; }
+          .bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
           .action-btn {
-            border: 1px solid var(--border);
-            background: var(--card-bg);
-            color: var(--accent);
-            font: inherit;
-            font-size: 0.9rem;
-            padding: 6px 14px;
-            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font: 500 13px/1 var(--text);
+            color: var(--ink);
+            background: var(--bg);
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+          }
+          .action-btn::before {
+            content: "";
+            width: 14px;
+            height: 14px;
+            flex: none;
+            background: var(--muted);
+            -webkit-mask: var(--copy-icon) center / contain no-repeat;
+            mask: var(--copy-icon) center / contain no-repeat;
+            --copy-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4'%3E%3Crect x='5.5' y='5.5' width='8' height='8' rx='1.5'/%3E%3Cpath d='M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5'/%3E%3C/svg%3E");
+          }
+          .action-btn:hover { background: var(--wash); }
+          .action-btn:disabled { cursor: default; }
+          .action-btn:disabled::before { background: var(--focus); }
+          .action-btn:focus-visible, .seg-btn:focus-visible, .shot:focus-visible {
+            outline: 2px solid var(--focus);
+            outline-offset: 2px;
+          }
+          .masthead { margin-top: 40px; }
+          .change-title {
+            font-family: var(--display);
+            font-weight: 500;
+            font-size: clamp(32px, 6vw, 44px);
+            line-height: 1.12;
+            letter-spacing: -0.012em;
+            overflow-wrap: anywhere;
+          }
+          .subtitle { margin-top: 12px; color: var(--muted); font-size: 15px; }
+          .segmented { display: flex; gap: 22px; margin-top: 32px; border-bottom: 1px solid var(--line); }
+          .seg-btn {
+            border: 0;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            background: none;
+            color: var(--muted);
+            font: 500 15px/1 var(--text);
+            padding: 0 0 12px;
             cursor: pointer;
           }
-          .action-btn:hover { border-color: var(--accent); }
-          .action-btn:disabled { opacity: 0.7; cursor: default; }
+          .seg-btn:hover { color: var(--ink); }
+          .seg-btn.active { color: var(--ink); border-bottom-color: var(--ink); }
           .view { display: none; }
           .view.active { display: block; }
-          .entry {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 20px 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-          }
-          .entry-time {
-            color: var(--muted);
-            font-size: 0.8rem;
-            font-variant-numeric: tabular-nums;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 8px;
-          }
-          .entry-text {
-            margin: 0 0 12px;
-            font-size: 1.05rem;
-            white-space: pre-wrap;
-          }
-          .entry-text:last-child { margin-bottom: 0; }
-          .entry-text.unavailable { color: var(--muted); font-style: italic; }
-          .entry-screenshot {
+          .entry { display: grid; gap: 18px; padding-block: 32px; border-bottom: 1px solid var(--line); }
+          .entry:last-child { border-bottom: 0; }
+          .entry-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+          .entry-text.unavailable { color: var(--muted); }
+          .shot {
             display: block;
-            width: 100%;
-            border-radius: 10px;
-            border: 1px solid var(--border);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--wash);
           }
-          footer {
-            color: var(--muted);
-            font-size: 0.85rem;
-            text-align: center;
-            margin-top: 40px;
+          .entry-screenshot { display: block; width: 100%; height: auto; }
+          /* The Copy HTML source. Browsers serialize the styles they compute for a copied
+             selection, so the source must not inherit the page's theme: `all: initial` cuts
+             inheritance and the fixed values below give the pasted content a neutral,
+             transparent, light-scheme context that Gmail can restyle freely. */
+          .copy-source {
+            all: initial;
+            display: block;
+            position: absolute;
+            left: -10000px;
+            top: 0;
+            width: 760px;
+            pointer-events: none;
+            color-scheme: light;
+            color: #222222;
+            background: transparent;
+            font: 14px/1.5 Arial, Helvetica, sans-serif;
           }
+          @media (prefers-reduced-motion: reduce) { .action-btn { transition: none; } }
         </style>
       </head>
       <body>
-        <main>
-          <header>
-            <h1>Echo Note</h1>
+        <main class="page">
+          <div class="bar">
+            <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
+            <button class="action-btn" id="copy-html" title="Copy formatted text and, in Note view, screenshots to paste into email or chat apps">Copy HTML</button>
+            <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
+          </div>
+          <header class="masthead">
             <div class="change-title">\(escape(title))</div>
-            <div class="subtitle">\(escape(titleFormatter.string(from: startedAt))) · \(entries.count) \(entries.count == 1 ? "entry" : "entries")</div>
+            <div class="subtitle">\(escape(titleFormatter.string(from: startedAt)))</div>
           </header>
-          <div class="toolbar">
-            <div class="segmented" role="tablist">
-              <button class="seg-btn active" data-view="note">Note</button>
-              <button class="seg-btn" data-view="transcript">Transcript</button>
-              <button class="seg-btn" data-view="cleaned">Cleaned Up</button>
-            </div>
-            <div class="toolbar-actions">
-              <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
-              <button class="action-btn" id="copy-html" title="Copy formatted text and, in Note view, screenshots to paste into email or chat apps">Copy HTML</button>
-              <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
-            </div>
+          <div class="segmented" role="tablist">
+            <button class="seg-btn active" data-view="note">Note</button>
+            <button class="seg-btn" data-view="transcript">Transcript</button>
+            <button class="seg-btn" data-view="cleaned">Cleaned Up</button>
           </div>
           <section class="view active" id="view-note">
       \(entriesHTML)
@@ -260,7 +258,6 @@ enum NoteHTMLBuilder {
           <section class="view" id="view-cleaned">
       \(cleanedHTML)
           </section>
-          <footer>Created with Echo notes mode</footer>
         </main>
         <script id="copy-data" type="application/json">\(copyData)</script>
         <script>
@@ -270,11 +267,19 @@ enum NoteHTMLBuilder {
           // Preload embedded PNGs before the click so selection copying stays inside
           // the user gesture. Safari packages the loaded resources in a WebArchive:
           // https://webkit.org/blog/8170/clipboard-api-improvements/
-          const noteCopySource = document.createElement('div');
-          noteCopySource.innerHTML = copyData.noteHTML;
-          noteCopySource.setAttribute('aria-hidden', 'true');
-          noteCopySource.style.cssText = 'position:absolute;left:-10000px;top:0;width:760px';
-          document.body.appendChild(noteCopySource);
+          //
+          // Every rendered-selection source comes from createCopySource, which gives the
+          // markup the neutral .copy-source context instead of the themed page body.
+          function createCopySource(html) {
+            const source = document.createElement('div');
+            source.className = 'copy-source';
+            source.setAttribute('aria-hidden', 'true');
+            source.innerHTML = html;
+            document.body.appendChild(source);
+            return source;
+          }
+
+          const noteCopySource = createCopySource(copyData.noteHTML);
           const noteCopyImages = Array.from(noteCopySource.querySelectorAll('img'));
           let noteImagesReady = noteCopyImages.length === 0;
           let noteImagesFailed = false;
@@ -342,6 +347,8 @@ enum NoteHTMLBuilder {
               range.selectNodeContents(holder);
               selection.removeAllRanges();
               selection.addRange(range);
+              // An unselectable source copies nothing yet reports success.
+              if (selection.isCollapsed) return false;
               return document.execCommand('copy');
             } catch (error) {
               return false;
@@ -368,12 +375,7 @@ enum NoteHTMLBuilder {
               flash(button, 'Copied!');
             } catch (error) {
               // Fall back to copying a rendered selection, which carries text/html too.
-              const holder = imageSource || document.createElement('div');
-              if (!imageSource) {
-                holder.innerHTML = html;
-                holder.style.cssText = 'position:absolute;left:-10000px;top:0;width:760px';
-                document.body.appendChild(holder);
-              }
+              const holder = imageSource || createCopySource(html);
               const ok = copySelection(holder);
               if (!imageSource) holder.remove();
               flash(button, ok ? 'Copied!' : 'Copy failed');
@@ -418,18 +420,14 @@ enum NoteHTMLBuilder {
     "<p>\(escape(text).replacingOccurrences(of: "\n", with: "<br>"))</p>"
   }
 
-  /// The note as a paste-friendly HTML fragment: a heading per entry followed by its
-  /// text and embedded PNG. Data URLs carry the bytes across the clipboard without
+  /// The note as a paste-friendly HTML fragment: the title heading, then each entry's
+  /// text and embedded PNG in order. Data URLs carry the bytes across the clipboard without
   /// requiring the destination to read the export's local images directory.
   static func renderClipboardHTML(
     entries: [NoteEntry], startedAt: Date, title: String, screenshots: [String: Data] = [:]
   ) -> String {
-    let timeFormatter = DateFormatter()
-    timeFormatter.dateFormat = "h:mm:ss a"
-
     var parts = ["<h2>\(escape(title))</h2>"]
     for entry in entries {
-      parts.append("<h3>\(escape(timeFormatter.string(from: entry.timestamp)))</h3>")
       parts.append(paragraphHTML(entry.text))
       if let fileName = entry.screenshotFileName {
         if let data = screenshots[fileName], !data.isEmpty {
