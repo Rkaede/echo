@@ -1,5 +1,22 @@
 # Changelog
 
+## Echo 0.0.5
+
+### New Features
+
+- **Copy HTML on the notes page.** Copies the note as formatted text with its screenshots, ready to paste into Gmail, Teams or Slack. The pasted text uses the destination's own colours, so a dark notes page no longer carries dark backgrounds or light text into your email.
+- **Copy Title + Path.** Copies a generated title for the change along with the path of the saved Markdown file.
+
+### Improvements
+
+- **A cleaner notes page.** The page now uses a single reading column with a large title and light dividers between entries. It follows light and dark mode. Timestamps, the entry count and the footer are gone, and the last entry no longer has a divider below it.
+- **No timestamp headings in copied notes.** The Markdown file and Copy HTML now contain just each entry's text and screenshot, in order.
+- **The notes mode shortcut shows in the menu bar.** The Start/Stop Notes Mode item displays your shortcut (Ctrl+Option+N by default), and updates if you change it.
+
+### Fixes
+
+- Profile shortcuts work for starting a recording again, alongside the Fn key.
+
 ## Echo 0.0.4
 
 ### Improvements
