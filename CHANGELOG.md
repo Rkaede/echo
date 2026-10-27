@@ -1,5 +1,11 @@
 # Changelog
 
+## Echo 0.0.6
+
+### Improvements
+
+- **Clearer copy buttons on the notes page.** The buttons now read Copy HTML, Copy Markdown and Copy Path, in that order. Copy Markdown always copies the whole note, whichever view you are looking at. Copy Title + Path is now called Copy Path.
+
 ## Echo 0.0.5
 
 ### New Features
