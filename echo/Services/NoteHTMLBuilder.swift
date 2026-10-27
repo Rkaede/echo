@@ -234,9 +234,9 @@ enum NoteHTMLBuilder {
       <body>
         <main class="page">
           <div class="bar">
-            <button class="action-btn" id="copy-content" title="Copy the current view to the clipboard">Copy</button>
             <button class="action-btn" id="copy-html" title="Copy formatted text and, in Note view, screenshots to paste into email or chat apps">Copy HTML</button>
-            <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Title + Path</button>
+            <button class="action-btn" id="copy-content" title="Copy the note as Markdown">Copy Markdown</button>
+            <button class="action-btn" id="copy-md-path" title="Copy the change title and the path of the Markdown file saved next to this page">Copy Path</button>
           </div>
           <header class="masthead">
             <div class="change-title">\(escape(title))</div>
@@ -329,13 +329,7 @@ enum NoteHTMLBuilder {
           }
 
           document.getElementById('copy-content').addEventListener('click', (event) => {
-            const button = event.currentTarget;
-            const text = copyData[currentView];
-            if (text) {
-              copyText(text, button);
-            } else {
-              flash(button, 'Nothing to copy');
-            }
+            copyText(copyData.note, event.currentTarget);
           });
 
           function copySelection(holder) {

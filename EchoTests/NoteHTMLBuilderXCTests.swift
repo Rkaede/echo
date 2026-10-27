@@ -63,6 +63,15 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     XCTAssertTrue(html.contains("data-view=\"transcript\""))
     XCTAssertTrue(html.contains("data-view=\"cleaned\""))
     XCTAssertTrue(html.contains("id=\"copy-content\""))
+    XCTAssertTrue(html.contains(">Copy Markdown</button>"))
+    XCTAssertTrue(html.contains("copyText(copyData.note, event.currentTarget)"))
+    XCTAssertFalse(html.contains("copyData[currentView]"))
+
+    let order = ["copy-html", "copy-content", "copy-md-path"].compactMap {
+      html.range(of: "id=\"\($0)\"")?.lowerBound
+    }
+    XCTAssertEqual(order.count, 3)
+    XCTAssertEqual(order, order.sorted())
     XCTAssertTrue(html.contains("id=\"copy-md-path\""))
     XCTAssertTrue(html.contains("id=\"copy-data\""))
     XCTAssertTrue(html.contains(#"\/tmp\/note-abc\/note.md"#))
@@ -249,7 +258,7 @@ final class NoteHTMLBuilderXCTests: XCTestCase {
     let payload = try copyPayload(html)
 
     XCTAssertTrue(html.contains("<div class=\"change-title\">\(NoteHTMLBuilder.escape(title))</div>"))
-    XCTAssertTrue(html.contains(">Copy Title + Path</button>"))
+    XCTAssertTrue(html.contains(">Copy Path</button>"))
     XCTAssertTrue(html.contains("copyText(copyData.markdownReference, event.currentTarget)"))
     XCTAssertEqual(payload["markdownReference"], "\(title)\n\(path)")
     XCTAssertEqual(payload["transcript"], "Raw note")
