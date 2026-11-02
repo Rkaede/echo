@@ -4,6 +4,21 @@ import XCTest
 
 @MainActor
 final class AudioRecorderXCTests: XCTestCase {
+  func testRunWithTimeoutReturnsWorkResultWhenItFinishesInTime() async {
+    let result = await AudioRecorder.runWithTimeout(nanoseconds: 2_000_000_000) { true }
+    XCTAssertEqual(result, true)
+  }
+
+  func testRunWithTimeoutReturnsNilWhenWorkBlocksPastTheTimeout() async {
+    let start = Date()
+    let result = await AudioRecorder.runWithTimeout(nanoseconds: 100_000_000) {
+      Thread.sleep(forTimeInterval: 1.5)
+      return true
+    }
+    XCTAssertNil(result)
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1.0)
+  }
+
   func testPreferredInputDeviceBecomesAudioRecorderCaptureRoute() {
     let external = AudioInputDevice(
       uid: "BuiltInHeadphoneInputDevice",

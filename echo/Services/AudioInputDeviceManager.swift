@@ -257,7 +257,13 @@ final class AudioInputDeviceManager: ObservableObject {
       }
   }
 
-  private static func defaultInputDeviceID() -> AudioDeviceID? {
+  /// Whether the HAL reports any default input device. Safe to call off the main actor, which
+  /// matters because the HAL query can block while a device is re-enumerating.
+  nonisolated static func hasDefaultInputDevice() -> Bool {
+    defaultInputDeviceID() != nil
+  }
+
+  nonisolated private static func defaultInputDeviceID() -> AudioDeviceID? {
     var address = AudioObjectPropertyAddress(
       mSelector: kAudioHardwarePropertyDefaultInputDevice,
       mScope: kAudioObjectPropertyScopeGlobal,

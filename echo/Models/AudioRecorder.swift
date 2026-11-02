@@ -36,6 +36,24 @@ struct MeteringCadence: Equatable {
   }
 }
 
+/// Resumes a continuation exactly once, whichever of several racing callers gets there first.
+private final class SingleResumeGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Bool?, Never>?
+
+  init(_ continuation: CheckedContinuation<Bool?, Never>) {
+    self.continuation = continuation
+  }
+
+  func resume(with value: Bool?) {
+    lock.lock()
+    let pending = continuation
+    continuation = nil
+    lock.unlock()
+    pending?.resume(returning: value)
+  }
+}
+
 @MainActor
 class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
   private enum RecordingBackend {
@@ -256,7 +274,7 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
 
     // Configure audio session for recording
-    try configureAudioSession()
+    try await configureAudioSession()
 
     currentRecordingURL = audioFileURL
 
@@ -313,6 +331,12 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     }
 
     guard recorder.record() else {
+      // Letting a recorder that never started deallocate while its audio queue is still
+      // delivering input callbacks crashes inside AVFAudio, so stop it and keep it alive
+      // through the same settle delay the normal stop paths use.
+      recorder.stop()
+      recorder.delegate = nil
+      try? await Task.sleep(nanoseconds: 100_000_000)
       throw RecordingError.failedToStartRecording
     }
 
@@ -650,15 +674,44 @@ class AudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
   // MARK: - Audio Configuration
 
-  private func configureAudioSession() throws {
+  nonisolated static let audioInputCheckTimeoutNanoseconds: UInt64 = 2_000_000_000
+
+  /// Runs `work` on a background queue and returns its result, or nil if it has not finished
+  /// within the timeout. A blocked worker is abandoned rather than awaited, so a stalled
+  /// HAL call costs the caller at most the timeout instead of freezing it.
+  nonisolated static func runWithTimeout(
+    nanoseconds: UInt64,
+    _ work: @escaping @Sendable () -> Bool
+  ) async -> Bool? {
+    await withCheckedContinuation { continuation in
+      let gate = SingleResumeGate(continuation)
+      DispatchQueue.global(qos: .userInitiated).async {
+        gate.resume(with: work())
+      }
+      DispatchQueue.global(qos: .userInitiated).asyncAfter(
+        deadline: .now() + .nanoseconds(Int(nanoseconds))
+      ) {
+        gate.resume(with: nil)
+      }
+    }
+  }
+
+  private func configureAudioSession() async throws {
     // On macOS, AVAudioRecorder handles most audio configuration automatically.
     // However, we can perform basic validation to ensure the audio system is ready.
 
-    // Verify we have an available audio input device
-    guard AudioInputDeviceManager.shared.currentDefaultInputDevice() != nil
-      || AVCaptureDevice.default(for: .audio) != nil
-    else {
-      print("No audio input device available")
+    // Verify we have an available audio input device. The HAL can block for minutes while a
+    // device re-enumerates, and this runs on the main actor, so it is bounded by a timeout.
+    let hasInput = await Self.runWithTimeout(nanoseconds: Self.audioInputCheckTimeoutNanoseconds) {
+      AudioInputDeviceManager.hasDefaultInputDevice() || AVCaptureDevice.default(for: .audio) != nil
+    }
+
+    guard hasInput == true else {
+      print(
+        hasInput == nil
+          ? "Timed out checking for an audio input device"
+          : "No audio input device available"
+      )
       throw RecordingError.audioSessionConfigurationFailed
     }
 
