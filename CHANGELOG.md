@@ -6,6 +6,11 @@
 
 - **Clearer copy buttons on the notes page.** The buttons now read Copy HTML, Copy Markdown and Copy Path, in that order. Copy Markdown always copies the whole note, whichever view you are looking at. Copy Title + Path is now called Copy Path.
 
+### Fixes
+
+- Echo no longer crashes when your microphone disconnects or reconnects just as you start recording. It shows a "Failed to start recording" error instead, and you can try again.
+- Echo no longer freezes, and the recording shortcut keeps working, when macOS is slow to report whether a microphone is available.
+
 ## Echo 0.0.5
 
 ### New Features
