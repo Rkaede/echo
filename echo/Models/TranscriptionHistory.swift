@@ -21,7 +21,10 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
     let didFail: Bool                      // Whether the transcription failed
     let errorMessage: String?              // Error message if transcription failed
     let errorCategory: String?             // Error category if transcription failed
-    
+    let profileId: String?                 // Profile active when recorded (Echo 0.0.7 and later)
+    let postProcessedText: String?         // Cleaned text that was pasted, when clean-up ran
+    let postProcessingModel: String?       // Clean-up model that produced postProcessedText
+
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
@@ -42,7 +45,10 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
         searchSnippet: String? = nil,
         didFail: Bool = false,
         errorMessage: String? = nil,
-        errorCategory: String? = nil
+        errorCategory: String? = nil,
+        profileId: String? = nil,
+        postProcessedText: String? = nil,
+        postProcessingModel: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -64,6 +70,9 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
         self.didFail = didFail
         self.errorMessage = errorMessage
         self.errorCategory = errorCategory
+        self.profileId = profileId
+        self.postProcessedText = postProcessedText
+        self.postProcessingModel = postProcessingModel
     }
 }
 

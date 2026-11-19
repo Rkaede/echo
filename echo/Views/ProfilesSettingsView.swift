@@ -258,7 +258,7 @@ struct ProfilesSettingsView: View {
       shortcut: nil,
       transcriptionModel: SettingsManager.shared.selectedModel,
       postProcessingEnabled: false,
-      postProcessingPrompt: "{{TRANSCRIPTION}}",
+      postProcessingPrompt: PostProcessingData.defaultPrompt,
       postProcessingModel: PostProcessingModelOption.defaultOptionValue,
       iconName: nil,
       iconColor: nil,
@@ -381,6 +381,8 @@ struct ProfilesSettingsView: View {
 private struct ProfileEditor: View {
   @Binding var profile: Profile
   @FocusState private var isPromptFocused: Bool
+  @ObservedObject private var settings = SettingsManager.shared
+  @State private var copiedReviewPrompt = false
 
   private var selectedModel: ModelOption? {
     TranscriptionData.modelOptions.first { $0.value == profile.transcriptionModel }
@@ -423,10 +425,14 @@ private struct ProfileEditor: View {
       Section("Transcription") {
         Picker("Model", selection: $profile.transcriptionModel) {
           ForEach(TranscriptionData.modelOptions, id: \.value) { model in
-            Text(model.label).tag(model.value)
+            Text("\(model.label) · \(model.provider.displayName)").tag(model.value)
           }
         }
         .pickerStyle(.menu)
+
+        if let model = selectedModel {
+          MissingKeyNote(provider: model.provider, settings: settings)
+        }
 
         if let model = selectedModel {
           VStack(alignment: .leading, spacing: 8) {
@@ -527,6 +533,15 @@ private struct ProfileEditor: View {
             }
           }
           .pickerStyle(.menu)
+
+          if let option = selectedPostProcessingOption {
+            Text(option.description)
+              .font(.caption)
+              .foregroundColor(.secondary)
+            if profile.postProcessingEnabled {
+              MissingKeyNote(provider: option.provider, settings: settings)
+            }
+          }
         }
 
         VStack(alignment: .leading, spacing: 12) {
@@ -564,10 +579,36 @@ private struct ProfileEditor: View {
           }
         }
 
-        Text("Use {{TRANSCRIPTION}} for the transcription text.")
+        Text(
+          "The prompt is sent as instructions and the transcript as a separate message. To place the transcript inside the prompt instead, include {{TRANSCRIPTION}}."
+        )
           .font(.caption)
           .foregroundColor(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
+
+        VStack(alignment: .leading, spacing: 6) {
+          Button(action: copyCleanupReviewPrompt) {
+            Label(
+              copiedReviewPrompt ? "Copied" : "Copy Prompt to Improve Clean-Up",
+              systemImage: copiedReviewPrompt ? "checkmark" : "doc.on.clipboard")
+          }
+
+          Text(
+            "Copies instructions for Claude Code or another coding agent. The agent reads this profile's dictation history, finds recurring mistakes and suggests a better prompt with a vocabulary list."
+          )
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+
+          if !settings.enableHistory {
+            Label(
+              "History is off, so Echo isn't saving dictations for the agent to review. Turn it on in History settings.",
+              systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundColor(.orange)
+          }
+        }
       }
       .padding(.vertical, 2)
     }
@@ -588,13 +629,47 @@ private struct ProfileEditor: View {
     }
   }
 
-  private func pickerLabel(for option: PostProcessingModelOption) -> String {
-    if let badge = option.badge, !badge.isEmpty {
-      return "\(option.label) (\(badge))"
+  private func copyCleanupReviewPrompt() {
+    let profile = profile
+    Task {
+      let text = CleanupReviewPrompt.make(
+        profileTitle: profile.title,
+        profileID: profile.id,
+        prompt: profile.postProcessingPrompt,
+        model: PostProcessingModelOption.resolve(profile.postProcessingModel),
+        databasePath: await DatabaseService.shared.databasePath()
+      )
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+      copiedReviewPrompt = true
+      try? await Task.sleep(for: .seconds(2))
+      copiedReviewPrompt = false
     }
-    return option.label
   }
 
+  private func pickerLabel(for option: PostProcessingModelOption) -> String {
+    let label = "\(option.label) · \(option.provider.displayName)"
+    if let badge = option.badge, !badge.isEmpty {
+      return "\(label) (\(badge))"
+    }
+    return label
+  }
+
+}
+
+/// Warns when the selected model's provider has no API key saved.
+private struct MissingKeyNote: View {
+  let provider: APIProvider
+  @ObservedObject var settings: SettingsManager
+
+  var body: some View {
+    if settings.apiKey(for: provider).isEmpty {
+      Label("Add your \(provider.displayName) API key in General settings to use this model.",
+            systemImage: "exclamationmark.triangle.fill")
+        .font(.caption)
+        .foregroundColor(.orange)
+    }
+  }
 }
 #Preview {
   ProfilesSettingsView()

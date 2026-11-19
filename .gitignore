@@ -192,3 +192,5 @@ recording_*.mp3
 
 # Local configuration
 local.xcconfig
+# Local data: the STT evaluation harness, personal audio, review corrections and API results
+/data/

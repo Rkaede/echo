@@ -7,12 +7,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   // `App`, so their state changes never re-run the app's scenes, menu bar or windows.
   private var overlayController: OverlayPanelController?
   private var shortcutCoordinator: ShortcutCoordinator?
+  private var viewModel: TranscriptionViewModel?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     print("AppDelegate: Application finished launching")
 
     let appState = AppState()
     let viewModel = TranscriptionViewModel(appState: appState)
+    self.viewModel = viewModel
 
     // Build the overlay panel now so the first recording doesn't pay for creating it
     let overlayController = OverlayPanelController(
@@ -40,6 +42,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     TempFileManager.shared.performStartupCleanup()
     TempFileManager.shared.startPeriodicCleanup()
     LoggingService.shared.cleanupOldLogs()
+  }
+
+  /// Called from the menu bar's Retry Failed Recording item.
+  func retryFailedRecording() {
+    Task { await viewModel?.retryFailedRecording() }
   }
 }
 

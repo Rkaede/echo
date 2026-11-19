@@ -30,8 +30,8 @@ class HistoryRepository {
           (id, timestamp, transcribed_text, duration, audio_file_reference, language_detected,
            model_used, word_count, application_context, upload_time, groq_processing_time,
            total_transcription_time, confidence, did_fail, error_message, error_category,
-           pure_upload_time, download_time, total_network_time)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+           pure_upload_time, download_time, total_network_time, profile_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       """
 
     var statement: OpaquePointer?
@@ -104,6 +104,12 @@ class HistoryRepository {
       sqlite3_bind_double(statement, 18, transcription.downloadTime)
       sqlite3_bind_double(statement, 19, transcription.totalNetworkTime)
 
+      if let profileId = transcription.profileId {
+        sqlite3_bind_text(statement, 20, (profileId as NSString).utf8String, -1, SQLITE_TRANSIENT)
+      } else {
+        sqlite3_bind_null(statement, 20)
+      }
+
       if sqlite3_step(statement) == SQLITE_DONE {
         print("Transcription saved successfully")
         success = true
@@ -112,6 +118,31 @@ class HistoryRepository {
       }
     }
 
+    sqlite3_finalize(statement)
+    return success
+  }
+
+  /// Stores the cleaned text that was pasted for a saved dictation, next to its raw transcript.
+  func savePostProcessing(id: UUID, text: String, model: String) async -> Bool {
+    guard let conn = await DatabaseService.shared.connection(),
+      let db = conn.opaquePointer
+    else {
+      print("HistoryRepository: Failed to get database connection")
+      return false
+    }
+
+    let updateSQL = """
+          UPDATE transcription_history SET post_processed_text = ?, post_processing_model = ?
+          WHERE id = ?;
+      """
+    var statement: OpaquePointer?
+    var success = false
+    if sqlite3_prepare_v2(db, updateSQL, -1, &statement, nil) == SQLITE_OK {
+      sqlite3_bind_text(statement, 1, (text as NSString).utf8String, -1, SQLITE_TRANSIENT)
+      sqlite3_bind_text(statement, 2, (model as NSString).utf8String, -1, SQLITE_TRANSIENT)
+      sqlite3_bind_text(statement, 3, (id.uuidString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+      success = sqlite3_step(statement) == SQLITE_DONE
+    }
     sqlite3_finalize(statement)
     return success
   }
@@ -147,7 +178,9 @@ class HistoryRepository {
 
       while sqlite3_step(statement) == SQLITE_ROW {
         if let transcription = parseTranscriptionFromRow(statement) {
-          let snippet = String(cString: sqlite3_column_text(statement, 19))
+          // The snippet follows every history column, however many the table has.
+          let snippetIndex = sqlite3_column_count(statement) - 1
+          let snippet = String(cString: sqlite3_column_text(statement, snippetIndex))
           results.append((transcription, snippet))
         }
       }
@@ -359,6 +392,15 @@ class HistoryRepository {
     let downloadTime = sqlite3_column_double(statement, 17)
     let totalNetworkTime = sqlite3_column_double(statement, 18)
 
+    // Columns added in schema v8 are read by name, as they follow the original columns.
+    var addedColumns: [String: String] = [:]
+    for index in stride(from: Int32(19), to: sqlite3_column_count(statement), by: 1) {
+      guard let name = sqlite3_column_name(statement, index),
+        let value = sqlite3_column_text(statement, index)
+      else { continue }
+      addedColumns[String(cString: name)] = String(cString: value)
+    }
+
     return TranscriptionHistory(
       id: id,
       timestamp: timestamp,
@@ -379,7 +421,10 @@ class HistoryRepository {
       searchSnippet: nil,
       didFail: didFail,
       errorMessage: errorMessage,
-      errorCategory: errorCategory
+      errorCategory: errorCategory,
+      profileId: addedColumns["profile_id"],
+      postProcessedText: addedColumns["post_processed_text"],
+      postProcessingModel: addedColumns["post_processing_model"]
     )
   }
 }

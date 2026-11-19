@@ -10,6 +10,7 @@ struct EchoApp: App {
   // owned by AppDelegate instead.
   @StateObject private var settings = SettingsManager.shared
   @StateObject private var notesModeService = NotesModeService.shared
+  @StateObject private var failedRecordings = FailedRecordingStore.shared
   @StateObject private var updateManager: UpdateManager
 
   init() {
@@ -85,6 +86,14 @@ struct EchoApp: App {
       notesModeMenuItem
 
       Divider()
+
+      if failedRecordings.latest != nil {
+        Button("Retry Failed Recording") {
+          appDelegate.retryFailedRecording()
+        }
+
+        Divider()
+      }
 
       #if DEBUG
       Button("Waveform Debug...") {

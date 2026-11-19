@@ -24,8 +24,8 @@
 		<true />
 		<key>NSMicrophoneUsageDescription</key>
 		<string>Echo uses your microphone to record audio for speech-to-text transcription.
-			Recordings are processed via the Groq API and then automatically deleted from your
-			device.</string>
+			Recordings are processed via Groq or OpenRouter, depending on the model you choose,
+			and then automatically deleted from your device.</string>
 		<key>SUEnableAutomaticChecks</key>
 		<true />
 		<key>SUFeedURL</key>

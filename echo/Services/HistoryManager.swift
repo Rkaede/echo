@@ -58,10 +58,26 @@ class HistoryManager: ObservableObject {
     }
   }
 
-  func saveTranscription(_ transcription: TranscriptionHistory) {
+  /// Saves in the background. The returned task finishes when the row is written.
+  @discardableResult
+  func saveTranscription(_ transcription: TranscriptionHistory) -> Task<Bool, Never> {
     Task {
       let success = await repository.saveTranscription(transcription)
       if success {
+        await refreshData()
+      }
+      return success
+    }
+  }
+
+  /// Adds the cleaned text to a saved dictation once `save` (from `saveTranscription`) has
+  /// written its row.
+  func savePostProcessing(
+    id: UUID, text: String, model: String, after save: Task<Bool, Never>
+  ) {
+    Task {
+      guard await save.value else { return }
+      if await repository.savePostProcessing(id: id, text: text, model: model) {
         await refreshData()
       }
     }

@@ -1,21 +1,28 @@
 import Foundation
 
-class GroqAPIClient {
-  static let shared = GroqAPIClient()
+/// Client for the OpenAI-compatible endpoints on Groq and OpenRouter.
+class APIClient {
+  static let shared = APIClient()
 
   private init() {}
 
-  private let transcriptionBaseURL = "https://api.groq.com/openai/v1/audio/transcriptions"
-  private let chatBaseURL = "https://api.groq.com/openai/v1/chat/completions"
-
-  func transcribeAudio(fileURL: URL, apiKey: String, model: String) async throws -> TranscriptionResultWithTiming {
-    guard let url = URL(string: transcriptionBaseURL) else {
-      throw APIError.invalidURL
-    }
-
-    var request = URLRequest(url: url)
+  func transcribeAudio(
+    fileURL: URL,
+    apiKey: String,
+    model: String,
+    provider: APIProvider = .groq,
+    extraFields: [String: String] = [:],
+    timeout: TimeInterval? = nil
+  ) async throws -> TranscriptionResultWithTiming {
+    var request = URLRequest(url: provider.transcriptionURL)
     request.httpMethod = "POST"
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    for (header, value) in provider.additionalHeaders {
+      request.setValue(value, forHTTPHeaderField: header)
+    }
+    if let timeout {
+      request.timeoutInterval = timeout
+    }
 
     let builder = MultipartFormDataBuilder()
     request.setValue(builder.contentType, forHTTPHeaderField: "Content-Type")
@@ -23,8 +30,11 @@ class GroqAPIClient {
     let audioData = try Data(contentsOf: fileURL)
     builder.addFileField(
       name: "file", filename: "recording.wav", contentType: "audio/wav", data: audioData)
-    builder.addTextField(name: "model", value: model)
-    builder.addTextField(name: "response_format", value: "verbose_json")
+    for (name, value) in Self.transcriptionFields(
+      model: model, provider: provider, extraFields: extraFields)
+    {
+      builder.addTextField(name: name, value: value)
+    }
 
     request.httpBody = builder.build()
 
@@ -61,28 +71,23 @@ class GroqAPIClient {
     )
   }
 
-  func postProcessText(fullPrompt: String, apiKey: String, model: String) async throws -> String {
-    guard let url = URL(string: chatBaseURL) else {
-      throw APIError.invalidURL
-    }
-
-    var request = URLRequest(url: url)
+  func postProcessText(
+    messages: [ChatMessage],
+    apiKey: String,
+    model: String,
+    provider: APIProvider = .groq,
+    requestOptions: [String: Any] = [:]
+  ) async throws -> String {
+    var request = URLRequest(url: provider.chatURL)
     request.httpMethod = "POST"
     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-    let chatRequest = ChatCompletionRequest(
-      model: model,
-      messages: [
-        ChatMessage(role: "user", content: fullPrompt)
-      ],
-      maxTokens: 1000,
-      temperature: 0.1,
-      stream: false
-    )
-
-    let encoder = JSONEncoder()
-    request.httpBody = try encoder.encode(chatRequest)
+    for (header, value) in provider.additionalHeaders {
+      request.setValue(value, forHTTPHeaderField: header)
+    }
+    request.httpBody = try JSONSerialization.data(
+      withJSONObject: Self.chatRequestBody(
+        model: model, messages: messages, requestOptions: requestOptions))
 
     let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -95,15 +100,57 @@ class GroqAPIClient {
       throw APIError.httpError(statusCode: httpResponse.statusCode, message: errorMessage)
     }
 
+    return try Self.chatContent(from: data)
+  }
+
+  /// The reply text from a chat completion response body.
+  static func chatContent(from data: Data) throws -> String {
     let chatResponse = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
 
     guard let firstChoice = chatResponse.choices.first else {
       throw APIError.invalidResponse
     }
 
+    // Hitting max_tokens returns the text so far. Pasting it would silently drop the end
+    // of the dictation, so report it and let the caller use the raw transcript.
+    if firstChoice.finishReason == "length" {
+      throw PostProcessingError.truncated
+    }
     return firstChoice.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  /// Text fields for a transcription request, in the order they are sent. Groq's
+  /// `verbose_json` adds the segment confidence `SpeechGate` uses. OpenRouter requests send
+  /// only the fields Echo's benchmark used, and its plain JSON response carries the text.
+  static func transcriptionFields(
+    model: String, provider: APIProvider, extraFields: [String: String]
+  ) -> [(name: String, value: String)] {
+    var fields: [(name: String, value: String)] = [("model", model)]
+    if provider == .groq {
+      fields.append(("response_format", "verbose_json"))
+    }
+    fields += extraFields.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value) }
+    return fields
+  }
+
+  /// JSON body for a chat completion. Built as a dictionary so provider-specific fields
+  /// (Groq's `reasoning_effort`, OpenRouter's `reasoning` and `provider`) can be merged in.
+  static func chatRequestBody(
+    model: String, messages: [ChatMessage], requestOptions: [String: Any]
+  ) -> [String: Any] {
+    var body: [String: Any] = [
+      "model": model,
+      "messages": messages.map { ["role": $0.role, "content": $0.content] },
+      // A cap, not a target: reasoning models spend part of it before the text. Long
+      // transcripts are cleaned up in chunks, so each request stays well under it.
+      "max_tokens": 2048,
+      "stream": false,
+      // No temperature by default: Google has deprecated it for Gemini 3.5 models. Models
+      // that need one set it in their request options.
+    ]
+    body.merge(requestOptions) { _, option in option }
+    return body
+  }
 }
 
 struct TranscriptionResultWithTiming {

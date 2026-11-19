@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Combine
 import Foundation
@@ -6,9 +7,10 @@ import Foundation
 class TranscriptionService: ObservableObject {
   private let settingsManager = SettingsManager.shared
   private let audioRecorder = AudioRecorder()
-  private let apiClient = GroqAPIClient.shared
+  private let apiClient = APIClient.shared
   private let profilesService = ProfilesService.shared
   private let postProcessor = PostProcessingService.shared
+  private let failedRecordings = FailedRecordingStore.shared
   private let appState: AppState
   private let pasteService = PasteService.shared
   private let historyManager = HistoryManager.shared
@@ -71,10 +73,13 @@ class TranscriptionService: ObservableObject {
     log("Ensuring API key is loaded...", category: loggerCategory, level: .debug)
     settingsManager.ensureAPIKeyLoaded()
 
-    // Check if we have an API key after loading
-    guard settingsManager.hasAPIKey else {
-      log("No API key found! Please configure in Settings.", category: loggerCategory, level: .error)
-      let error = TranscriptionError.noAPIKey
+    // Check we have the key for the provider the active model runs on
+    let transcriptionProvider = TranscriptionData.provider(for: activeTranscriptionModel)
+    guard settingsManager.hasAPIKey(for: transcriptionProvider) else {
+      log(
+        "No \(transcriptionProvider.displayName) API key found! Please configure in Settings.",
+        category: loggerCategory, level: .error)
+      let error = TranscriptionError.noAPIKey(transcriptionProvider)
       appState.setError(error.localizedDescription)
       return .failure(error)
     }
@@ -218,6 +223,49 @@ class TranscriptionService: ObservableObject {
     log("Paste target: \(targetApp?.bundleIdentifier ?? "unknown"), PID: \(targetProcessIdentifier ?? -1)",
         category: loggerCategory, level: .info)
 
+    return await startPipeline(
+      audioFileURL: audioFileURL, recordingDuration: recordingDuration, activeApp: activeApp,
+      targetProcessIdentifier: targetProcessIdentifier)
+  }
+
+  /// Transcribes the most recent failed recording again, using the active profile, and
+  /// pastes into the frontmost app. The recording is deleted once it transcribes.
+  func retryFailedRecording() async -> TranscriptionServiceResult {
+    guard let audioFileURL = failedRecordings.latest else { return .success(()) }
+    switch appState.status {
+    case .idle, .inserted, .cancelled, .noSpeechDetected, .error:
+      break
+    default:
+      log("Not retrying while busy (\(appState.status))", category: loggerCategory, level: .info)
+      return .success(())
+    }
+
+    let duration =
+      (try? AVAudioFile(forReading: audioFileURL)).map {
+        Double($0.length) / $0.processingFormat.sampleRate
+      } ?? 0
+    let targetApp = NSWorkspace.shared.frontmostApplication
+    log(
+      "Retrying failed recording \(audioFileURL.lastPathComponent) (\(Int(duration)) s)",
+      category: loggerCategory, level: .info)
+
+    isCancelled = false
+    appState.updateStatus(.processing)
+    return await startPipeline(
+      audioFileURL: audioFileURL, recordingDuration: duration,
+      activeApp: targetApp?.localizedName,
+      targetProcessIdentifier: targetApp?.processIdentifier, retrying: true)
+  }
+
+  /// Runs the transcription pipeline as the current task, so a cancel or a newer recording
+  /// supersedes it.
+  private func startPipeline(
+    audioFileURL: URL,
+    recordingDuration: TimeInterval,
+    activeApp: String?,
+    targetProcessIdentifier: pid_t?,
+    retrying: Bool = false
+  ) async -> TranscriptionServiceResult {
     let token = UUID()
     transcriptionToken = token
 
@@ -228,7 +276,8 @@ class TranscriptionService: ObservableObject {
         recordingDuration: recordingDuration,
         activeApp: activeApp,
         targetProcessIdentifier: targetProcessIdentifier,
-        token: token
+        token: token,
+        retrying: retrying
       )
     }
 
@@ -300,7 +349,8 @@ class TranscriptionService: ObservableObject {
     recordingDuration: TimeInterval,
     activeApp: String?,
     targetProcessIdentifier: pid_t?,
-    token: UUID
+    token: UUID,
+    retrying: Bool = false
   ) async -> TranscriptionServiceResult {
     let localToken = token
 
@@ -320,9 +370,13 @@ class TranscriptionService: ObservableObject {
       return true
     }
 
-    // Ensure cleanup happens regardless of success or failure
+    // Ensure cleanup happens regardless of success or failure. A failed transcription keeps
+    // a copy of the recording first (see the catch below); a retry's file belongs to
+    // `failedRecordings`, which removes it once it transcribes.
     defer {
-      audioRecorder.deleteRecording()
+      if !retrying {
+        audioRecorder.deleteRecording()
+      }
     }
 
     do {
@@ -335,10 +389,9 @@ class TranscriptionService: ObservableObject {
       let uploadStartTime = Date()
 
       // Choose model from active profile when available
-      let modelToUse =
-        profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
-      let resultWithTiming = try await apiClient.transcribeAudio(
-        fileURL: audioFileURL, apiKey: settingsManager.apiKey, model: modelToUse)
+      let (resultWithTiming, modelToUse) = try await transcribeRecording(
+        audioFileURL: audioFileURL, model: activeTranscriptionModel,
+        recordingDuration: recordingDuration)
 
       if !shouldContinue(stage: "transcription response") {
         log(
@@ -386,7 +439,9 @@ class TranscriptionService: ObservableObject {
 
       appState.transcriptionText = transcribedText
 
-      // Save successful transcription to history if enabled
+      // Save successful transcription to history if enabled. The cleaned text is added to
+      // the same row after post-processing.
+      var historySave: (id: UUID, task: Task<Bool, Never>)?
       if !transcribedText.isEmpty && settingsManager.enableHistory {
         log("Preparing to save transcription to history", category: loggerCategory, level: .debug)
 
@@ -423,10 +478,11 @@ class TranscriptionService: ObservableObject {
           downloadTime: downloadTime,
           totalNetworkTime: totalNetworkTime,
           groqProcessingTime: totalTime - legacyUploadTime,  // Server processing time
-          totalTranscriptionTime: totalTime
+          totalTranscriptionTime: totalTime,
+          profileId: profilesService.activeProfile?.id
         )
 
-        historyManager.saveTranscription(historyEntry)
+        historySave = (historyEntryId, historyManager.saveTranscription(historyEntry))
         log(
           "Called saveTranscription for '\(transcribedText.prefix(30))...'\(audioFileReference != nil ? " with audio" : "")",
           category: loggerCategory,
@@ -438,6 +494,11 @@ class TranscriptionService: ObservableObject {
           category: loggerCategory,
           level: .debug
         )
+      }
+
+      // A retried recording has transcribed (and been copied to history), so let it go.
+      if retrying {
+        failedRecordings.remove(audioFileURL)
       }
 
       if !shouldContinue(stage: "pre post-processing") {
@@ -452,10 +513,7 @@ class TranscriptionService: ObservableObject {
         !transcribedText.isEmpty
       {
         appState.updateStatus(.postProcessing)
-        let ppModel =
-          profile.postProcessingModel.isEmpty
-          ? PostProcessingModelOption.defaultOptionValue
-          : profile.postProcessingModel
+        let ppModel = PostProcessingModelOption.resolve(profile.postProcessingModel).value
         do {
           let processed = try await postProcessor.processText(
             transcribedText, promptTemplate: profile.postProcessingPrompt,
@@ -463,6 +521,10 @@ class TranscriptionService: ObservableObject {
           if shouldContinue(stage: "post-processing") {
             finalText = processed
             appState.transcriptionText = processed
+            if let historySave {
+              historyManager.savePostProcessing(
+                id: historySave.id, text: processed, model: ppModel, after: historySave.task)
+            }
           }
         } catch {
           log("Post-processing failed: \(error)", category: loggerCategory, level: .warning)
@@ -529,7 +591,14 @@ class TranscriptionService: ObservableObject {
 
       log("Transcription failed: \(error)", category: loggerCategory, level: .error)
       let transcriptionError = TranscriptionError.transcriptionFailed(error)
-      appState.setError(transcriptionError.localizedDescription)
+      // Keep the recording so it can be retried; a long dictation is too costly to lose.
+      if retrying || failedRecordings.save(audioFileURL) != nil {
+        appState.setError(
+          transcriptionError.localizedDescription + " The recording was kept.",
+          recoveryHint: "Retry from the Echo menu", title: "Transcription failed")
+      } else {
+        appState.setError(transcriptionError.localizedDescription)
+      }
       return .failure(transcriptionError)
     }
   }
@@ -542,8 +611,147 @@ enum TranscriptionServiceResult {
   case failure(TranscriptionError)
 }
 
+extension TranscriptionService {
+  /// The transcription model for the active profile, or the legacy global setting.
+  var activeTranscriptionModel: String {
+    profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
+  }
+
+  /// How long to wait for an OpenRouter transcription before falling back to Groq Whisper.
+  /// MAI-Transcribe-2's median was 0.8 s in Echo's benchmark, but about one request in 80
+  /// took over 15 s. Longer recordings take a little longer to transcribe. It is applied as
+  /// the request's idle timeout, so a long upload that is still sending does not trip it.
+  nonisolated static func fallbackTimeout(forRecordingDuration duration: TimeInterval)
+    -> TimeInterval
+  {
+    4 + max(0, duration) / 30
+  }
+
+  /// Transcribes a recording of any length. One over `LongRecordingSplitter.maxPartSeconds`
+  /// is cut into parts at pauses, which are transcribed a few at a time and joined.
+  func transcribeRecording(
+    audioFileURL: URL, model: String, recordingDuration: TimeInterval
+  ) async throws -> (TranscriptionResultWithTiming, String) {
+    var parts: [LongRecordingSplitter.Part] = []
+    if recordingDuration > LongRecordingSplitter.maxPartSeconds {
+      parts = try await Task.detached(priority: .userInitiated) {
+        try LongRecordingSplitter.split(audioFileURL)
+      }.value
+    }
+    guard parts.count > 1 else {
+      return try await transcribe(
+        audioFileURL: audioFileURL, model: model, recordingDuration: recordingDuration)
+    }
+    defer {
+      for part in parts { try? FileManager.default.removeItem(at: part.url) }
+    }
+    log(
+      "Transcribing a \(Int(recordingDuration)) s recording in \(parts.count) parts",
+      category: loggerCategory, level: .info)
+
+    // A few parts at a time: each waits for a slot before starting.
+    let maxConcurrent = 3
+    let results = try await withThrowingTaskGroup(
+      of: (Int, TranscriptionResultWithTiming, String).self
+    ) { group in
+      var results = [(TranscriptionResultWithTiming, String)?](repeating: nil, count: parts.count)
+      for (index, part) in parts.enumerated() {
+        if index >= maxConcurrent, let (done, result, used) = try await group.next() {
+          results[done] = (result, used)
+        }
+        group.addTask {
+          let (result, used) = try await self.transcribe(
+            audioFileURL: part.url, model: model, recordingDuration: part.duration)
+          return (index, result, used)
+        }
+      }
+      for try await (done, result, used) in group {
+        results[done] = (result, used)
+      }
+      return results.compactMap { $0 }
+    }
+
+    return Self.combine(
+      results.map(\.0), models: results.map(\.1), partDurations: parts.map(\.duration))
+  }
+
+  /// Joins the results for consecutive parts of one recording. A part the speech gate
+  /// rejects (all silence, where Whisper invents text) adds no text, but its segments are
+  /// kept, so a recording that is silent throughout is still rejected as a whole.
+  nonisolated static func combine(
+    _ parts: [TranscriptionResultWithTiming], models: [String], partDurations: [TimeInterval]
+  ) -> (TranscriptionResultWithTiming, String) {
+    var texts: [String] = []
+    var segments: [TranscriptionResult.Segment] = []
+    var offset: TimeInterval = 0
+    for (part, duration) in zip(parts, partDurations) {
+      if case .transcribe = SpeechGate.transcriptDecision(segments: part.result.segments) {
+        let text = part.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { texts.append(text) }
+      }
+      for segment in part.result.segments ?? [] {
+        segments.append(
+          TranscriptionResult.Segment(
+            id: segments.count, start: segment.start + offset, end: segment.end + offset,
+            text: segment.text, averageLogProbability: segment.averageLogProbability,
+            noSpeechProbability: segment.noSpeechProbability,
+            compressionRatio: segment.compressionRatio))
+      }
+      offset += duration
+    }
+
+    var modelsUsed: [String] = []
+    for model in models where !modelsUsed.contains(model) { modelsUsed.append(model) }
+
+    let result = TranscriptionResult(
+      text: texts.joined(separator: " "), language: parts.first?.result.language,
+      duration: offset, segments: segments.isEmpty ? nil : segments)
+    let timing = TranscriptionResultWithTiming(
+      result: result,
+      uploadTime: parts.reduce(0) { $0 + $1.uploadTime },
+      downloadTime: parts.reduce(0) { $0 + $1.downloadTime },
+      totalNetworkTime: parts.reduce(0) { $0 + $1.totalNetworkTime })
+    return (timing, modelsUsed.joined(separator: " + "))
+  }
+
+  /// Transcribes with the given model. If it runs on OpenRouter and fails or exceeds the
+  /// fallback timeout, retries once with Whisper on Groq when a Groq key is available.
+  /// Returns the result and the model that produced it, for history.
+  func transcribe(
+    audioFileURL: URL, model: String, recordingDuration: TimeInterval
+  ) async throws -> (TranscriptionResultWithTiming, String) {
+    let option = TranscriptionData.option(for: model)
+    let provider = option?.provider ?? .groq
+
+    guard provider == .openRouter else {
+      let result = try await apiClient.transcribeAudio(
+        fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: provider), model: model,
+        provider: provider, extraFields: option?.extraFields ?? [:])
+      return (result, model)
+    }
+
+    do {
+      let result = try await apiClient.transcribeAudio(
+        fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: .openRouter), model: model,
+        provider: .openRouter, extraFields: option?.extraFields ?? [:],
+        timeout: Self.fallbackTimeout(forRecordingDuration: recordingDuration))
+      return (result, model)
+    } catch {
+      guard !Task.isCancelled, settingsManager.hasAPIKey(for: .groq) else { throw error }
+      log(
+        "\(model) failed or timed out (\(error.localizedDescription)); falling back to \(TranscriptionData.fallbackModel)",
+        category: loggerCategory, level: .warning)
+      let fallback = TranscriptionData.fallbackModel
+      let result = try await apiClient.transcribeAudio(
+        fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: .groq), model: fallback,
+        provider: .groq, extraFields: TranscriptionData.option(for: fallback)?.extraFields ?? [:])
+      return (result, fallback)
+    }
+  }
+}
+
 enum TranscriptionError: LocalizedError {
-  case noAPIKey
+  case noAPIKey(APIProvider)
   case noMicrophonePermission
   case recordingFailed(Error)
   case recordingStopFailed
@@ -552,8 +760,8 @@ enum TranscriptionError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .noAPIKey:
-      return "Please add your Groq API key in Settings"
+    case .noAPIKey(let provider):
+      return provider.missingKeyMessage
     case .noMicrophonePermission:
       return "Please grant microphone permission to record audio"
     case .recordingFailed(let error):

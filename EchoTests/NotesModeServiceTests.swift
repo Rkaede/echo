@@ -288,7 +288,7 @@ struct NotesModeServiceTests {
           requests.append((text, prompt, model))
           let isTitle = prompt.contains("change title")
           if isTitle ? titleFails : cleanupFails {
-            throw PostProcessingError.missingAPIKey
+            throw PostProcessingError.missingAPIKey(.groq)
           }
           return isTitle ? title : "Cleaned note"
         },

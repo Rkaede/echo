@@ -197,7 +197,7 @@ class ProfilesService: ObservableObject {
     private func makeDefaultSeed() -> Profile {
         let now = Date()
         let defaultModel = settings.selectedModel
-        let prompt = "{{TRANSCRIPTION}}" // basic prompt template
+        let prompt = PostProcessingData.defaultPrompt
         return Profile(
             id: UUID().uuidString,
             title: "Default",

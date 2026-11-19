@@ -14,6 +14,7 @@ struct OverlayView: View {
   let activeProfileIconName: String?
   let errorCategory: ErrorCategory?
   let errorRecoveryHint: String?
+  let errorTitle: String?
   /// Set while notes mode is on. Recordings show their usual status; in between, the
   /// pill shows the mode and a button to stop it.
   let notesMode: OverlayNotesMode?
@@ -26,6 +27,7 @@ struct OverlayView: View {
     activeProfileIconName: String? = nil,
     errorCategory: ErrorCategory? = nil,
     errorRecoveryHint: String? = nil,
+    errorTitle: String? = nil,
     notesMode: OverlayNotesMode? = nil
   ) {
     self.status = status
@@ -35,6 +37,7 @@ struct OverlayView: View {
     self.activeProfileIconName = activeProfileIconName
     self.errorCategory = errorCategory
     self.errorRecoveryHint = errorRecoveryHint
+    self.errorTitle = errorTitle
     self.notesMode = notesMode
   }
 
@@ -81,7 +84,7 @@ struct OverlayView: View {
           } else if status == .error && errorCategory != nil {
             // Error state with category subtitle
             VStack(spacing: 2) {
-              Text(errorRecoveryHint == nil ? displayText : "Paste failed")
+              Text(errorTitle ?? (errorRecoveryHint == nil ? displayText : "Paste failed"))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Constants.Colors.text)
                 .lineLimit(1)

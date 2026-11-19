@@ -45,8 +45,9 @@ class TranscriptionViewModel: ObservableObject {
     self.init(appState: appState, settingsManager: SettingsManager.shared, transcriptionService: transcriptionService)
   }
 
+  /// Either key is enough to record: Groq for Whisper, OpenRouter for MAI-Transcribe-2.
   var hasAPIKey: Bool {
-    settingsManager.hasAPIKey
+    settingsManager.hasAPIKey || settingsManager.hasOpenRouterAPIKey
   }
 
   var apiKey: String {
@@ -118,6 +119,11 @@ class TranscriptionViewModel: ObservableObject {
       print("TranscriptionViewModel: Cannot cancel recording - currently in \(appState.status) state")
       break
     }
+  }
+
+  /// Transcribes the most recent recording whose transcription failed.
+  func retryFailedRecording() async {
+    _ = await transcriptionService.retryFailedRecording()
   }
 
   private func startRecording(mode: RecordingMode = .toggle) async {

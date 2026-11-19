@@ -15,6 +15,8 @@ class SettingsManager: ObservableObject {
   private var hasLoadedAPIKey = false
   private var hasMigrated = false
   private var cachedAPIKey: String = ""
+  private var hasLoadedOpenRouterKey = false
+  private var cachedOpenRouterKey: String = ""
 
   // All settings using @AppStorage for consistent storage
   @AppStorage("autoStart") var autoStart = false
@@ -147,10 +149,59 @@ class SettingsManager: ObservableObject {
     objectWillChange.send()
   }
   
-  // Force load the API key when user explicitly needs it (e.g., starting recording)
+  // Force load the API keys when user explicitly needs them (e.g., starting recording)
   func ensureAPIKeyLoaded() {
     if !hasLoadedAPIKey {
       loadAPIKeyIfNeeded()
+    }
+    loadOpenRouterKeyIfNeeded()
+  }
+
+  // MARK: - OpenRouter API Key
+
+  /// OpenRouter key, used for MAI-Transcribe-2 and Gemini post-processing. Loaded lazily from
+  /// the Keychain, like the Groq key.
+  var openRouterAPIKey: String {
+    get {
+      loadOpenRouterKeyIfNeeded()
+      return cachedOpenRouterKey
+    }
+    set {
+      loadOpenRouterKeyIfNeeded()
+      let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard trimmed != cachedOpenRouterKey else { return }
+      cachedOpenRouterKey = trimmed
+      if trimmed.isEmpty {
+        keychainManager.deleteAPIKey(for: .openRouter)
+      } else {
+        _ = keychainManager.saveAPIKey(trimmed, for: .openRouter)
+      }
+      objectWillChange.send()
+    }
+  }
+
+  var hasOpenRouterAPIKey: Bool {
+    hasLoadedOpenRouterKey && !cachedOpenRouterKey.isEmpty
+  }
+
+  private func loadOpenRouterKeyIfNeeded() {
+    guard !hasLoadedOpenRouterKey else { return }
+    cachedOpenRouterKey = keychainManager.getAPIKey(for: .openRouter) ?? ""
+    hasLoadedOpenRouterKey = true
+  }
+
+  /// The key for a provider. Call `ensureAPIKeyLoaded()` first when checking availability.
+  func apiKey(for provider: APIProvider) -> String {
+    switch provider {
+    case .groq: return apiKey
+    case .openRouter: return openRouterAPIKey
+    }
+  }
+
+  func hasAPIKey(for provider: APIProvider) -> Bool {
+    switch provider {
+    case .groq: return hasAPIKey
+    case .openRouter: return hasOpenRouterAPIKey
     }
   }
   

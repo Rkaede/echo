@@ -25,6 +25,7 @@ struct OverlayContentView: View {
         activeProfileIconName: profilesService.activeProfile?.iconName,
         errorCategory: appState.errorCategory,
         errorRecoveryHint: appState.errorRecoveryHint,
+        errorTitle: appState.errorTitle,
         notesMode: notesModeContent
       )
       .help(appState.status == .error ? appState.errorMessage : "")

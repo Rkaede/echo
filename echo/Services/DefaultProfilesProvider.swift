@@ -63,7 +63,7 @@ enum DefaultProfilesProvider {
       let postProcessingPrompt = seed.postProcessingPrompt
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .flatMap { $0.isEmpty ? nil : $0 }
-        ?? "{{TRANSCRIPTION}}"
+        ?? PostProcessingData.defaultPrompt
 
       let postProcessingModel = seed.postProcessingModel
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

@@ -435,5 +435,71 @@ actor DatabaseService {
             setUserVersion(version)
             print("DatabaseService: Migrated to schema v7 (network timing fields)")
         }
+
+        if version < 8 {
+            // v8: Keep the cleaned text, profile and clean-up model with each dictation, so the
+            // clean-up can be compared with the raw transcript. Also move profiles still on an
+            // old default prompt to the current one.
+            let existing = columnNames(of: "transcription_history")
+            for column in ["profile_id", "post_processed_text", "post_processing_model"]
+            where !existing.contains(column) {
+                let addColumnSQL = "ALTER TABLE transcription_history ADD COLUMN \(column) TEXT;"
+                _ = sqlite3_exec(db, addColumnSQL, nil, nil, nil)
+            }
+            upgradeLegacyDefaultPrompts()
+
+            version = 8
+            setUserVersion(version)
+            print("DatabaseService: Migrated to schema v8 (post-processing history)")
+        }
+    }
+
+    private func columnNames(of table: String) -> Set<String> {
+        guard let db = db else { return [] }
+        var names = Set<String>()
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA table_info(\(table));", -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(stmt, 1) {
+                    names.insert(String(cString: namePtr))
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+        return names
+    }
+
+    /// Replaces unedited old default prompts with the current default. Prompts the user wrote
+    /// are left alone.
+    private func upgradeLegacyDefaultPrompts() {
+        guard let db = db else { return }
+        var upgrades: [(id: String, prompt: String)] = []
+        var select: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT id, post_processing_prompt FROM profiles;", -1, &select, nil) == SQLITE_OK {
+            while sqlite3_step(select) == SQLITE_ROW {
+                guard let idPtr = sqlite3_column_text(select, 0),
+                      let promptPtr = sqlite3_column_text(select, 1),
+                      let upgraded = PostProcessingPrompt.upgradedDefault(for: String(cString: promptPtr))
+                else { continue }
+                upgrades.append((String(cString: idPtr), upgraded))
+            }
+        }
+        sqlite3_finalize(select)
+
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        for upgrade in upgrades {
+            var update: OpaquePointer?
+            let sql = "UPDATE profiles SET post_processing_prompt = ?, updated_at = ? WHERE id = ?;"
+            if sqlite3_prepare_v2(db, sql, -1, &update, nil) == SQLITE_OK {
+                sqlite3_bind_text(update, 1, upgrade.prompt, -1, transient)
+                sqlite3_bind_double(update, 2, Date().timeIntervalSince1970)
+                sqlite3_bind_text(update, 3, upgrade.id, -1, transient)
+                _ = sqlite3_step(update)
+            }
+            sqlite3_finalize(update)
+        }
+        if !upgrades.isEmpty {
+            print("DatabaseService: Upgraded \(upgrades.count) profile(s) to the current default prompt")
+        }
     }
 }

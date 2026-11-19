@@ -57,6 +57,8 @@ class AppState: ObservableObject {
     @Published var errorMessage: String = ""
     @Published var errorCategory: ErrorCategory? = nil
     @Published var errorRecoveryHint: String? = nil
+    /// Replaces the overlay's error title when set, e.g. "Transcription failed".
+    @Published var errorTitle: String? = nil
     @Published var currentInputDevice: String = ""
     @Published var recordingMode: RecordingMode? = nil
     // The live mic level is deliberately not published here: it changes ~33 times a second
@@ -91,6 +93,7 @@ class AppState: ObservableObject {
             errorMessage = ""
             errorCategory = nil
             errorRecoveryHint = nil
+            errorTitle = nil
         }
 
         // Any non-transient transition should cancel pending auto-reset from a previous status.
@@ -123,7 +126,7 @@ class AppState: ObservableObject {
         }
     }
     
-    func setError(_ message: String, recoveryHint: String? = nil) {
+    func setError(_ message: String, recoveryHint: String? = nil, title: String? = nil) {
         // Prevent overwriting cancelled state with error
         if status == .cancelled {
             log("Ignoring error '\(message)' due to cancelled state", category: loggerCategory, level: .warning)
@@ -134,6 +137,7 @@ class AppState: ObservableObject {
         errorMessage = message
         errorCategory = ErrorCategory.categorize(from: message)
         errorRecoveryHint = recoveryHint
+        errorTitle = title
         status = .error
         log("Error categorized as: \(errorCategory?.rawValue ?? "Unknown")", category: loggerCategory, level: .debug)
     }
@@ -142,6 +146,7 @@ class AppState: ObservableObject {
         errorMessage = ""
         errorCategory = nil
         errorRecoveryHint = nil
+        errorTitle = nil
         if status == .error {
             status = .idle
         }
@@ -208,6 +213,7 @@ class AppState: ObservableObject {
         errorMessage = ""
         errorCategory = nil
         errorRecoveryHint = nil
+        errorTitle = nil
         status = .idle
         recordingMode = nil
         showingProfileName = nil
