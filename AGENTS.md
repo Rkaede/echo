@@ -12,7 +12,8 @@ Echo is a macOS menu bar application that provides speech-to-text transcription 
 - MVVM architecture pattern
 - Combine framework for reactive programming
 - AVFoundation for audio recording
-- Groq API (Whisper model) for speech-to-text
+- Groq API (Whisper) and OpenRouter (MAI-Transcribe-2) for speech-to-text
+- Groq (GPT OSS 20B) or OpenRouter (Gemini 3.5 Flash-Lite) for post-processing
 - Sparkle framework for automatic updates
 - SQLite for transcription history storage
 
@@ -203,7 +204,7 @@ The codebase follows MVVM pattern with clear separation:
    - `HistoryView.swift` - Transcription history browser with search and audio playback
 
 4. **Services/** - External integrations and utilities
-   - `GroqClient.swift` - Groq API transcription requests
+   - `APIClient.swift` - Transcription and chat requests to Groq or OpenRouter (see `APIProvider`)
    - `GlobalShortcutMonitor.swift` - Push-to-talk mode monitoring (Fn key)
    - `PasteService.swift` - Simulates Cmd+V for auto-pasting
    - `SettingsManager.swift` - UserDefaults for non-sensitive preferences
@@ -221,6 +222,9 @@ The codebase follows MVVM pattern with clear separation:
    - `ProfilesRepository.swift` - Profile data persistence
    - `DefaultProfilesProvider.swift` - Built-in profile templates
    - `PostProcessing.swift` - LLM post-processing pipeline
+   - `CleanupReviewPrompt.swift` - Prompt a profile's "Copy Prompt to Improve Clean-Up" button copies for a coding agent
+   - `LongRecordingSplitter.swift` - Cuts recordings over 10 minutes into parts at pauses (uploads are limited to 25 MB)
+   - `FailedRecordingStore.swift` - Keeps recordings whose transcription failed, for the menu bar's Retry Failed Recording
    - `SoundManager.swift` - Audio feedback and notification sounds
    - `AudioStorageManager.swift` - Audio file storage for history playback
    - `AudioPlayerManager.swift` - Audio playback controls for history
@@ -253,10 +257,11 @@ Echo supports multiple user profiles with customizable settings:
 Managed by `TranscriptionService` and `TranscriptionViewModel`:
 1. User triggers recording → Check API key and permissions
 2. Start recording → `AudioRecorder` captures to temporary WAV file
-3. Stop recording → Upload audio to Groq API
+3. Stop recording → Upload audio to the profile model's provider (Groq or OpenRouter)
 4. Process response → Extract transcribed text
 5. **Optional Post-Processing** → Run through LLM for enhancement/correction
-6. **History Storage** → Save transcription and audio to SQLite database
+6. **History Storage** → Save transcription and audio to SQLite database; the cleaned text, profile
+   and clean-up model are added to the same row after post-processing
 7. Auto-paste → `PasteService` simulates Cmd+V
 8. Cleanup → Delete temporary audio file (but preserve history audio)
 
@@ -269,12 +274,21 @@ Overlay window configuration in `App.swift`:
 - Automatically repositions to active monitor
 
 ### API Integration
-**Groq API Configuration:**
-- Endpoint: `https://api.groq.com/openai/v1/audio/transcriptions`
-- Audio format: 16kHz, 16-bit, mono WAV
-- Default model: `whisper-large-v3` (configurable in settings)
-- Request format: Multipart form data
-- Response format: `verbose_json` with timestamps
+**Providers** (`Models/APIProvider.swift`): Groq and OpenRouter, both OpenAI-compatible. Each
+transcription model (`TranscriptionModels.swift`) and post-processing model
+(`PostProcessingModelOption.swift`) declares its provider; keys live in the Keychain via
+`KeychainManager` (`groq-api-key`, `openrouter-api-key`).
+- Audio format: 16kHz, 16-bit, mono WAV, multipart form data, `verbose_json` response
+- Default transcription model: `whisper-large-v3-turbo` on Groq
+- MAI-Transcribe-2 (OpenRouter) is sent `language=en`; if it fails or stalls, Echo retries once
+  with Whisper Turbo on Groq (`TranscriptionService.transcribe`)
+- Post-processing: a prompt without `{{TRANSCRIPTION}}` is sent as the system message with the
+  transcript as the user message (`PostProcessingPrompt`). Transcripts over 600 words are cleaned
+  in sections unless the prompt uses `{{TRANSCRIPTION}}`; a reply cut off at `max_tokens` falls
+  back to the raw text
+- Temperature: none is sent by default (Gemini 3.5 deprecates it). GPT OSS 20B sets 0 in its
+  request options: the provider default raised errors from 6.9% to 8.7% in the benchmark
+- Benchmark harness and results: `data/stt-eval/` (git-ignored, local only)
 
 ### Automatic Updates
 **Sparkle Configuration:**
@@ -290,7 +304,11 @@ Overlay window configuration in `App.swift`:
 - **Keychain**: API keys via `KeychainManager`
 - **UserDefaults**: Non-sensitive preferences (selected model, onboarding status, profile settings)
 - **SQLite Database**: Transcription history via `DatabaseService` and `HistoryManager`
-  - Storage location: Application Support directory
+  - Storage location: Application Support directory (inside the app's sandbox container)
+  - `transcription_history` keeps the raw transcript (`transcribed_text`) and, from schema v8,
+    `profile_id`, `post_processed_text` and `post_processing_model`.
+    `CleanupReviewPrompt` documents these columns for coding agents, so keep it in step with
+    schema changes
   - Full-text search capabilities
   - Audio file references for playback
 - **Temporary files**: Audio recordings managed by `TempFileManager`
@@ -352,7 +370,7 @@ Package resolution stored in `Package.resolved`.
 4. Add UI controls in `ProfilesSettingsView.swift`
 
 ### To change API provider:
-1. Replace `GroqClient.swift` implementation
+1. Add a case to `APIProvider` and update `APIClient.swift`
 2. Update `TranscriptionResult.swift` models
 3. Modify `TranscriptionService` if workflow changes
 4. Update post-processing service if using same provider

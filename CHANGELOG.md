@@ -1,5 +1,25 @@
 # Changelog
 
+## Echo 0.0.7
+
+### New Features
+
+- **OpenRouter models.** Add an OpenRouter API key in General settings, then choose a model per profile. MAI-Transcribe-2 (English only) makes fewer errors than Whisper and punctuates more cleanly, for a slightly longer wait. If it fails or is slow, Echo retries with Whisper Large V3 Turbo on Groq. Gemini 3.5 Flash-Lite is the more accurate of the two clean-up models, especially with names and technical terms. Your Groq key still covers the defaults.
+- **Long dictations.** Recordings over 10 minutes are sent in parts, cut at pauses, so a dictation of an hour or more transcribes instead of failing at the upload limit. Long transcripts are cleaned up a section at a time. A prompt that uses {{TRANSCRIPTION}} still gets the whole transcript at once, so a prompt that turns a dictation into an email keeps working.
+- **Retry Failed Recording.** If a transcription fails, Echo keeps the recording, and Retry Failed Recording in the menu bar sends it again. Echo keeps the three most recent.
+- **Copy Prompt to Improve Clean-Up.** A new button in each profile's post-processing settings copies instructions for Claude Code or another coding agent. The agent reads that profile's dictation history, compares the raw transcripts with the cleaned text, and suggests a better prompt with a list of the names and terms you use. History must be turned on, and the agent you paste it into will read your history.
+
+### Improvements
+
+- **Better clean-up by default.** The clean-up prompt is now sent as instructions, with your dictation as a separate message, so the model no longer answers a question you dictate or follows an instruction you dictate. Profiles still using an old default prompt switch to the new one. Prompts you have edited are left as they are, and a prompt that includes {{TRANSCRIPTION}} works as before.
+- **A shorter list of clean-up models.** GPT OSS 20B on Groq is the default and the fastest. Gemini 3.5 Flash-Lite runs through OpenRouter. Profiles set to a model that has been removed now use GPT OSS 20B.
+- **Comparable error rates.** The word error rate shown for each transcription model now comes from one independent benchmark (Artificial Analysis), so the models can be compared.
+- **History keeps the cleaned text.** Each dictation now saves the cleaned text next to the raw transcript, along with the profile and clean-up model used.
+
+### Fixes
+
+- Clean-up no longer drops the end of a long dictation. If a clean-up reply is cut short, Echo pastes the raw transcript instead.
+
 ## Echo 0.0.6
 
 ### Improvements
