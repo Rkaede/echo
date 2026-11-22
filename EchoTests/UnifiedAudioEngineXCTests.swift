@@ -58,13 +58,6 @@ final class UnifiedAudioEngineXCTests: XCTestCase {
     XCTAssertNotNil(error.errorDescription)
   }
 
-  // MARK: - Sound Type Tests
-
-  func testSoundTypeRawValues() {
-    XCTAssertEqual(SoundType.recordingStart.rawValue, "recordingStart")
-    XCTAssertEqual(SoundType.transcriptionComplete.rawValue, "transcriptionComplete")
-  }
-
   // MARK: - State Management Tests
 
   func testSingletonInstance() {

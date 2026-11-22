@@ -1,21 +1,52 @@
 @preconcurrency import AVFoundation
-import AppKit
 import Foundation
 
-struct SoundOption {
+/// A sound a recording event can play: one Cuelume cue, or none.
+struct SoundOption: Identifiable, Equatable {
   let id: String
   let label: String
-  let fileName: String
+  let cue: CuelumeCue?
 
-  static let allOptions: [SoundOption] = [
-    SoundOption(id: "none", label: "None", fileName: ""),
-    SoundOption(id: "click01", label: "Click 1", fileName: "click01.mp3"),
-    SoundOption(id: "click02", label: "Click 2", fileName: "click02.mp3"),
-    SoundOption(id: "click03", label: "Click 3", fileName: "click03.mp3"),
-    SoundOption(id: "click04", label: "Click 4", fileName: "click04.mp3"),
+  init(cue: CuelumeCue) {
+    id = cue.rawValue
+    label = cue.label
+    self.cue = cue
+  }
+
+  private init(id: String, label: String) {
+    self.id = id
+    self.label = label
+    cue = nil
+  }
+
+  static let none = SoundOption(id: "none", label: "None")
+
+  /// The cues offered for Echo's events, in Cuelume's order of jobs: input, motion, outcomes.
+  /// `type` and `count` are left out: a keystroke and a rolling number don't describe a recording.
+  static let pickerCues: [CuelumeCue] = [
+    .tap, .select, .toggle, .open, .close, .navigate, .loading, .ready, .success, .warning, .error,
+    .attention,
   ]
+
+  static let allOptions: [SoundOption] = [.none] + pickerCues.map(SoundOption.init(cue:))
+
+  /// A short tap, so little of it reaches the recording that has just started.
+  static let defaultRecordingStart = SoundOption(cue: .tap)
+  /// Cuelume's cue for a result that has arrived.
+  static let defaultTranscriptionComplete = SoundOption(cue: .ready)
+
+  static func option(id: String) -> SoundOption? {
+    allOptions.first { $0.id == id }
+  }
+
+  /// The stored id to keep, or `fallback`'s for ids this version doesn't offer, such as the
+  /// `click01`–`click04` files earlier versions played.
+  static func migratedID(_ storedID: String, fallback: SoundOption) -> String {
+    option(id: storedID) == nil ? fallback.id : storedID
+  }
 }
 
+/// Plays Echo's sound effects, synthesised by `CuelumeSynth` rather than read from files.
 @MainActor
 class SoundManager: ObservableObject {
   static let shared = SoundManager()
@@ -23,174 +54,145 @@ class SoundManager: ObservableObject {
   private let unifiedEngine = UnifiedAudioEngine.shared
   private let settingsManager = SettingsManager.shared
 
-  // Track currently loaded sounds
-  private var currentlyLoadedRecordingStartSoundId: String = ""
-  private var currentlyLoadedTranscriptionCompleteSoundId: String = ""
+  private enum Slot: String, CaseIterable {
+    case recordingStart = "recording start"
+    case transcriptionComplete = "transcription complete"
+  }
 
-  // Observe changes to sound settings
+  private struct Selection: Equatable {
+    let cue: CuelumeCue
+    let theme: CuelumeTheme
+  }
+
+  /// Each slot's next play, rendered ahead so it starts at once. Every play renders a fresh take
+  /// for the next, so the per-play variation Cuelume builds in is heard.
+  private var nextTakes: [Slot: (selection: Selection, buffer: AVAudioPCMBuffer)] = [:]
+  private var renderTasks: [Slot: Task<Void, Never>] = [:]
+  /// What each slot was last asked to render, so a settings change renders only what changed.
+  private var preparedSelections: [Slot: Selection?] = [:]
+
   private var soundChangeObserver: NSObjectProtocol?
 
   private init() {
-    currentlyLoadedRecordingStartSoundId = settingsManager.recordingStartSound
-    currentlyLoadedTranscriptionCompleteSoundId = settingsManager.transcriptionCompleteSound
-    preloadSounds()
+    migrateLegacySelections()
+    for slot in Slot.allCases { prepare(slot) }
     setupSoundChangeObserver()
-  }
-
-  private func preloadSounds() {
-    loadRecordingStartSound()
-    loadTranscriptionCompleteSound()
-  }
-
-  private func loadRecordingStartSound() {
-    loadSound(forSoundId: settingsManager.recordingStartSound, forPlayer: .recordingStart)
-  }
-
-  private func loadTranscriptionCompleteSound() {
-    loadSound(
-      forSoundId: settingsManager.transcriptionCompleteSound, forPlayer: .transcriptionComplete)
-  }
-
-  private enum PlayerType {
-    case recordingStart
-    case transcriptionComplete
-  }
-
-  private func loadSound(forSoundId soundId: String, forPlayer playerType: PlayerType) {
-    // Find the sound option for the given ID
-    guard let soundOption = SoundOption.allOptions.first(where: { $0.id == soundId }) else {
-      print("SoundManager: Unknown sound ID: \(soundId)")
-      return
-    }
-
-    // Handle "none" option by clearing the sound
-    if soundId == "none" {
-      let engineType: SoundType
-      switch playerType {
-      case .recordingStart:
-        engineType = .recordingStart
-      case .transcriptionComplete:
-        engineType = .transcriptionComplete
-      }
-      unifiedEngine.clearSound(type: engineType)
-      return
-    }
-
-    // Extract filename without extension
-    let fileNameWithoutExtension = (soundOption.fileName as NSString).deletingPathExtension
-
-    // Load the sound file from the main Resources folder
-    guard
-      let soundURL = Bundle.main.url(forResource: fileNameWithoutExtension, withExtension: "mp3")
-    else {
-      print("SoundManager: Could not find sound file \(soundOption.fileName) in bundle")
-      return
-    }
-
-    print(
-      "SoundManager: Loading sound \(soundOption.label) for \(playerType == .recordingStart ? "recording start" : "transcription complete") from: \(soundURL)"
-    )
-
-    // Preload sound into unified engine
-    let engineType: SoundType
-    switch playerType {
-    case .recordingStart:
-      engineType = .recordingStart
-    case .transcriptionComplete:
-      engineType = .transcriptionComplete
-    }
-    unifiedEngine.preloadSound(from: soundURL, for: engineType)
-
-    // Update the currently loaded sound ID
-    switch playerType {
-    case .recordingStart:
-      currentlyLoadedRecordingStartSoundId = soundId
-    case .transcriptionComplete:
-      currentlyLoadedTranscriptionCompleteSoundId = soundId
-    }
   }
 
   // MARK: - Public Interface
 
+  /// Plays the recording start sound; returns its length, or nil when nothing plays.
   @discardableResult
   func playRecordingStartSound(completion: (() -> Void)? = nil) -> TimeInterval? {
     guard settingsManager.soundEnabled && settingsManager.soundOnRecordingStart else {
       completion?()
       return nil
     }
-
-    print("SoundManager: Playing recording start sound via UnifiedAudioEngine")
-
-    // Play sound via unified engine
-    unifiedEngine.playSound(type: .recordingStart) {
-      completion?()
-    }
-
-    // Return approximate duration (we can't get exact duration from buffer easily)
-    // For short notification sounds, this is typically 0.1-0.3 seconds
-    return 0.2
+    return play(.recordingStart, completion: completion)
   }
 
   func playTranscriptionCompleteSound() {
     guard settingsManager.soundEnabled && settingsManager.soundOnTranscriptionComplete else {
       return
     }
-
-    print("SoundManager: Playing transcription complete sound via UnifiedAudioEngine")
-
-    // Play sound via unified engine
-    unifiedEngine.playSound(type: .transcriptionComplete)
+    play(.transcriptionComplete)
   }
-
-  // MARK: - Volume Control
-  // Note: Volume control is currently not implemented for UnifiedAudioEngine
-  // The AVAudioPlayerNode in the engine plays at the system volume level
-  // Future enhancement: Use AVAudioUnitEQ or AVAudioMixerNode for volume control
-
-  func setVolume(_ volume: Float) {
-    // TODO: Implement volume control via AVAudioMixerNode or AVAudioUnitEQ
-    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
-  }
-
-  func setRecordingStartVolume(_ volume: Float) {
-    // TODO: Implement volume control
-    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
-  }
-
-  func setTranscriptionCompleteVolume(_ volume: Float) {
-    // TODO: Implement volume control
-    print("SoundManager: Volume control not yet implemented for UnifiedAudioEngine")
-  }
-
-  // MARK: - Testing
 
   func testRecordingStartSound() {
-    let soundId = settingsManager.recordingStartSound
-
-    // Don't test if set to "none"
-    guard soundId != "none" else {
-      print("SoundManager: Cannot test - recording start sound is set to 'none'")
-      return
-    }
-
-    print("SoundManager: Testing recording start sound via UnifiedAudioEngine")
-    unifiedEngine.playSound(type: .recordingStart)
+    play(.recordingStart)
   }
 
   func testTranscriptionCompleteSound() {
-    let soundId = settingsManager.transcriptionCompleteSound
-
-    // Don't test if set to "none"
-    guard soundId != "none" else {
-      print("SoundManager: Cannot test - transcription complete sound is set to 'none'")
-      return
-    }
-
-    print("SoundManager: Testing transcription complete sound via UnifiedAudioEngine")
-    unifiedEngine.playSound(type: .transcriptionComplete)
+    play(.transcriptionComplete)
   }
 
-  // MARK: - Sound Selection Observer
+  /// Plays `cue` in the current theme, for previewing a choice in Settings.
+  func preview(_ cue: CuelumeCue) {
+    let theme = currentTheme
+    Task {
+      let rendering = await Task.detached(priority: .userInitiated) {
+        CuelumeSynth.render(cue, theme: theme)
+      }.value
+      guard let buffer = rendering.makeBuffer() else { return }
+      unifiedEngine.playSound(buffer, label: "preview \(cue.rawValue)")
+    }
+  }
+
+  // MARK: - Rendering
+
+  private var currentTheme: CuelumeTheme {
+    CuelumeTheme(rawValue: settingsManager.soundTheme) ?? .standard
+  }
+
+  private func selection(for slot: Slot) -> Selection? {
+    let id: String
+    switch slot {
+    case .recordingStart: id = settingsManager.recordingStartSound
+    case .transcriptionComplete: id = settingsManager.transcriptionCompleteSound
+    }
+    guard let cue = SoundOption.option(id: id)?.cue else { return nil }
+    return Selection(cue: cue, theme: currentTheme)
+  }
+
+  /// Renders the slot's next take in the background.
+  private func prepare(_ slot: Slot) {
+    renderTasks[slot]?.cancel()
+    let selection = selection(for: slot)
+    preparedSelections.updateValue(selection, forKey: slot)
+    guard let selection else {
+      nextTakes[slot] = nil
+      return
+    }
+    renderTasks[slot] = Task { [weak self] in
+      let rendering = await Task.detached(priority: .userInitiated) {
+        CuelumeSynth.render(selection.cue, theme: selection.theme)
+      }.value
+      guard let self, !Task.isCancelled, self.selection(for: slot) == selection,
+        let buffer = rendering.makeBuffer()
+      else { return }
+      self.nextTakes[slot] = (selection, buffer)
+    }
+  }
+
+  @discardableResult
+  private func play(_ slot: Slot, completion: (() -> Void)? = nil) -> TimeInterval? {
+    guard let selection = selection(for: slot) else {
+      completion?()
+      return nil
+    }
+
+    // A take is normally ready; render one here if a play comes before it, or after a change.
+    let buffer: AVAudioPCMBuffer?
+    if let take = nextTakes[slot], take.selection == selection {
+      buffer = take.buffer
+    } else {
+      buffer = CuelumeSynth.render(selection.cue, theme: selection.theme).makeBuffer()
+    }
+    nextTakes[slot] = nil
+    prepare(slot)
+
+    guard let buffer else {
+      completion?()
+      return nil
+    }
+    unifiedEngine.playSound(buffer, label: slot.rawValue, completion: completion)
+    return Double(buffer.frameLength) / buffer.format.sampleRate
+  }
+
+  // MARK: - Settings
+
+  private func migrateLegacySelections() {
+    let start = SoundOption.migratedID(
+      settingsManager.recordingStartSound, fallback: .defaultRecordingStart)
+    if start != settingsManager.recordingStartSound {
+      settingsManager.recordingStartSound = start
+    }
+    let complete = SoundOption.migratedID(
+      settingsManager.transcriptionCompleteSound, fallback: .defaultTranscriptionComplete)
+    if complete != settingsManager.transcriptionCompleteSound {
+      settingsManager.transcriptionCompleteSound = complete
+    }
+  }
 
   private func setupSoundChangeObserver() {
     soundChangeObserver = NotificationCenter.default.addObserver(
@@ -198,26 +200,12 @@ class SoundManager: ObservableObject {
       object: nil,
       queue: .main
     ) { [weak self] _ in
-      guard let self = self else { return }
-
       MainActor.assumeIsolated {
-        // Check if recording start sound changed
-        let currentRecordingStartSound = self.settingsManager.recordingStartSound
-        if currentRecordingStartSound != self.currentlyLoadedRecordingStartSoundId {
-          print("SoundManager: Recording start sound changed to \(currentRecordingStartSound)")
-          self.loadRecordingStartSound()
-        }
-
-        // Check if transcription complete sound changed
-        let currentTranscriptionCompleteSound = self.settingsManager.transcriptionCompleteSound
-        if currentTranscriptionCompleteSound != self.currentlyLoadedTranscriptionCompleteSoundId {
-          print(
-            "SoundManager: Transcription complete sound changed to \(currentTranscriptionCompleteSound)"
-          )
-          self.loadTranscriptionCompleteSound()
+        guard let self else { return }
+        for slot in Slot.allCases where self.preparedSelections[slot] != self.selection(for: slot) {
+          self.prepare(slot)
         }
       }
     }
   }
-
 }

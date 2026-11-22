@@ -33,8 +33,10 @@ class SettingsManager: ObservableObject {
   @AppStorage("soundEnabled") var soundEnabled = true
   @AppStorage("soundOnRecordingStart") var soundOnRecordingStart = true
   @AppStorage("soundOnTranscriptionComplete") var soundOnTranscriptionComplete = true
-  @AppStorage("recordingStartSound") var recordingStartSound = "click01"
-  @AppStorage("transcriptionCompleteSound") var transcriptionCompleteSound = "click02"
+  @AppStorage("recordingStartSound") var recordingStartSound = SoundOption.defaultRecordingStart.id
+  @AppStorage("transcriptionCompleteSound") var transcriptionCompleteSound =
+    SoundOption.defaultTranscriptionComplete.id
+  @AppStorage("soundTheme") var soundTheme = CuelumeTheme.standard.rawValue
   @AppStorage("audioEngineIdlePolicyRaw") var audioEngineIdlePolicyRaw = AudioEngineIdlePolicy.stopWhenIdle.rawValue
   @AppStorage("audioEngineIdleTimeoutSeconds") var audioEngineIdleTimeoutSeconds = 10
   @AppStorage("selectedInputDeviceUID") var selectedInputDeviceUID = ""

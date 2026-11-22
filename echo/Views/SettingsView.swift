@@ -1,4 +1,3 @@
-import AVFoundation
 import AppKit
 import SwiftUI
 
@@ -761,13 +760,17 @@ struct AboutView: View {
             .fontWeight(.semibold)
 
           VStack(spacing: 2) {
-            Text("Sound effects obtained from")
+            Text("Sound effects synthesized with")
               .font(.caption)
               .foregroundColor(.secondary)
 
-            Link("Zapsplat", destination: URL(string: "https://www.zapsplat.com")!)
+            Link("Cuelume", destination: CuelumeCredit.repositoryURL)
               .font(.caption)
               .foregroundColor(.accentColor)
+
+            Text("Copyright © 2026 Daniel Belyi. MIT License.")
+              .font(.caption)
+              .foregroundColor(.secondary)
           }
         }
       }
@@ -976,48 +979,30 @@ struct SoundSettingsView: View {
       }
 
       if settings.soundEnabled {
-        Section("Sounds") {
-          HStack {
-            Text("Recording start:")
-
-            Spacer()
-
-            SoundPickerMenu(
-              selection: $settings.recordingStartSound,
-              label: "Recording Start Sound"
-            )
-
-            if settings.recordingStartSound != "none" {
-              Button(action: {
-                soundManager.testRecordingStartSound()
-              }) {
-                Image(systemName: "play.circle")
-                  .font(.system(size: 16))
-              }
-              .buttonStyle(.plain)
+        Section {
+          Picker("Style:", selection: $settings.soundTheme) {
+            ForEach(CuelumeTheme.allCases) { theme in
+              Text(theme.label).tag(theme.rawValue)
             }
           }
 
-          HStack {
-            Text("Transcription complete:")
+          SoundRow(
+            title: "Recording start:",
+            pickerLabel: "Recording Start Sound",
+            selection: $settings.recordingStartSound,
+            play: soundManager.testRecordingStartSound
+          )
 
-            Spacer()
-
-            SoundPickerMenu(
-              selection: $settings.transcriptionCompleteSound,
-              label: "Transcription Complete Sound"
-            )
-
-            if settings.transcriptionCompleteSound != "none" {
-              Button(action: {
-                soundManager.testTranscriptionCompleteSound()
-              }) {
-                Image(systemName: "play.circle")
-                  .font(.system(size: 16))
-              }
-              .buttonStyle(.plain)
-            }
-          }
+          SoundRow(
+            title: "Transcription complete:",
+            pickerLabel: "Transcription Complete Sound",
+            selection: $settings.transcriptionCompleteSound,
+            play: soundManager.testTranscriptionCompleteSound
+          )
+        } header: {
+          Text("Sounds")
+        } footer: {
+          CuelumeCredit()
         }
       }
     }
@@ -1026,46 +1011,74 @@ struct SoundSettingsView: View {
   }
 }
 
+private struct SoundRow: View {
+  let title: String
+  let pickerLabel: String
+  @Binding var selection: String
+  let play: () -> Void
+
+  var body: some View {
+    HStack {
+      Text(title)
+
+      Spacer()
+
+      SoundPickerMenu(selection: $selection, label: pickerLabel)
+
+      if selection != SoundOption.none.id {
+        Button(action: play) {
+          Image(systemName: "play.circle")
+            .font(.system(size: 16))
+        }
+        .buttonStyle(.plain)
+        .help("Play sound")
+      }
+    }
+  }
+}
+
+/// Credit for the sounds, which come from a Swift port of Cuelume (MIT License).
+struct CuelumeCredit: View {
+  static let repositoryURL = URL(string: "https://github.com/danielwh2/cuelume")!
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Text("Sounds synthesized with")
+        .foregroundColor(.secondary)
+      Link("Cuelume", destination: Self.repositoryURL)
+        .foregroundColor(.accentColor)
+      Text("by Daniel Belyi, MIT License.")
+        .foregroundColor(.secondary)
+    }
+    .font(.caption)
+  }
+}
+
 struct SoundPickerMenu: View {
   @Binding var selection: String
   let label: String
-  @State private var isExpanded = false
   @StateObject private var soundManager = SoundManager.shared
-  @State private var previewPlayer: AVAudioPlayer?
   @State private var hoverTask: Task<Void, Never>?
 
   private var selectedOption: SoundOption? {
-    SoundOption.allOptions.first { $0.id == selection }
+    SoundOption.option(id: selection)
   }
 
   var body: some View {
     Menu {
-      ForEach(SoundOption.allOptions, id: \.id) { sound in
-        Button(action: {
+      ForEach(SoundOption.allOptions) { sound in
+        Button(sound.label) {
           selection = sound.id
-        }) {
-          HStack {
-            Text(sound.label)
-            // if sound.id == selection {
-            //   Spacer()
-            //   Image(systemName: "checkmark")
-            // }
-          }
         }
         .onHover { isHovering in
-          // Cancel any existing hover task
           hoverTask?.cancel()
 
-          if isHovering && sound.id != "none" {
-            // Start a new task with 500ms delay
+          if isHovering, let cue = sound.cue {
+            // Preview after a short pause, so sweeping past options stays quiet
             hoverTask = Task {
-              try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-
-              // Check if task was cancelled (user moved mouse away)
+              try? await Task.sleep(nanoseconds: 500_000_000)
               if !Task.isCancelled {
-                await MainActor.run {
-                  playPreviewSound(for: sound.id)
-                }
+                soundManager.preview(cue)
               }
             }
           }
@@ -1073,7 +1086,7 @@ struct SoundPickerMenu: View {
       }
     } label: {
       HStack {
-        Text(selectedOption?.label ?? "None")
+        Text(selectedOption?.label ?? SoundOption.none.label)
       }
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
@@ -1082,34 +1095,7 @@ struct SoundPickerMenu: View {
     }
     .menuStyle(.borderlessButton)
     .fixedSize()
-  }
-
-  private func playPreviewSound(for soundId: String) {
-    // Find the sound option
-    guard let soundOption = SoundOption.allOptions.first(where: { $0.id == soundId }),
-      !soundOption.fileName.isEmpty
-    else {
-      return
-    }
-
-    // Extract filename without extension
-    let fileNameWithoutExtension = (soundOption.fileName as NSString).deletingPathExtension
-
-    // Load the sound file from the main Resources folder
-    guard
-      let soundURL = Bundle.main.url(forResource: fileNameWithoutExtension, withExtension: "mp3")
-    else {
-      return
-    }
-
-    // Play the sound on main thread to maintain reference
-    do {
-      previewPlayer = try AVAudioPlayer(contentsOf: soundURL)
-      previewPlayer?.volume = 0.5  // Lower volume for preview
-      previewPlayer?.play()
-    } catch {
-      // Silently fail if sound can't be played
-    }
+    .accessibilityLabel(label)
   }
 }
 

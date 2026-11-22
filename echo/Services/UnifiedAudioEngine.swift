@@ -75,10 +75,6 @@ class UnifiedAudioEngine: ObservableObject {
   nonisolated private static let normalizationGainSmoothing: Float = 0.2
   nonisolated(unsafe) private var normalizationState = WaveformNormalizationState()
 
-  // Preloaded sound buffers
-  private var recordingStartBuffer: AVAudioPCMBuffer?
-  private var transcriptionCompleteBuffer: AVAudioPCMBuffer?
-
   private let settingsManager = SettingsManager.shared
   private let firstFrameTimeoutMs = 750
 
@@ -1254,142 +1250,17 @@ class UnifiedAudioEngine: ObservableObject {
 
   // MARK: - Sound Playback
 
-  /// Preloads a sound file into memory for faster playback.
-  func preloadSound(from url: URL, for type: SoundType) {
-    log(
-      "Preloading \(type) sound from \(url)",
-      category: unifiedAudioEngineLogCategory,
-      level: .debug
-    )
+  /// Plays a sound effect on the playback engine, converted to the player's current format.
+  func playSound(_ buffer: AVAudioPCMBuffer, label: String, completion: (() -> Void)? = nil) {
+    cancelIdleStop()
+    ensurePlaybackEngineStarted()
 
-    do {
-      let audioFile = try AVAudioFile(forReading: url)
-      let frameCount = AVAudioFrameCount(audioFile.length)
-      let sourceFormat = audioFile.processingFormat
-      let playerFormat = playerNode.outputFormat(forBus: 0)
-
-      log(
-        "Converting \(type) from \(sourceFormat.sampleRate)Hz \(sourceFormat.channelCount)ch to \(playerFormat.sampleRate)Hz \(playerFormat.channelCount)ch",
-        category: unifiedAudioEngineLogCategory,
-        level: .debug
-      )
-
-      guard
-        let sourceBuffer = AVAudioPCMBuffer(
-          pcmFormat: sourceFormat,
-          frameCapacity: frameCount
-        )
-      else {
-        log(
-          "Failed to create source buffer for \(type)",
-          category: unifiedAudioEngineLogCategory,
-          level: .error
-        )
-        return
-      }
-
-      try audioFile.read(into: sourceBuffer)
-
-      let finalBuffer: AVAudioPCMBuffer
-      if sourceFormat.sampleRate == playerFormat.sampleRate
-        && sourceFormat.channelCount == playerFormat.channelCount
-      {
-        finalBuffer = sourceBuffer
-        log("No conversion needed for \(type)", category: unifiedAudioEngineLogCategory, level: .debug)
-      } else {
-        guard let converter = AVAudioConverter(from: sourceFormat, to: playerFormat) else {
-          log(
-            "Failed to create converter for \(type)",
-            category: unifiedAudioEngineLogCategory,
-            level: .error
-          )
-          return
-        }
-
-        let outputFrameCount = AVAudioFrameCount(
-          Double(frameCount) * playerFormat.sampleRate / sourceFormat.sampleRate
-        )
-
-        guard
-          let outputBuffer = AVAudioPCMBuffer(
-            pcmFormat: playerFormat,
-            frameCapacity: outputFrameCount
-          )
-        else {
-          log(
-            "Failed to create output buffer for \(type)",
-            category: unifiedAudioEngineLogCategory,
-            level: .error
-          )
-          return
-        }
-
-        var error: NSError?
-        converter.convert(
-          to: outputBuffer, error: &error,
-          withInputFrom: { _, outStatus in
-            outStatus.pointee = .haveData
-            return sourceBuffer
-          })
-
-        if let error {
-          log(
-            "Conversion error for \(type): \(error)",
-            category: unifiedAudioEngineLogCategory,
-            level: .error
-          )
-          return
-        }
-
-        finalBuffer = outputBuffer
-      }
-
-      switch type {
-      case .recordingStart:
-        recordingStartBuffer = finalBuffer
-      case .transcriptionComplete:
-        transcriptionCompleteBuffer = finalBuffer
-      }
-
-      log(
-        "Successfully preloaded \(type) sound",
-        category: unifiedAudioEngineLogCategory,
-        level: .info
-      )
-    } catch {
-      log(
-        "Failed to preload \(type) sound: \(error)",
-        category: unifiedAudioEngineLogCategory,
-        level: .error
-      )
-    }
-  }
-
-  /// Plays a preloaded sound on the playback engine.
-  func playSound(type: SoundType, completion: (() -> Void)? = nil) {
-    let buffer: AVAudioPCMBuffer?
-
-    switch type {
-    case .recordingStart:
-      buffer = recordingStartBuffer
-    case .transcriptionComplete:
-      buffer = transcriptionCompleteBuffer
-    }
-
-    guard let buffer else {
-      log(
-        "Sound \(type) not loaded",
-        category: unifiedAudioEngineLogCategory,
-        level: .warning
-      )
+    guard let playable = convertedForPlayer(buffer, label: label) else {
       completion?()
       return
     }
 
-    log("Playing \(type) sound", category: unifiedAudioEngineLogCategory, level: .debug)
-
-    cancelIdleStop()
-    ensurePlaybackEngineStarted()
+    log("Playing \(label) sound", category: unifiedAudioEngineLogCategory, level: .debug)
 
     pendingPlaybackCount += 1
     log(
@@ -1398,9 +1269,9 @@ class UnifiedAudioEngine: ObservableObject {
       level: .debug
     )
 
-    playerNode.scheduleBuffer(buffer) {
+    playerNode.scheduleBuffer(playable) {
       log(
-        "Finished playing \(type) sound",
+        "Finished playing \(label) sound",
         category: unifiedAudioEngineLogCategory,
         level: .debug
       )
@@ -1415,15 +1286,57 @@ class UnifiedAudioEngine: ObservableObject {
     }
   }
 
-  /// Clears a preloaded sound from memory.
-  func clearSound(type: SoundType) {
-    switch type {
-    case .recordingStart:
-      recordingStartBuffer = nil
-    case .transcriptionComplete:
-      transcriptionCompleteBuffer = nil
+  /// The player node only accepts buffers in its own format, which follows the output device.
+  private func convertedForPlayer(_ buffer: AVAudioPCMBuffer, label: String) -> AVAudioPCMBuffer? {
+    let playerFormat = playerNode.outputFormat(forBus: 0)
+    let sourceFormat = buffer.format
+    if sourceFormat == playerFormat { return buffer }
+
+    guard let converter = AVAudioConverter(from: sourceFormat, to: playerFormat) else {
+      log(
+        "Failed to create converter for \(label) sound",
+        category: unifiedAudioEngineLogCategory,
+        level: .error
+      )
+      return nil
     }
-    log("Cleared \(type) sound from memory", category: unifiedAudioEngineLogCategory, level: .debug)
+
+    let outputFrameCount = AVAudioFrameCount(
+      (Double(buffer.frameLength) * playerFormat.sampleRate / sourceFormat.sampleRate).rounded(.up)
+    )
+    guard
+      let outputBuffer = AVAudioPCMBuffer(pcmFormat: playerFormat, frameCapacity: outputFrameCount)
+    else {
+      log(
+        "Failed to create output buffer for \(label) sound",
+        category: unifiedAudioEngineLogCategory,
+        level: .error
+      )
+      return nil
+    }
+
+    // Hand the converter the source once; asking again means it has all of it.
+    var supplied = false
+    var error: NSError?
+    converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+      if supplied {
+        outStatus.pointee = .endOfStream
+        return nil
+      }
+      supplied = true
+      outStatus.pointee = .haveData
+      return buffer
+    }
+
+    if let error {
+      log(
+        "Conversion error for \(label) sound: \(error)",
+        category: unifiedAudioEngineLogCategory,
+        level: .error
+      )
+      return nil
+    }
+    return outputBuffer
   }
 }
 
@@ -1475,11 +1388,6 @@ final class BufferPool: @unchecked Sendable {
 }
 
 // MARK: - Supporting Types
-
-enum SoundType: String {
-  case recordingStart
-  case transcriptionComplete
-}
 
 enum UnifiedAudioEngineError: LocalizedError {
   case alreadyRecording

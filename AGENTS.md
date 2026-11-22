@@ -225,7 +225,11 @@ The codebase follows MVVM pattern with clear separation:
    - `CleanupReviewPrompt.swift` - Instructions a profile's "Copy Instructions" button ("Improve Prompt with an Agent") copies for a coding agent
    - `LongRecordingSplitter.swift` - Cuts recordings over 10 minutes into parts at pauses (uploads are limited to 25 MB)
    - `FailedRecordingStore.swift` - Keeps recordings whose transcription failed, for the menu bar's Retry Failed Recording
-   - `SoundManager.swift` - Audio feedback and notification sounds
+   - `SoundManager.swift` - Recording start/complete sounds; renders each next take ahead of time
+   - `Cuelume/` - Swift port of [Cuelume](https://github.com/danielwh2/cuelume) (MIT), which
+     synthesises the sounds: `CuelumeSynth.swift` (renderer), `CuelumeSound.swift` (model) and the
+     generated `CuelumeRecipes.swift`. The licence ships as `Cuelume-LICENSE.txt`, and Settings →
+     Sounds and About credit it
    - `AudioStorageManager.swift` - Audio file storage for history playback
    - `AudioPlayerManager.swift` - Audio playback controls for history
 
@@ -382,6 +386,12 @@ Package resolution stored in `Package.resolved`.
    `AppIcon`, `AppIconLine`, `AppIconRed`, `AppIconNight` and `MenuBarIcon` in `Assets.xcassets`
 2. `AppIcon` (a copy of Line) is the app icon; `AppIconStyle` lists the bundled styles for a future
    icon setting (`ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS` bundles all of them)
+
+### To update the sounds from Cuelume:
+1. Clone and build Cuelume (`npm install --ignore-scripts && npm run build`), then run
+   `node scripts/generate-cuelume-recipes.mjs <checkout>` to rewrite `CuelumeRecipes.swift`
+2. The script stops on recipe fields the Swift renderer doesn't know; port them to
+   `CuelumeSynth.swift` first (Cuelume's `scripts/sound.mjs` is the offline reference)
 
 ### To adjust overlay window:
 1. For OverlayView: Edit size constants in `App.swift` (currently 300x60)
