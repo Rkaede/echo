@@ -74,7 +74,7 @@ struct EchoApp: App {
   }
 
   private var menuBarExtra: some Scene {
-    MenuBarExtra("Echo", systemImage: "record.circle.fill") {
+    MenuBarExtra("Echo", image: "MenuBarIcon") {
       menuContent
     }
     .menuBarExtraStyle(.menu)

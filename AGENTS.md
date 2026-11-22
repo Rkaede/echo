@@ -377,6 +377,12 @@ Package resolution stored in `Package.resolved`.
 3. Modify `TranscriptionService` if workflow changes
 4. Update post-processing service if using same provider
 
+### To change the app or menu bar icon:
+1. Edit `scripts/make-icons.py` (colourways, waveform, stroke widths) and run it. It rewrites
+   `AppIcon`, `AppIconLine`, `AppIconRed`, `AppIconNight` and `MenuBarIcon` in `Assets.xcassets`
+2. `AppIcon` (a copy of Line) is the app icon; `AppIconStyle` lists the bundled styles for a future
+   icon setting (`ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS` bundles all of them)
+
 ### To adjust overlay window:
 1. For OverlayView: Edit size constants in `App.swift` (currently 300x60)
 2. For OverlayViewV2: Update `OverlayViewV2.swift` for new design changes
