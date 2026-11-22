@@ -31,6 +31,7 @@ struct FullHeightWindowConfigurator: NSViewRepresentable {
 
 enum SettingsSection: String, CaseIterable, Identifiable {
   case general = "General"
+  case providers = "Providers"
   case shortcuts = "Shortcuts"
   case sound = "Sound"
   case profiles = "Profiles"
@@ -43,6 +44,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
   var icon: String {
     switch self {
     case .general: return "gearshape"
+    case .providers: return "key"
     case .shortcuts: return "keyboard"
     case .sound: return "speaker.2"
     case .profiles: return "person.crop.square"
@@ -65,20 +67,24 @@ struct SettingsView: View {
         .frame(width: 0, height: 0)
 
       HSplitView {
-        // Sidebar
-        List(selection: $selectedSection) {
+        // Sidebar. Plain buttons rather than a List, whose blank area takes clicks itself and
+        // would stop the window being dragged from there.
+        VStack(alignment: .leading, spacing: 2) {
           ForEach(SettingsSection.allCases) { section in
-            Label(section.rawValue, systemImage: section.icon)
-              .tag(section)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.vertical, 4)
+            SettingsSidebarRow(
+              section: section,
+              isSelected: (selectedSection ?? .profiles) == section,
+              select: { selectedSection = section }
+            )
           }
+          Spacer(minLength: 0)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
+        // The sidebar already starts below the title bar, so the first item sits just under the
+        // window's close, minimise and zoom buttons.
+        .padding(.top, 4)
+        .padding(.horizontal, 10)
         .background(Color(NSColor.windowBackgroundColor))
         .frame(minWidth: 180, idealWidth: 180, maxWidth: 240)
-        .gesture(WindowDragGesture())
 
         // Detail
         ScrollView {
@@ -89,9 +95,10 @@ struct SettingsView: View {
         .frame(minWidth: 450, maxWidth: .infinity)
         .ignoresSafeArea(.all)
         .background(Color.clear)
-        .gesture(WindowDragGesture())
       }
     }
+    // Drag from any empty space to move the window.
+    .modifier(DragsWindow())
     .frame(
       minWidth: Constants.Windows.settingsWidth, minHeight: Constants.Windows.settingsHeight,
       maxHeight: .infinity
@@ -105,6 +112,8 @@ struct SettingsView: View {
     switch section {
     case .general:
       GeneralSettingsView()
+    case .providers:
+      ProvidersSettingsView()
     case .shortcuts:
       ShortcutsSettingsView()
     case .sound:
@@ -121,6 +130,33 @@ struct SettingsView: View {
   }
 }
 
+private struct SettingsSidebarRow: View {
+  let section: SettingsSection
+  let isSelected: Bool
+  let select: () -> Void
+
+  var body: some View {
+    Button(action: select) {
+      HStack(spacing: 8) {
+        // A fixed column keeps the titles lined up whatever the icon's width.
+        Image(systemName: section.icon)
+          .frame(width: 18)
+        Text(section.rawValue)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.vertical, 7)
+      .padding(.horizontal, 8)
+      .foregroundStyle(isSelected ? Color.white : Color.primary)
+      .background(
+        RoundedRectangle(cornerRadius: 6).fill(isSelected ? Color.accentColor : Color.clear)
+      )
+      .contentShape(RoundedRectangle(cornerRadius: 6))
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+  }
+}
+
 struct GeneralSettingsView: View {
   @EnvironmentObject private var updateManager: UpdateManager
   @Environment(\.openWindow) private var openWindow
@@ -131,22 +167,6 @@ struct GeneralSettingsView: View {
     Form {
       Section("Startup") {
         LaunchAtLogin.Toggle()
-      }
-
-      Section("API Configuration") {
-        SecureField("Groq API Key", text: $settings.apiKey)
-          .textFieldStyle(.roundedBorder)
-
-        Text("Optional if using OpenRouter. Used for direct Whisper transcription and GPT OSS post-processing.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        SecureField("OpenRouter API Key", text: $settings.openRouterAPIKey)
-          .textFieldStyle(.roundedBorder)
-
-        Text("Optional if using Groq. Works standalone with Whisper (via Groq), MAI-Transcribe-2, GPT OSS, and Gemini 3.5 Flash-Lite. Choose models per profile.")
-          .font(.caption)
-          .foregroundColor(.secondary)
       }
 
       Section("Microphone") {
@@ -346,6 +366,49 @@ struct GeneralSettingsView: View {
 
     settings.fallbackInputDeviceUID = ""
     settings.fallbackInputDeviceName = ""
+  }
+}
+
+/// API keys for the speech-to-text and clean-up providers. Models are chosen per profile.
+struct ProvidersSettingsView: View {
+  @ObservedObject private var settings = SettingsManager.shared
+
+  var body: some View {
+    Form {
+      Section {
+        Text("Each profile picks its own speech-to-text and clean-up models from these providers.")
+          .foregroundColor(.secondary)
+      }
+
+      Section {
+        SecureField("API Key", text: $settings.openRouterAPIKey)
+          .textFieldStyle(.roundedBorder)
+        Link("Get a key at openrouter.ai/keys", destination: URL(string: "https://openrouter.ai/keys")!)
+          .font(.caption)
+      } header: {
+        Text("OpenRouter")
+      } footer: {
+        Text(
+          "Runs MAI-Transcribe-2, Gemini 3.5 Flash-Lite, and Whisper and GPT OSS 20B hosted on Groq."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
+      }
+
+      Section {
+        SecureField("API Key", text: $settings.apiKey)
+          .textFieldStyle(.roundedBorder)
+        Link("Get a key at console.groq.com/keys", destination: URL(string: "https://console.groq.com/keys")!)
+          .font(.caption)
+      } header: {
+        Text("Groq")
+      } footer: {
+        Text("Runs Whisper and GPT OSS 20B directly on Groq.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+    }
+    .formStyle(.grouped)
   }
 }
 

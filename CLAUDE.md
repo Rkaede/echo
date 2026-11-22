@@ -198,7 +198,7 @@ The codebase follows MVVM pattern with clear separation:
 
 3. **Views/** - SwiftUI interfaces
    - `OverlayView.swift` - Floating status window (300x60 with padding for animations)
-   - `SettingsView.swift` - Main settings interface with tabs for API, profiles, and preferences
+   - `SettingsView.swift` - Main settings interface with sections for general preferences, providers (API keys), shortcuts, profiles and history
    - `ProfilesSettingsView.swift` - Profile management interface
    - `OnboardingView.swift` - First-time setup flow for permissions and API key
    - `HistoryView.swift` - Transcription history browser with search and audio playback
