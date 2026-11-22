@@ -40,8 +40,10 @@ struct EchoApp: App {
         .id(onboardingRunID)
         #endif
     }
+    .windowStyle(.hiddenTitleBar)
+    .windowResizability(.contentSize)
+    .windowBackgroundDragBehavior(.enabled)
     .restorationBehavior(.disabled)
-    .windowLevel(.floating)
     .defaultSize(
       width: Constants.Windows.onboardingWidth, height: Constants.Windows.onboardingHeight
     )

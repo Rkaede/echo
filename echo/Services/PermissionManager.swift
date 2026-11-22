@@ -52,7 +52,8 @@ class PermissionManager: ObservableObject {
   func requestAccessibilityPermission() {
     let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
     _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-    
+    bringAccessibilityPromptForward()
+
     // Start a timer to check periodically since there's no callback
     Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
       let isTrusted = AXIsProcessTrusted()
@@ -65,6 +66,29 @@ class PermissionManager: ObservableObject {
     }
   }
   
+  /// The system shows the accessibility prompt from its own background process at the normal
+  /// window level and doesn't activate it, so it can open behind every other window. Hand
+  /// activation to that process once its window is on screen. Checks for up to 3 seconds.
+  private func bringAccessibilityPromptForward(attempt: Int = 0) {
+    let promptBundleID = "com.apple.accessibility.universalAccessAuthWarn"
+    if let prompt = NSRunningApplication.runningApplications(withBundleIdentifier: promptBundleID).first,
+      Self.hasOnScreenWindow(pid: prompt.processIdentifier)
+    {
+      NSApp.yieldActivation(to: prompt)
+      prompt.activate(from: .current, options: [])
+      return
+    }
+    guard attempt < 12 else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+      self.bringAccessibilityPromptForward(attempt: attempt + 1)
+    }
+  }
+
+  private static func hasOnScreenWindow(pid: pid_t) -> Bool {
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    return windows.contains { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid }
+  }
+
   func openMicrophoneSettings() {
     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
       NSWorkspace.shared.open(url)

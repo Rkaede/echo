@@ -212,6 +212,23 @@ class ProfilesService: ObservableObject {
         PostProcessingModelOption.defaultOption(for: preferredDefaultProvider).value
     }
 
+    /// Points every profile at a preset's models and turns clean-up on for the default profile,
+    /// since the preset's accuracy depends on it. Other profiles keep their clean-up setting.
+    func apply(_ preset: ModelPreset) async {
+        await load()
+        for var profile in profiles {
+            profile.transcriptionModel = preset.transcriptionModel
+            profile.postProcessingModel = preset.postProcessingModel
+            if profile.isDefault {
+                profile.postProcessingEnabled = true
+            }
+            profile.updatedAt = Date()
+            _ = try? await repo.update(profile.id, patch: profile)
+        }
+        await load()
+        refreshActiveProfile(preferredId: activeProfile?.id)
+    }
+
     // Seed default profile from legacy settings
     private func makeDefaultSeed() -> Profile {
         let now = Date()

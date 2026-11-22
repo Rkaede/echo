@@ -27,8 +27,10 @@ struct Constants {
   }
 
   struct Windows {
-    static let onboardingWidth: CGFloat = 600
-    static let onboardingHeight: CGFloat = 440
+    static let onboardingWidth: CGFloat = 780
+    static let onboardingHeight: CGFloat = 600
+    /// Height of a standard window title bar, hidden or not.
+    static let titleBarHeight: CGFloat = 32
     static let settingsWidth: CGFloat = 800
     static let settingsHeight: CGFloat = 600
   }
