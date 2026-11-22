@@ -388,11 +388,9 @@ struct ProvidersSettingsView: View {
       } header: {
         Text("OpenRouter")
       } footer: {
-        Text(
-          "Runs MAI-Transcribe-2, Gemini 3.5 Flash-Lite, and Whisper and GPT OSS 20B hosted on Groq."
-        )
-        .font(.caption)
-        .foregroundColor(.secondary)
+        Text("Includes all the latest models, but adds a little latency to each request.")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
 
       Section {
@@ -403,9 +401,11 @@ struct ProvidersSettingsView: View {
       } header: {
         Text("Groq")
       } footer: {
-        Text("Runs Whisper and GPT OSS 20B directly on Groq.")
-          .font(.caption)
-          .foregroundColor(.secondary)
+        Text(
+          "Runs Whisper and GPT OSS 20B directly on Groq. Calling them directly cuts about 100–300 ms from each transcription."
+        )
+        .font(.caption)
+        .foregroundColor(.secondary)
       }
     }
     .formStyle(.grouped)
