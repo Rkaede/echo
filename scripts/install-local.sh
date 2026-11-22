@@ -2,6 +2,15 @@
 #
 # Build Echo from the current working tree and install it to /Applications.
 #
+#   scripts/install-local.sh         Release build -> /Applications/Echo.app
+#   scripts/install-local.sh --dev   Debug build   -> /Applications/Echo Dev.app
+#
+# The Debug build has its own bundle id (io.littlecove.echo.dev), so it keeps
+# separate settings, history, keys and permissions and can sit next to the
+# release copy. It also has the debug menu items. Only one copy should run at a
+# time, because both listen for the same shortcuts: installing one quits the
+# other.
+#
 # This is the "use it every day" path, as opposed to scripts/release.sh, which
 # also notarizes, builds a DMG and publishes an appcast. Notarization is only
 # needed for apps that other people download; a locally built app never gets a
@@ -18,14 +27,42 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEME="Echo"
-CONFIGURATION="Release"
 BUILD_DIR="${PROJECT_DIR}/build/local"
-INSTALL_PATH="/Applications/Echo.app"
+RELEASE_INSTALL_PATH="/Applications/Echo.app"
+DEV_INSTALL_PATH="/Applications/Echo Dev.app"
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 info() { printf '  %s\n' "$1"; }
 warn() { printf '\033[33m  ! %s\033[0m\n' "$1"; }
 fail() { printf '\033[31m  ✗ %s\033[0m\n' "$1" >&2; exit 1; }
+
+case "${1:-}" in
+  "")
+    CONFIGURATION="Release"
+    INSTALL_PATH="$RELEASE_INSTALL_PATH"
+    OTHER_INSTALL_PATH="$DEV_INSTALL_PATH"
+    ;;
+  --dev)
+    CONFIGURATION="Debug"
+    INSTALL_PATH="$DEV_INSTALL_PATH"
+    OTHER_INSTALL_PATH="$RELEASE_INSTALL_PATH"
+    ;;
+  *)
+    fail "Unknown option: $1 (use --dev for the Debug build)"
+    ;;
+esac
+
+# Quits the copy of Echo installed at the given path, if it is running.
+quit_app_at() {
+  local path="$1"
+  pgrep -f "^${path}/Contents/MacOS/Echo" >/dev/null 2>&1 || return 0
+  info "Quitting the running ${path##*/}…"
+  pkill -f "^${path}/Contents/MacOS/Echo" || true
+  for _ in $(seq 1 20); do
+    pgrep -f "^${path}/Contents/MacOS/Echo" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
+}
 
 # --- Pick a signing identity ------------------------------------------------
 # Preference order: Developer ID (stable, survives reinstalls) > Apple
@@ -114,16 +151,9 @@ info "$(codesign -dv "$APP_PATH" 2>&1 | grep '^Identifier=' || echo 'Identifier=
 # --- Install ----------------------------------------------------------------
 bold "Installing to ${INSTALL_PATH}…"
 
-# Quit only the installed copy. A debug build running from Xcode uses the
-# io.littlecove.echo.dev bundle id and is left alone.
-if pgrep -f "^${INSTALL_PATH}/Contents/MacOS/Echo" >/dev/null 2>&1; then
-  info "Quitting the running copy…"
-  pkill -f "^${INSTALL_PATH}/Contents/MacOS/Echo" || true
-  for _ in $(seq 1 20); do
-    pgrep -f "^${INSTALL_PATH}/Contents/MacOS/Echo" >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-fi
+# Quit only copies installed in /Applications. A debug build running from Xcode
+# lives in DerivedData and is left alone.
+quit_app_at "$INSTALL_PATH"
 
 if [[ -d "$INSTALL_PATH" ]]; then
   rm -rf "$INSTALL_PATH"
@@ -139,6 +169,8 @@ BUILD_NUM="$(defaults read "${INSTALL_PATH}/Contents/Info" CFBundleVersion 2>/de
 info "Installed version ${VERSION} (build ${BUILD_NUM}) from ${GIT_SHA}"
 
 bold "Launching…"
+# Done last, so a failed build leaves the other copy running.
+quit_app_at "$OTHER_INSTALL_PATH"
 open "$INSTALL_PATH"
 
 printf '\n'

@@ -12,6 +12,11 @@ struct EchoApp: App {
   @StateObject private var notesModeService = NotesModeService.shared
   @StateObject private var failedRecordings = FailedRecordingStore.shared
   @StateObject private var updateManager: UpdateManager
+  #if DEBUG
+  /// Changed by the debug menu to give the onboarding window a fresh view, so it restarts at
+  /// the first step with the saved keys reloaded.
+  @State private var onboardingRunID = UUID()
+  #endif
 
   init() {
     LoggingService.shared.startConsoleCapture()
@@ -31,6 +36,9 @@ struct EchoApp: App {
   private var onboardingWindow: some Scene {
     Window("Welcome to Echo", id: "onboarding") {
       OnboardingView()
+        #if DEBUG
+        .id(onboardingRunID)
+        #endif
     }
     .restorationBehavior(.disabled)
     .windowLevel(.floating)
@@ -101,6 +109,10 @@ struct EchoApp: App {
       }
       .keyboardShortcut("d", modifiers: [.command, .shift])
 
+      Button("Show Onboarding...") {
+        restartOnboarding()
+      }
+
       Divider()
       #endif
 
@@ -147,24 +159,28 @@ struct EchoApp: App {
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
+
+  /// Shows onboarding from its first step without clearing `hasCompletedOnboarding`.
+  private func restartOnboarding() {
+    onboardingRunID = UUID()
+    showWindow(id: "onboarding")
+  }
   #endif
 
   private func openHistoryWindow() {
-    openWindow(id: "history")
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      if let historyWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "history" }) {
-        historyWindow.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-      }
-    }
+    showWindow(id: "history")
   }
 
   private func openSettingsWindow() {
-    openWindow(id: "settings")
+    showWindow(id: "settings")
+  }
+
+  /// Opens a window scene and brings it forward; a menu bar app is not active by default.
+  private func showWindow(id: String) {
+    openWindow(id: id)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-      if let settingsWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "settings" })
-      {
-        settingsWindow.makeKeyAndOrderFront(nil)
+      if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == id }) {
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
       }
     }
