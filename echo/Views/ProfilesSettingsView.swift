@@ -8,6 +8,7 @@ import SwiftUI
 #endif
 
 struct ProfilesSettingsView: View {
+  var onOpenShortcuts: (() -> Void)? = nil
   // Use ObservedObject for a shared singleton
   @ObservedObject private var service = ProfilesService.shared
   @State private var errorMessage: String?
@@ -90,24 +91,6 @@ struct ProfilesSettingsView: View {
 
           Form {
             Section {
-              HStack(spacing: 8) {
-                Image(systemName: "info.circle")
-                  .foregroundColor(.blue)
-                VStack(alignment: .leading, spacing: 2) {
-                  Text("Use a profile shortcut to select it and start/stop recording. Fn uses the active profile: tap to keep recording, or hold and release to stop.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                  Text(
-                    "Switch between profiles during recording using the shortcuts configured in Shortcuts."
-                  )
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                }
-              }
-              .padding(.vertical, 4)
-            }
-            
-            Section("Profiles") {
               ForEach(service.profiles, id: \.id) { p in
                 Button(action: { startEditing(profile: p) }) {
                   HStack(spacing: 10) {
@@ -182,6 +165,23 @@ struct ProfilesSettingsView: View {
                   Button("Delete", role: .destructive) { deleteProfile(p) }
                 }
               }
+            } header: {
+              Text("Profiles")
+            } footer: {
+              VStack(alignment: .leading, spacing: 6) {
+                Text(
+                  "Each profile can have its own model, cleanup prompt, and shortcut. Press fn to record with the active profile, or switch profiles while recording."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+                if let onOpenShortcuts {
+                  Button("Configure Shortcuts…", action: onOpenShortcuts)
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+              }
+              .padding(.top, 2)
             }
 
             Section {

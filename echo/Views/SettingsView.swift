@@ -121,7 +121,7 @@ struct SettingsView: View {
     case .sound:
       SoundSettingsView()
     case .profiles:
-      ProfilesSettingsView()
+      ProfilesSettingsView(onOpenShortcuts: { selectedSection = .shortcuts })
     case .history:
       HistorySettingsView()
     case .permissions:
