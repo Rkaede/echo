@@ -50,7 +50,7 @@ struct ProfilesSettingsView: View {
             .settingsButtonStyle(.primary)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 20)
+        .profilesHeaderPadding()
         .padding(.bottom, 12)
         .padding(.top, 12)
         .overlay(
@@ -61,9 +61,11 @@ struct ProfilesSettingsView: View {
         )
 
         ProfileEditor(profile: binding, isNewDraft: isNewDraft)
+          .settingsPanePadding()
 
         if let error = errorMessage {
           Text(error).font(.caption).foregroundColor(.red)
+            .profilesHeaderPadding()
         }
       } else {
         // List-only view (use Form to avoid nested ScrollView issues)
@@ -77,7 +79,7 @@ struct ProfilesSettingsView: View {
             }
             .buttonStyle(SettingsButton())
           }
-          .padding(.horizontal, 20)
+          .profilesHeaderPadding()
           .padding(.vertical, 12)
           .overlay(
             Rectangle()
@@ -222,6 +224,7 @@ struct ProfilesSettingsView: View {
             }
           }
           .formStyle(.grouped)
+          .settingsPanePadding()
         }
         .confirmationDialog(
           "Reset Profiles?",
@@ -241,7 +244,6 @@ struct ProfilesSettingsView: View {
 
       Spacer()
     }
-    .padding(EdgeInsets(top: 0, leading: 0, bottom: 16, trailing: 0))
     .task {
       // Ensure we have the latest data when this view appears
       await service.load()
@@ -761,3 +763,10 @@ private struct MissingKeyNote: View {
     func updateNSView(_ nsView: NSView, context: Context) {}
   }
 #endif
+
+private extension View {
+  /// Lines the header up with the pane's grouped-form cards, while its rule runs the full width.
+  func profilesHeaderPadding() -> some View {
+    padding(.leading, 40).padding(.trailing, 20)
+  }
+}

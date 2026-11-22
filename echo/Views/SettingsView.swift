@@ -56,6 +56,9 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
+  /// Fixed, so the sidebar can't be dragged wider than its items need.
+  static let sidebarWidth: CGFloat = 180
+
   @ObservedObject private var settings = SettingsManager.shared
   @EnvironmentObject private var updateManager: UpdateManager
   @State private var selectedSection: SettingsSection? = .profiles
@@ -84,7 +87,7 @@ struct SettingsView: View {
         .padding(.top, 4)
         .padding(.horizontal, 10)
         .background(Color(NSColor.windowBackgroundColor))
-        .frame(minWidth: 180, idealWidth: 180, maxWidth: 240)
+        .frame(width: Self.sidebarWidth)
 
         // Detail
         ScrollView {
@@ -331,7 +334,7 @@ struct GeneralSettingsView: View {
 
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
+    .settingsPanePadding()
   }
 
   private var shouldShowUnavailablePreferredDevice: Bool {
@@ -409,6 +412,7 @@ struct ProvidersSettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .settingsPanePadding()
   }
 }
 
@@ -504,7 +508,7 @@ struct ShortcutsSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
+    .settingsPanePadding()
     .task {
       await profilesService.load()
     }
@@ -689,10 +693,17 @@ struct PermissionsSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 0))
+    .settingsPanePadding()
     .onAppear {
       permissionManager.checkAllPermissions()
     }
+  }
+}
+
+extension View {
+  /// The inset every settings pane shares, so the grouped form cards line up from pane to pane.
+  func settingsPanePadding() -> some View {
+    padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
   }
 }
 
@@ -896,7 +907,7 @@ struct HistorySettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 0))
+    .settingsPanePadding()
     .fileImporter(
       isPresented: $showingFolderPicker,
       allowedContentTypes: [.folder],
@@ -1011,7 +1022,7 @@ struct SoundSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .padding(EdgeInsets(top: 24, leading: 20, bottom: 20, trailing: 0))
+    .settingsPanePadding()
   }
 }
 
