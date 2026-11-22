@@ -25,6 +25,7 @@ final class NotesModeService: ObservableObject {
   private let sessionRootDirectory: URL
   private let captureScreenshot: (URL, ScreenAnnotation?) async -> Bool
   private let processText: @MainActor (String, String, String) async throws -> String
+  private let postProcessingModel: @MainActor () -> String
   private let openDocument: (URL) -> Void
   private var isRecording = false
   /// The drawing from the recording that just ended, waiting for its screenshot.
@@ -36,7 +37,15 @@ final class NotesModeService: ObservableObject {
       annotationOverlay: ScreenAnnotationOverlay(),
       requestScreenshotPermission: { ScreenshotService.requestPermissionIfNeeded() },
       sessionRootDirectory: FileManager.default.temporaryDirectory,
-      captureScreenshot: { await ScreenshotService.capturePNG(to: $0, annotation: $1) }
+      captureScreenshot: { await ScreenshotService.capturePNG(to: $0, annotation: $1) },
+      postProcessingModel: {
+        let settings = SettingsManager.shared
+        settings.ensureAPIKeyLoaded()
+        return PostProcessingModelOption.defaultOption(
+          hasGroqKey: settings.hasAPIKey,
+          hasOpenRouterKey: settings.hasOpenRouterAPIKey
+        ).value
+      }
     )
   }
 
@@ -50,6 +59,9 @@ final class NotesModeService: ObservableObject {
         $0, promptTemplate: $1, postProcessingModel: $2
       )
     },
+    postProcessingModel: @escaping @MainActor () -> String = {
+      PostProcessingModelOption.defaultOptionValue
+    },
     openDocument: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
   ) {
     self.annotationOverlay = annotationOverlay
@@ -57,6 +69,7 @@ final class NotesModeService: ObservableObject {
     self.sessionRootDirectory = sessionRootDirectory
     self.captureScreenshot = captureScreenshot
     self.processText = processText
+    self.postProcessingModel = postProcessingModel
     self.openDocument = openDocument
   }
 
@@ -218,7 +231,7 @@ final class NotesModeService: ObservableObject {
   ) async -> String? {
     do {
       return try await processText(
-        transcript, promptTemplate, PostProcessingModelOption.defaultOptionValue
+        transcript, promptTemplate, postProcessingModel()
       )
     } catch {
       log(

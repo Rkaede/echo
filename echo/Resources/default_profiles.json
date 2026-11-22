@@ -16,7 +16,7 @@
     "isDefault": false,
     "isEnabled": true,
     "shortcut": null,
-    "transcriptionModel": "whisper-large-v3-turbo",
+    "transcriptionModel": null,
     "postProcessingEnabled": false,
     "postProcessingPrompt": null,
     "postProcessingModel": null,

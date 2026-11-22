@@ -4,9 +4,11 @@ import Foundation
 ///
 /// Both services speak the OpenAI-compatible protocol, so the request shapes are shared;
 /// only the base URL, the key and a few provider-specific fields differ.
-enum APIProvider: String, Codable, CaseIterable {
+enum APIProvider: String, Codable, CaseIterable, Identifiable {
   case groq
   case openRouter
+
+  var id: String { rawValue }
 
   var displayName: String {
     switch self {
@@ -39,5 +41,16 @@ enum APIProvider: String, Codable, CaseIterable {
 
   var missingKeyMessage: String {
     "Please add your \(displayName) API key in Settings"
+  }
+
+  /// Basic format check used during onboarding before the first request.
+  func isValidKeyFormat(_ key: String) -> Bool {
+    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch self {
+    case .groq:
+      return trimmed.count == Constants.API.groqAPIKeyLength
+    case .openRouter:
+      return trimmed.hasPrefix("sk-or-") && trimmed.count >= 20
+    }
   }
 }

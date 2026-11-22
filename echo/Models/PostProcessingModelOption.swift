@@ -32,6 +32,20 @@ struct PostProcessingData {
       ]
     ),
     PostProcessingModelOption(
+      value: "openrouter/openai/gpt-oss-20b",
+      apiModel: "openai/gpt-oss-20b",
+      label: "GPT OSS 20B",
+      provider: .openRouter,
+      badge: "Fast",
+      description:
+        "Runs on Groq through OpenRouter with your OpenRouter key. Fast cleanup without needing a separate Groq key.",
+      requestOptions: [
+        "reasoning": ["effort": "low"],
+        "temperature": 0,
+        "provider": ["order": ["groq"], "allow_fallbacks": true],
+      ]
+    ),
+    PostProcessingModelOption(
       value: "google/gemini-3.5-flash-lite",
       label: "Gemini 3.5 Flash-Lite",
       provider: .openRouter,
@@ -51,7 +65,10 @@ struct PostProcessingData {
 
 struct PostProcessingModelOption: Identifiable, Equatable {
   var id: String { value }
+  /// Stored identifier for profiles and history. Unique across providers.
   let value: String
+  /// Model identifier sent to the provider's chat completions API.
+  let apiModel: String
   let label: String
   let provider: APIProvider
   let badge: String?
@@ -59,6 +76,26 @@ struct PostProcessingModelOption: Identifiable, Equatable {
   /// Provider-specific JSON fields merged into the chat completion request body.
   let requestOptions: [String: Any]
   var disabled: Bool = false
+
+  init(
+    value: String,
+    apiModel: String? = nil,
+    label: String,
+    provider: APIProvider,
+    badge: String?,
+    description: String,
+    requestOptions: [String: Any],
+    disabled: Bool = false
+  ) {
+    self.value = value
+    self.apiModel = apiModel ?? value
+    self.label = label
+    self.provider = provider
+    self.badge = badge
+    self.description = description
+    self.requestOptions = requestOptions
+    self.disabled = disabled
+  }
 
   static func == (lhs: PostProcessingModelOption, rhs: PostProcessingModelOption) -> Bool {
     lhs.value == rhs.value
@@ -68,13 +105,29 @@ struct PostProcessingModelOption: Identifiable, Equatable {
 extension PostProcessingModelOption {
   static let allOptions = PostProcessingData.modelOptions
 
-  /// The default only needs a Groq key, which every user sets up during onboarding.
+  /// Default model when no provider preference is specified.
   static var recommendedOption: PostProcessingModelOption? {
     allOptions.first(where: { !$0.disabled }) ?? allOptions.first
   }
 
   static var defaultOptionValue: String {
     recommendedOption?.value ?? "openai/gpt-oss-20b"
+  }
+
+  /// Default post-processing option for a given provider.
+  static func defaultOption(for provider: APIProvider) -> PostProcessingModelOption {
+    allOptions.first { $0.provider == provider && !$0.disabled } ?? recommendedOption!
+  }
+
+  /// Picks a default model whose provider has an API key configured, preferring Groq when available.
+  static func defaultOption(hasGroqKey: Bool, hasOpenRouterKey: Bool) -> PostProcessingModelOption {
+    if hasGroqKey {
+      return defaultOption(for: .groq)
+    }
+    if hasOpenRouterKey {
+      return defaultOption(for: .openRouter)
+    }
+    return recommendedOption!
   }
 
   /// The option for a stored model ID. Profiles saved with a model that is no longer offered

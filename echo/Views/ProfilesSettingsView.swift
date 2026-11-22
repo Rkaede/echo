@@ -60,7 +60,7 @@ struct ProfilesSettingsView: View {
           alignment: .bottom
         )
 
-        ProfileEditor(profile: binding)
+        ProfileEditor(profile: binding, isNewDraft: isNewDraft)
 
         if let error = errorMessage {
           Text(error).font(.caption).foregroundColor(.red)
@@ -250,16 +250,29 @@ struct ProfilesSettingsView: View {
 
   private func startNewProfile() {
     let now = Date()
+    let settings = SettingsManager.shared
+    settings.ensureAPIKeyLoaded()
+    let openRouterOnly = !settings.hasAPIKey && settings.hasOpenRouterAPIKey
+    let defaultTranscriptionModel =
+      openRouterOnly
+      ? TranscriptionData.defaultModel(for: .openRouter)
+      : settings.selectedModel
+    let defaultPostProcessingModel =
+      PostProcessingModelOption.defaultOption(
+        hasGroqKey: settings.hasAPIKey,
+        hasOpenRouterKey: settings.hasOpenRouterAPIKey
+      ).value
+
     draft = Profile(
       id: UUID().uuidString,
       title: "New Profile",
       isDefault: service.profiles.isEmpty,
       isEnabled: true,
       shortcut: nil,
-      transcriptionModel: SettingsManager.shared.selectedModel,
+      transcriptionModel: defaultTranscriptionModel,
       postProcessingEnabled: false,
       postProcessingPrompt: PostProcessingData.defaultPrompt,
-      postProcessingModel: PostProcessingModelOption.defaultOptionValue,
+      postProcessingModel: defaultPostProcessingModel,
       iconName: nil,
       iconColor: nil,
       createdAt: now,
@@ -380,9 +393,11 @@ struct ProfilesSettingsView: View {
 
 private struct ProfileEditor: View {
   @Binding var profile: Profile
+  let isNewDraft: Bool
   @FocusState private var isPromptFocused: Bool
   @ObservedObject private var settings = SettingsManager.shared
   @State private var copiedReviewPrompt = false
+  @State private var copyFeedbackTask: Task<Void, Never>?
 
   private var selectedModel: ModelOption? {
     TranscriptionData.modelOptions.first { $0.value == profile.transcriptionModel }
@@ -544,7 +559,11 @@ private struct ProfileEditor: View {
           }
         }
 
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Prompt")
+            .font(.subheadline)
+            .fontWeight(.medium)
+            .foregroundColor(profile.postProcessingEnabled ? .primary : .secondary)
 
           TextEditor(
             text: Binding(
@@ -557,16 +576,23 @@ private struct ProfileEditor: View {
           .font(.body)
           .frame(minHeight: 80)
           .scrollIndicators(.never)
+          .padding(10)
+          .background(.background)
+          .clipShape(RoundedRectangle(cornerRadius: 6))
+          .overlay(
+            RoundedRectangle(cornerRadius: 6)
+              .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+          )
+          .allowsHitTesting(profile.postProcessingEnabled)
+          .opacity(profile.postProcessingEnabled ? 1 : 0.55)
+
+          Text(
+            "Sent as system instructions with the transcript as the user message. Include {{TRANSCRIPTION}} to embed the transcript inline instead."
+          )
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(10)
-        .background(.background)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-        )
-        .allowsHitTesting(profile.postProcessingEnabled)
-        .opacity(profile.postProcessingEnabled ? 1 : 0.55)
         .onChange(of: profile.postProcessingEnabled) { _, enabled in
           if !enabled {
             isPromptFocused = false
@@ -574,53 +600,78 @@ private struct ProfileEditor: View {
             let trimmed = profile.postProcessingModel.trimmingCharacters(
               in: .whitespacesAndNewlines)
             if trimmed.isEmpty || !postProcessingOptions.contains(where: { $0.value == trimmed }) {
-              profile.postProcessingModel = PostProcessingModelOption.defaultOptionValue
+              profile.postProcessingModel = PostProcessingModelOption.defaultOption(
+                hasGroqKey: settings.hasAPIKey,
+                hasOpenRouterKey: settings.hasOpenRouterAPIKey
+              ).value
             }
-          }
-        }
-
-        Text(
-          "The prompt is sent as instructions and the transcript as a separate message. To place the transcript inside the prompt instead, include {{TRANSCRIPTION}}."
-        )
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-
-        VStack(alignment: .leading, spacing: 6) {
-          Button(action: copyCleanupReviewPrompt) {
-            Label(
-              copiedReviewPrompt ? "Copied" : "Copy Prompt to Improve Clean-Up",
-              systemImage: copiedReviewPrompt ? "checkmark" : "doc.on.clipboard")
-          }
-
-          Text(
-            "Copies instructions for Claude Code or another coding agent. The agent reads this profile's dictation history, finds recurring mistakes and suggests a better prompt with a vocabulary list."
-          )
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-
-          if !settings.enableHistory {
-            Label(
-              "History is off, so Echo isn't saving dictations for the agent to review. Turn it on in History settings.",
-              systemImage: "exclamationmark.triangle.fill"
-            )
-            .font(.caption)
-            .foregroundColor(.orange)
           }
         }
       }
       .padding(.vertical, 2)
+
+      if profile.postProcessingEnabled && !isNewDraft {
+        Section {
+          VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 16) {
+              VStack(alignment: .leading, spacing: 4) {
+                Text("Improve Prompt with an Agent")
+                  .font(.headline)
+                  .foregroundColor(.primary)
+
+                Text(
+                  "Paste into a coding agent (like Claude Code or Codex) to review this profile's dictation history, spot misheard terms, and suggest an improved prompt and vocabulary list."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+              }
+
+              Spacer(minLength: 8)
+
+              Button(action: copyCleanupReviewPrompt) {
+                ZStack {
+                  Label("Copy Instructions", systemImage: "doc.on.clipboard")
+                    .opacity(copiedReviewPrompt ? 0 : 1)
+                  Label("Copied", systemImage: "checkmark")
+                    .opacity(copiedReviewPrompt ? 1 : 0)
+                }
+                .animation(.easeInOut(duration: 0.15), value: copiedReviewPrompt)
+              }
+              .buttonStyle(.bordered)
+              .fixedSize()
+              .accessibilityLabel(copiedReviewPrompt ? "Copied" : "Copy Instructions")
+            }
+
+            if !settings.enableHistory {
+              Label(
+                "History is off, so Echo isn't saving dictations to review. Enable it in History settings.",
+                systemImage: "exclamationmark.triangle.fill"
+              )
+              .font(.caption)
+              .foregroundColor(.orange)
+            }
+          }
+          .padding(.vertical, 4)
+        }
+      }
     }
     .formStyle(.grouped)
     .onAppear {
+      settings.ensureAPIKeyLoaded()
       profile.iconColor = nil
       let trimmedModel = profile.postProcessingModel.trimmingCharacters(in: .whitespacesAndNewlines)
       if trimmedModel.isEmpty
         || !postProcessingOptions.contains(where: { $0.value == trimmedModel })
       {
-        profile.postProcessingModel = PostProcessingModelOption.defaultOptionValue
+        profile.postProcessingModel = PostProcessingModelOption.defaultOption(
+          hasGroqKey: settings.hasAPIKey,
+          hasOpenRouterKey: settings.hasOpenRouterAPIKey
+        ).value
       }
+    }
+    .onDisappear {
+      copyFeedbackTask?.cancel()
     }
     .onChange(of: profile.isEnabled) { _, newValue in
       if !newValue {
@@ -631,7 +682,8 @@ private struct ProfileEditor: View {
 
   private func copyCleanupReviewPrompt() {
     let profile = profile
-    Task {
+    copyFeedbackTask?.cancel()
+    copyFeedbackTask = Task {
       let text = CleanupReviewPrompt.make(
         profileTitle: profile.title,
         profileID: profile.id,
@@ -639,10 +691,12 @@ private struct ProfileEditor: View {
         model: PostProcessingModelOption.resolve(profile.postProcessingModel),
         databasePath: await DatabaseService.shared.databasePath()
       )
+      guard !Task.isCancelled else { return }
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(text, forType: .string)
       copiedReviewPrompt = true
       try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled else { return }
       copiedReviewPrompt = false
     }
   }

@@ -193,10 +193,28 @@ class ProfilesService: ObservableObject {
         }
     }
 
+    private var preferredDefaultProvider: APIProvider {
+        settings.ensureAPIKeyLoaded()
+        if !settings.hasAPIKey && settings.hasOpenRouterAPIKey {
+            return .openRouter
+        }
+        return .groq
+    }
+
+    private var defaultTranscriptionModelForSeed: String {
+        if preferredDefaultProvider == .openRouter {
+            return TranscriptionData.defaultModel(for: .openRouter)
+        }
+        return settings.selectedModel
+    }
+
+    private var defaultPostProcessingModelForSeed: String {
+        PostProcessingModelOption.defaultOption(for: preferredDefaultProvider).value
+    }
+
     // Seed default profile from legacy settings
     private func makeDefaultSeed() -> Profile {
         let now = Date()
-        let defaultModel = settings.selectedModel
         let prompt = PostProcessingData.defaultPrompt
         return Profile(
             id: UUID().uuidString,
@@ -204,10 +222,10 @@ class ProfilesService: ObservableObject {
             isDefault: true,
             isEnabled: true,
             shortcut: "alt+space", // mirrors current toggle hotkey
-            transcriptionModel: defaultModel,
+            transcriptionModel: defaultTranscriptionModelForSeed,
             postProcessingEnabled: false,
             postProcessingPrompt: prompt,
-            postProcessingModel: PostProcessingModelOption.defaultOptionValue,
+            postProcessingModel: defaultPostProcessingModelForSeed,
             iconName: nil,
             iconColor: nil,
             createdAt: now,
@@ -217,8 +235,8 @@ class ProfilesService: ObservableObject {
 
     private func loadDefaultProfileSeeds() -> [Profile] {
         DefaultProfilesProvider.load(
-            defaultTranscriptionModel: settings.selectedModel,
-            defaultPostProcessingModel: PostProcessingModelOption.defaultOptionValue
+            defaultTranscriptionModel: defaultTranscriptionModelForSeed,
+            defaultPostProcessingModel: defaultPostProcessingModelForSeed
         )
     }
 

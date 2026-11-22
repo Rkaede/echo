@@ -39,10 +39,12 @@ final class ProviderRoutingXCTests: XCTestCase {
 
   // MARK: - Post-processing models
 
-  func testPostProcessingOptionsAreGptOssAndGeminiFlashLite() {
+  func testPostProcessingOptionsAreGptOssDirectAndOpenRouterAndGeminiFlashLite() {
     let options = PostProcessingModelOption.allOptions
-    XCTAssertEqual(options.map(\.value), ["openai/gpt-oss-20b", "google/gemini-3.5-flash-lite"])
-    XCTAssertEqual(options.map(\.provider), [.groq, .openRouter])
+    XCTAssertEqual(
+      options.map(\.value),
+      ["openai/gpt-oss-20b", "openrouter/openai/gpt-oss-20b", "google/gemini-3.5-flash-lite"])
+    XCTAssertEqual(options.map(\.provider), [.groq, .openRouter, .openRouter])
   }
 
   func testDefaultPostProcessingModelOnlyNeedsGroqKey() {
@@ -50,17 +52,26 @@ final class ProviderRoutingXCTests: XCTestCase {
     XCTAssertEqual(PostProcessingModelOption.recommendedOption?.provider, .groq)
   }
 
+  func testDefaultPostProcessingModelUsesOpenRouterWhenOnlyOpenRouterKeyExists() {
+    let option = PostProcessingModelOption.defaultOption(hasGroqKey: false, hasOpenRouterKey: true)
+    XCTAssertEqual(option.value, "openrouter/openai/gpt-oss-20b")
+    XCTAssertEqual(option.apiModel, "openai/gpt-oss-20b")
+    XCTAssertEqual(option.provider, .openRouter)
+  }
+
   func testUnknownPostProcessingModelResolvesToDefault() {
     XCTAssertEqual(
       PostProcessingModelOption.resolve("llama-3.3-70b-versatile").value, "openai/gpt-oss-20b")
     XCTAssertEqual(
       PostProcessingModelOption.resolve(" google/gemini-3.5-flash-lite ").provider, .openRouter)
+    XCTAssertEqual(
+      PostProcessingModelOption.resolve("openrouter/openai/gpt-oss-20b").provider, .openRouter)
   }
 
   func testChatRequestBodyMergesProviderOptions() {
     let gemini = PostProcessingModelOption.resolve("google/gemini-3.5-flash-lite")
     let body = APIClient.chatRequestBody(
-      model: gemini.value,
+      model: gemini.apiModel,
       messages: [ChatMessage(role: "system", content: "s"), ChatMessage(role: "user", content: "u")],
       requestOptions: gemini.requestOptions)
 
@@ -74,19 +85,51 @@ final class ProviderRoutingXCTests: XCTestCase {
 
   func testGptOssUsesLowReasoningEffortAndTemperatureZeroOnGroq() {
     let option = PostProcessingModelOption.resolve("openai/gpt-oss-20b")
+    XCTAssertEqual(option.apiModel, "openai/gpt-oss-20b")
     XCTAssertEqual(option.requestOptions["reasoning_effort"] as? String, "low")
     let body = APIClient.chatRequestBody(
-      model: option.value, messages: [], requestOptions: option.requestOptions)
+      model: option.apiModel, messages: [], requestOptions: option.requestOptions)
     XCTAssertEqual(body["temperature"] as? Int, 0)
+  }
+
+  func testGptOssOnOpenRouterSendsOpenRouterModelIDAndPinsGroq() {
+    let option = PostProcessingModelOption.resolve("openrouter/openai/gpt-oss-20b")
+    XCTAssertEqual(option.provider, .openRouter)
+    XCTAssertEqual(option.apiModel, "openai/gpt-oss-20b")
+
+    let body = APIClient.chatRequestBody(
+      model: option.apiModel, messages: [], requestOptions: option.requestOptions)
+    XCTAssertEqual(body["model"] as? String, "openai/gpt-oss-20b")
+    XCTAssertEqual(body["temperature"] as? Int, 0)
+    XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
+    XCTAssertEqual((body["provider"] as? [String: Any])?["order"] as? [String], ["groq"])
+    XCTAssertTrue(JSONSerialization.isValidJSONObject(body))
   }
 
   // MARK: - Transcription models
 
   func testTranscriptionProviders() {
     XCTAssertEqual(TranscriptionData.provider(for: "whisper-large-v3-turbo"), .groq)
+    XCTAssertEqual(TranscriptionData.provider(for: "whisper-large-v3"), .groq)
+    XCTAssertEqual(TranscriptionData.provider(for: "openai/whisper-large-v3-turbo"), .openRouter)
+    XCTAssertEqual(TranscriptionData.provider(for: "openai/whisper-large-v3"), .openRouter)
     XCTAssertEqual(TranscriptionData.provider(for: "microsoft/mai-transcribe-2"), .openRouter)
     // Older stored model IDs are Groq models.
     XCTAssertEqual(TranscriptionData.provider(for: "distil-whisper-large-v3-en"), .groq)
+  }
+
+  func testOpenRouterWhisperModelsPinGroq() {
+    for modelID in ["openai/whisper-large-v3-turbo", "openai/whisper-large-v3"] {
+      let option = TranscriptionData.option(for: modelID)
+      XCTAssertNotNil(option)
+      XCTAssertEqual(option?.provider, .openRouter)
+      XCTAssertEqual(option?.extraFields["provider"], TranscriptionData.openRouterGroqProviderField)
+
+      let fields = APIClient.transcriptionFields(
+        model: modelID, provider: .openRouter, extraFields: option?.extraFields ?? [:])
+      XCTAssertEqual(fields.map(\.name), ["model", "provider"])
+      XCTAssertEqual(fields.map(\.value), [modelID, TranscriptionData.openRouterGroqProviderField])
+    }
   }
 
   func testMaiTranscribeForcesEnglish() {
@@ -111,6 +154,50 @@ final class ProviderRoutingXCTests: XCTestCase {
 
   func testFallbackModelRunsOnGroq() {
     XCTAssertEqual(TranscriptionData.provider(for: TranscriptionData.fallbackModel), .groq)
+    XCTAssertEqual(
+      TranscriptionData.provider(for: TranscriptionData.openRouterFallbackModel), .openRouter)
+  }
+
+  func testFallbackSelectionForGroqAndOpenRouterOnlyKeys() {
+    // Both keys: MAI-Transcribe-2 prefers direct Groq Whisper Turbo.
+    XCTAssertEqual(
+      TranscriptionData.fallbackOption(
+        for: "microsoft/mai-transcribe-2", hasGroqKey: true, hasOpenRouterKey: true)?.value,
+      "whisper-large-v3-turbo")
+
+    // OpenRouter-only: MAI-Transcribe-2 falls back to Whisper Turbo on OpenRouter (pinned to Groq).
+    let openRouterFallback = TranscriptionData.fallbackOption(
+      for: "microsoft/mai-transcribe-2", hasGroqKey: false, hasOpenRouterKey: true)
+    XCTAssertEqual(openRouterFallback?.value, "openai/whisper-large-v3-turbo")
+    XCTAssertEqual(openRouterFallback?.provider, .openRouter)
+
+    // OpenRouter-only already on Whisper Turbo: no self-fallback.
+    XCTAssertNil(
+      TranscriptionData.fallbackOption(
+        for: "openai/whisper-large-v3-turbo", hasGroqKey: false, hasOpenRouterKey: true))
+
+    // Both keys on OpenRouter Whisper Turbo: can still fall back to direct Groq.
+    XCTAssertEqual(
+      TranscriptionData.fallbackOption(
+        for: "openai/whisper-large-v3-turbo", hasGroqKey: true, hasOpenRouterKey: true)?.value,
+      "whisper-large-v3-turbo")
+
+    // Direct Groq model: no fallback.
+    XCTAssertNil(
+      TranscriptionData.fallbackOption(
+        for: "whisper-large-v3-turbo", hasGroqKey: true, hasOpenRouterKey: true))
+  }
+
+  func testProviderKeyFormatValidation() {
+    let validGroqKey = String(repeating: "a", count: Constants.API.groqAPIKeyLength)
+    XCTAssertTrue(APIProvider.groq.isValidKeyFormat(validGroqKey))
+    XCTAssertTrue(APIProvider.groq.isValidKeyFormat(" \(validGroqKey)\n"))
+    XCTAssertFalse(APIProvider.groq.isValidKeyFormat("short"))
+
+    XCTAssertTrue(APIProvider.openRouter.isValidKeyFormat("sk-or-v1-0123456789abcdef0123456789"))
+    XCTAssertTrue(APIProvider.openRouter.isValidKeyFormat(" sk-or-v1-0123456789abcdef0123456789\n"))
+    XCTAssertFalse(APIProvider.openRouter.isValidKeyFormat("sk-or-short"))
+    XCTAssertFalse(APIProvider.openRouter.isValidKeyFormat(validGroqKey))
   }
 
   func testFallbackTimeoutGrowsWithRecordingLength() {

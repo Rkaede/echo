@@ -170,7 +170,7 @@ class PostProcessingService {
             let processedText = try await client.postProcessText(
                 messages: PostProcessingPrompt.messages(template: promptTemplate, transcript: section),
                 apiKey: apiKey,
-                model: option.value,
+                model: option.apiModel,
                 provider: option.provider,
                 requestOptions: option.requestOptions.merging(
                     ["max_tokens": PostProcessingPrompt.maxTokens(for: section)]

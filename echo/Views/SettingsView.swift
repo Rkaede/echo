@@ -137,14 +137,14 @@ struct GeneralSettingsView: View {
         SecureField("Groq API Key", text: $settings.apiKey)
           .textFieldStyle(.roundedBorder)
 
-        Text("Used for Whisper transcription and GPT OSS post-processing.")
+        Text("Optional if using OpenRouter. Used for direct Whisper transcription and GPT OSS post-processing.")
           .font(.caption)
           .foregroundColor(.secondary)
 
         SecureField("OpenRouter API Key", text: $settings.openRouterAPIKey)
           .textFieldStyle(.roundedBorder)
 
-        Text("Optional. Used for MAI-Transcribe-2 and Gemini 3.5 Flash-Lite. Choose models per profile.")
+        Text("Optional if using Groq. Works standalone with Whisper (via Groq), MAI-Transcribe-2, GPT OSS, and Gemini 3.5 Flash-Lite. Choose models per profile.")
           .font(.caption)
           .foregroundColor(.secondary)
       }

@@ -222,7 +222,7 @@ The codebase follows MVVM pattern with clear separation:
    - `ProfilesRepository.swift` - Profile data persistence
    - `DefaultProfilesProvider.swift` - Built-in profile templates
    - `PostProcessing.swift` - LLM post-processing pipeline
-   - `CleanupReviewPrompt.swift` - Prompt a profile's "Copy Prompt to Improve Clean-Up" button copies for a coding agent
+   - `CleanupReviewPrompt.swift` - Instructions a profile's "Copy Instructions" button ("Improve Prompt with an Agent") copies for a coding agent
    - `LongRecordingSplitter.swift` - Cuts recordings over 10 minutes into parts at pauses (uploads are limited to 25 MB)
    - `FailedRecordingStore.swift` - Keeps recordings whose transcription failed, for the menu bar's Retry Failed Recording
    - `SoundManager.swift` - Audio feedback and notification sounds
@@ -279,9 +279,11 @@ transcription model (`TranscriptionModels.swift`) and post-processing model
 (`PostProcessingModelOption.swift`) declares its provider; keys live in the Keychain via
 `KeychainManager` (`groq-api-key`, `openrouter-api-key`).
 - Audio format: 16kHz, 16-bit, mono WAV, multipart form data, `verbose_json` response
-- Default transcription model: `whisper-large-v3-turbo` on Groq
+- Default transcription model: `whisper-large-v3-turbo` on Groq (or `openai/whisper-large-v3-turbo` on OpenRouter when using an OpenRouter-only setup)
+- Whisper Large V3 Turbo, Whisper Large V3, and GPT OSS 20B are offered both directly on Groq and via OpenRouter (pinned to Groq's provider deployment) so Echo can run standalone with just an OpenRouter key
 - MAI-Transcribe-2 (OpenRouter) is sent `language=en`; if it fails or stalls, Echo retries once
-  with Whisper Turbo on Groq (`TranscriptionService.transcribe`)
+  with Whisper Turbo (direct Groq when a Groq key is present, otherwise OpenRouter pinned to Groq;
+  `TranscriptionService.transcribe`)
 - Post-processing: a prompt without `{{TRANSCRIPTION}}` is sent as the system message with the
   transcript as the user message (`PostProcessingPrompt`). Transcripts over 600 words are cleaned
   in sections unless the prompt uses `{{TRANSCRIPTION}}`; a reply cut off at `max_tokens` falls

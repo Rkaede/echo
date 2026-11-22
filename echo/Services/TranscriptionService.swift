@@ -715,8 +715,9 @@ extension TranscriptionService {
   }
 
   /// Transcribes with the given model. If it runs on OpenRouter and fails or exceeds the
-  /// fallback timeout, retries once with Whisper on Groq when a Groq key is available.
-  /// Returns the result and the model that produced it, for history.
+  /// fallback timeout, retries once with Whisper Turbo (on Groq when a Groq key is available,
+  /// otherwise via OpenRouter pinned to Groq). Returns the result and the model that produced it,
+  /// for history.
   func transcribe(
     audioFileURL: URL, model: String, recordingDuration: TimeInterval
   ) async throws -> (TranscriptionResultWithTiming, String) {
@@ -730,22 +731,30 @@ extension TranscriptionService {
       return (result, model)
     }
 
+    let fallback = TranscriptionData.fallbackOption(
+      for: model,
+      hasGroqKey: settingsManager.hasAPIKey(for: .groq),
+      hasOpenRouterKey: settingsManager.hasAPIKey(for: .openRouter)
+    )
+    let timeout = fallback != nil
+      ? Self.fallbackTimeout(forRecordingDuration: recordingDuration)
+      : nil
+
     do {
       let result = try await apiClient.transcribeAudio(
         fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: .openRouter), model: model,
         provider: .openRouter, extraFields: option?.extraFields ?? [:],
-        timeout: Self.fallbackTimeout(forRecordingDuration: recordingDuration))
+        timeout: timeout)
       return (result, model)
     } catch {
-      guard !Task.isCancelled, settingsManager.hasAPIKey(for: .groq) else { throw error }
+      guard !Task.isCancelled, let fallback else { throw error }
       log(
-        "\(model) failed or timed out (\(error.localizedDescription)); falling back to \(TranscriptionData.fallbackModel)",
+        "\(model) failed or timed out (\(error.localizedDescription)); falling back to \(fallback.value) (\(fallback.provider.displayName))",
         category: loggerCategory, level: .warning)
-      let fallback = TranscriptionData.fallbackModel
       let result = try await apiClient.transcribeAudio(
-        fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: .groq), model: fallback,
-        provider: .groq, extraFields: TranscriptionData.option(for: fallback)?.extraFields ?? [:])
-      return (result, fallback)
+        fileURL: audioFileURL, apiKey: settingsManager.apiKey(for: fallback.provider),
+        model: fallback.value, provider: fallback.provider, extraFields: fallback.extraFields)
+      return (result, fallback.value)
     }
   }
 }
