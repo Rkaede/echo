@@ -312,19 +312,34 @@ class ProfilesService: ObservableObject {
         let enabledProfiles = profiles.filter { $0.isEnabled }
         guard !enabledProfiles.isEmpty else { return }
 
-        guard let current = activeProfile,
-              let idx = enabledProfiles.firstIndex(where: { $0.id == current.id })
-        else {
-            activeProfile = enabledProfiles.first
-            return
+        // Profiles are switched while recording. A profile whose speech-to-text provider has
+        // no key saved could not transcribe the recording, so it is passed over.
+        settings.ensureAPIKeyLoaded()
+        let next = Self.profileToSwitchTo(
+            from: activeProfile?.id, in: enabledProfiles, direction: direction
+        ) { profile in
+            settings.hasAPIKey(for: TranscriptionData.provider(for: profile.transcriptionModel))
         }
+        if let next {
+            activeProfile = next
+        }
+    }
 
-        let count = enabledProfiles.count
-        guard count > 1 else { return }
-
-        var nextIndex = (idx + direction) % count
-        if nextIndex < 0 { nextIndex += count }
-
-        activeProfile = enabledProfiles[nextIndex]
+    /// The profile `direction` steps (1 or -1) on from the current one, wrapping round and
+    /// passing over any that `canTranscribe` rejects. Nil when there is no other profile to
+    /// switch to. Without a current profile it is the first one that can transcribe.
+    nonisolated static func profileToSwitchTo(
+        from currentID: String?, in profiles: [Profile], direction: Int,
+        canTranscribe: (Profile) -> Bool
+    ) -> Profile? {
+        guard let currentID, let index = profiles.firstIndex(where: { $0.id == currentID }) else {
+            return profiles.first(where: canTranscribe)
+        }
+        let count = profiles.count
+        for step in 1..<count {
+            let candidate = profiles[((index + direction * step) % count + count) % count]
+            if canTranscribe(candidate) { return candidate }
+        }
+        return nil
     }
 }
