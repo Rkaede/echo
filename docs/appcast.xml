@@ -3,6 +3,15 @@
   <channel>
     <title>Echo</title>
     <item>
+      <title>0.0.7</title>
+      <pubDate>Mon, 23 Nov 2026 13:00:21 +1100</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>0.0.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.7/Echo.dmg" length="3044321" type="application/octet-stream" sparkle:edSignature="2aixLjnxS9gkwFOjUuyDHsGh/BEwak5g67PEvg+6sozcOl+kn3yRQ5kyPEmWCTBFUjVBBZaie+mXp5Jvm5InCg=="/>
+      <sparkle:releaseNotesLink>https://rkaede.github.io/echo/Echo-0.0.7.html</sparkle:releaseNotesLink>
+    </item>
+    <item>
       <title>0.0.6</title>
       <pubDate>Wed, 18 Nov 2026 20:15:42 +1100</pubDate>
       <sparkle:version>6</sparkle:version>
@@ -19,15 +28,6 @@
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.5/Echo.dmg" length="2604515" type="application/octet-stream" sparkle:edSignature="S3Xv5aDF7lqrvZreRm1CPF9arwV4zHJUFcbb4LbyHEKJf6ozXQ50sMzDkQft4kBuab97nS1Wq8Y9YdxP0FkPBQ=="/>
       <sparkle:releaseNotesLink>https://rkaede.github.io/echo/Echo-0.0.5.html</sparkle:releaseNotesLink>
-    </item>
-    <item>
-      <title>0.0.4</title>
-      <pubDate>Fri, 23 Oct 2026 11:03:29 +1100</pubDate>
-      <sparkle:version>4</sparkle:version>
-      <sparkle:shortVersionString>0.0.4</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/Rkaede/echo/releases/download/v0.0.4/Echo.dmg" length="2568797" type="application/octet-stream" sparkle:edSignature="a4n/lfhzpTYZtHlRQVhitJUfwLag4N0dYanOLETdJmuZ6AvhHfu1372xSqVQ6lh2oYXTh+FR0sudgYrfQNGOAw=="/>
-      <sparkle:releaseNotesLink>https://rkaede.github.io/echo/Echo-0.0.4.html</sparkle:releaseNotesLink>
     </item>
   </channel>
 </rss>

@@ -1,0 +1,26 @@
+<h3 id="new-features">New Features</h3>
+<ul>
+<li><strong>OpenRouter models.</strong> Add an OpenRouter API key in Providers settings, then choose a model per profile. MAI-Transcribe-2 (English only) makes fewer errors than Whisper and punctuates more cleanly, for a slightly longer wait. If it fails or is slow, Echo retries with Whisper Large V3 Turbo: on Groq if you have a Groq key, otherwise through OpenRouter. Gemini 3.5 Flash-Lite is the more accurate of the two clean-up models, especially with names and technical terms. Your Groq key still covers the defaults.</li>
+<li><strong>Echo with only an OpenRouter key.</strong> Whisper Large V3 Turbo, Whisper Large V3 and GPT OSS 20B can also run through OpenRouter, which sends them to Groq, so one OpenRouter key covers transcription and clean-up. Calling Groq directly with a Groq key is about 100–300 ms faster.</li>
+<li><strong>New setup.</strong> Setup has been redesigned. It asks for an OpenRouter key, offers a Fast or an Accurate pair of models, and lets you try a dictation before you finish. If a Groq key is already saved, you can keep using it.</li>
+<li><strong>Long dictations.</strong> Recordings over 10 minutes are sent in parts, cut at pauses, so a dictation of an hour or more transcribes instead of failing at the upload limit. Long transcripts are cleaned up a section at a time. A prompt that uses {{TRANSCRIPTION}} still gets the whole transcript at once, so a prompt that turns a dictation into an email keeps working.</li>
+<li><strong>Retry Failed Recording.</strong> If a transcription fails, Echo keeps the recording, and Retry Failed Recording in the menu bar sends it again. Echo keeps the three most recent.</li>
+<li><strong>Improve Prompt with an Agent.</strong> A new Copy Instructions button in each profile’s post-processing settings copies instructions for Claude Code or another coding agent. The agent reads that profile’s dictation history, compares the raw transcripts with the cleaned text, and suggests a better prompt with a list of the names and terms you use. History must be turned on, and the agent you paste it into will read your history.</li>
+<li><strong>New sounds.</strong> The recording sounds are now synthesised with Cuelume instead of played from files. Choose from twelve sounds in four styles in Sound settings. If you had picked one of the old click sounds, Echo switches to the new default.</li>
+<li><strong>New app and menu bar icons.</strong></li>
+</ul>
+<h3 id="improvements">Improvements</h3>
+<ul>
+<li><strong>Providers settings.</strong> The API keys have moved from General to a new Providers section in Settings.</li>
+<li><strong>Drag Settings from anywhere.</strong> The Settings window now moves when you drag any empty part of it.</li>
+<li><strong>Better clean-up by default.</strong> The clean-up prompt is now sent as instructions, with your dictation as a separate message, so the model no longer answers a question you dictate or follows an instruction you dictate. Profiles still using an old default prompt switch to the new one. Prompts you have edited are left as they are, and a prompt that includes {{TRANSCRIPTION}} works as before.</li>
+<li><strong>A shorter list of clean-up models.</strong> GPT OSS 20B on Groq is the default and the fastest, and it can also run through OpenRouter. Gemini 3.5 Flash-Lite runs through OpenRouter. Profiles set to a model that has been removed now use GPT OSS 20B.</li>
+<li><strong>Comparable error rates.</strong> The word error rate shown for each transcription model now comes from one independent benchmark (Artificial Analysis), so the models can be compared.</li>
+<li><strong>History keeps the cleaned text.</strong> Each dictation now saves the cleaned text next to the raw transcript, along with the profile and clean-up model used. The History window shows the cleaned text, with a switch to the raw transcript.</li>
+<li><strong>Profiles without a key are skipped.</strong> Switching profile while recording now passes over a profile whose speech-to-text provider has no API key saved.</li>
+</ul>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li>Clean-up no longer drops the end of a long dictation. If a clean-up reply is cut short, Echo pastes the raw transcript instead.</li>
+</ul>
+<p><a href="https://github.com/Rkaede/echo/blob/main/CHANGELOG.md">View full changelog</a></p>
