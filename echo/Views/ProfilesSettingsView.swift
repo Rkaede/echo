@@ -422,6 +422,16 @@ private struct ProfileEditor: View {
             set: { v in profile.title = v }
           ))
 
+        LabeledContent("Icon") {
+          IconPickerView(
+            iconName: Binding(
+              get: { profile.iconName },
+              set: { newValue in profile.iconName = newValue }
+            ),
+            colorToken: nil
+          )
+        }
+
         Toggle("Enabled", isOn: $profile.isEnabled)
 
         Toggle("Default", isOn: $profile.isDefault)
@@ -506,16 +516,6 @@ private struct ProfileEditor: View {
           }
           .padding(.top, 4)
         }
-      }
-
-      Section("Appearance") {
-        IconPickerView(
-          iconName: Binding(
-            get: { profile.iconName },
-            set: { newValue in profile.iconName = newValue }
-          ),
-          colorToken: nil
-        )
       }
 
       Section {
