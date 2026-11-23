@@ -1,127 +1,166 @@
 <p align="center">
-  <img width="349"  alt="echo-logo" align="center" src="https://github.com/user-attachments/assets/a6363096-0748-40a3-b9a7-979ca909cd5b" />
+  <img src="echo/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="112" alt="Echo app icon" />
 </p>
-<p align="center">Lightning-Fast Voice-to-Text for macOS ⚡</p>
 
+<h1 align="center">Echo</h1>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=vWJGuGEDd28" target="_blank">
-    <img width="800" alt="Demo video" src="https://github.com/user-attachments/assets/292643b6-2382-4fd2-b31e-8662080176ca" />
-  </a>
+  Fast, native voice-to-text for macOS.
 </p>
 
-<p align="center"><a href="https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg">Download</a> for macOS 15+</p>
+<p align="center">
+  <a href="https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg"><strong>Download for macOS 15+</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Rkaede/echo/releases">Releases</a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 ---
 
-A lightweight macOS app for instant speech-to-text. Tap Fn to record hands-free, or hold Fn for push-to-talk. Recording uses the active profile.
+Tap `Fn` to dictate hands-free, or hold `Fn` for push-to-talk. Echo transcribes your speech with MAI-Transcribe-2 or Whisper through OpenRouter or Groq, optionally cleans it up with an LLM, and pastes it straight into your active app.
 
-Your speech is transcribed by Whisper or MAI-Transcribe-2, through OpenRouter or Groq, and automatically pasted into your current app.
+- **Native macOS menu bar app** built in Swift and SwiftUI — no Electron, no webviews
+- **Bring your own API key** — no subscriptions, paywalls, tracking, or upsells
+- **Open source** under the MIT License
 
-- Fully open source
-- Native app (no electron, no webview)
-- No tracking, paywalls, or upsells
+## Features
 
-## 🌟 Features
+### Dictation & Overlay
+- **Minimal floating overlay** at the bottom of your active display — stays visible across Spaces and over full-screen apps, with a live audio waveform and active microphone indicator.
+- **Tap or hold `Fn`** to switch seamlessly between hands-free toggle recording and push-to-talk, or start directly with a profile shortcut.
+- **No phantom text** — silent or accidental recordings are dropped automatically so stock phrases like *"Thank you."* aren't pasted.
+- **Clipboard restoration** — restores your previous clipboard contents after pasting (configurable in Settings).
 
-- Minimal overlay
-- Push-to-talk OR toggle to start/stop recording
-- Input transcription into the current app (e.g. Slack, Cursor, etc.)
-- History with audio playback and full-text search
-- Optional clean-up of each dictation by an LLM (punctuation, filler and misheard names), set per profile
-- A copy-prompt button that has a coding agent such as Claude Code review your history and suggest a better clean-up prompt
+### Profiles & LLM Clean-Up
+- **Custom profiles** with their own transcription model, optional LLM clean-up model and prompt, icon, colour, and shortcut. Switch profiles mid-recording with arrow keys.
+- **Safe clean-up by default** — prompts are sent as system instructions with your transcript as a separate user message, fixing punctuation, filler words, and misheard names without answering questions or following instructions you dictate.
+- **Improve Prompt with an Agent** — click **Copy Instructions** in any profile's post-processing settings to copy a ready-to-paste prompt for Claude Code, Codex, or another coding agent. The agent inspects that profile's local history and suggests an improved clean-up prompt tailored to the names and terms you use.
 
-## 📉 Costs
+### Notes Mode
+- Toggle Notes Mode (`⌃⌥N` or from the menu bar) to dictate a sequence of notes instead of pasting each entry.
+- **Automatic screenshots & screen drawing** — each recording captures a screenshot when you stop. Drag anywhere on screen while recording to draw annotations; the screenshot automatically crops to the area you marked.
+- **Ready-to-share exports** — stopping opens a clean, light/dark-aware HTML page (and saves a Markdown copy) with three views: the full note with screenshots, the plain transcript, and an AI-cleaned version. Copy directly via **Copy HTML** (rich text with embedded screenshots for Gmail, Slack, or Teams), **Copy Markdown**, or **Copy Path**.
 
-OpenRouter and Groq are paid services.
+### Long Dictations & Reliability
+- **Long recordings** — dictations over 10 minutes are split automatically at quiet pauses to stay under the 25 MB upload limit, and long transcripts are cleaned up section by section.
+- **Retry Failed Recording** — if a transcription fails due to a network or API error, Echo keeps the last three recordings locally so you can retry from the menu bar without losing what you said.
+- **Audio controls** — set a preferred and fallback microphone, tune how long the audio engine stays warm between recordings, and get automatic updates via Sparkle.
 
-- Whisper Large V3 Turbo: $0.04/hour
-- Whisper Large V3: $0.111/hour
-- MAI-Transcribe-2: about $0.10/hour
-- With clean-up, the Fast setup costs about 4¢ per hour of speech and the Accurate setup about 13¢
-- Groq's minimum billable duration: 10 seconds
-- Typical usage: ~$1–$2/month for most people
+### History & Synthesized Sounds
+- **Local history** — optional SQLite history with full-text search, a switch between cleaned and raw transcripts, per-dictation metadata, and optional saved audio playback.
+- **Synthesized cues** — twelve recording cues across four styles (*Default*, *Mechanical*, *Bubble*, *Press*) synthesized natively with [Cuelume](https://github.com/danielwh2/cuelume).
 
-## 🚨 Privacy (IMPORTANT)
+## Getting Started
 
-Echo sends your audio to a cloud service to transcribe it, and the transcript too when clean-up is on. Which service depends on the models your profile uses. If privacy is a concern, consider a fully local solution (e.g., Superwhisper).
+### Requirements
+- **macOS 15.0** or later
+- An **OpenRouter API key** ([openrouter.ai/keys](https://openrouter.ai/keys)) — one key covers both transcription and clean-up
+- *Optional:* a **Groq API key** ([console.groq.com/keys](https://console.groq.com/keys)) to run Whisper and GPT OSS 20B directly on Groq (~100–300 ms faster per dictation)
 
-- **OpenRouter models** (what setup chooses): Echo sends the audio and the transcript to OpenRouter, which passes them to the model's host. Whisper through OpenRouter runs on Groq, so Groq's policy applies to it as well. Review OpenRouter's [Privacy Policy](https://openrouter.ai/privacy).
-- **Groq models**: Echo sends them straight to Groq. Review Groq's [Privacy Policy](https://groq.com/privacy-policy) and this [community post](https://community.groq.com/help-center-14/how-does-groq-handle-my-data-190). There are inconsistencies between the policy and community statements about data retention.
+### Setup
+1. Download [`Echo.dmg`](https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg) (or choose a version from the [releases page](https://github.com/Rkaede/echo/releases)) and drag **Echo** to your **Applications** folder.
+2. Open Echo and walk through setup: paste your OpenRouter API key and pick the **Accurate** or **Fast** preset.
+3. Grant **Microphone** and **Accessibility** permissions when prompted. *(Screen Recording is optional and only requested when you use Notes Mode.)*
+4. Try a test dictation right in setup, then press `Fn` in any app.
 
-What Echo does:
+To add a Groq API key later, open **Settings › Providers**.
 
-- Stores your Groq and OpenRouter API keys in the system keychain (never in plain text)
-- Writes temporary WAV files to system temp directory (/tmp/echo/) with timestamped names, then deletes them after processing. If a transcription fails, it keeps that recording (the three most recent) in its Application Support folder so you can retry it from the menu bar.
-- Uses Accessibility for the push-to-talk shortcut and to simulate Cmd+V to paste text into the current app
-- When history is on, keeps each raw transcript and its cleaned text in a local SQLite database. The copy-prompt button gives a coding agent the path to it, so the agent you paste it into reads your history.
+## Models & Costs
 
-## 🤖 Models
+OpenRouter and Groq are pay-as-you-go services. For most people, everyday dictation costs roughly **$1–$2/month**.
 
-Setup offers two pairs of models, both through OpenRouter:
+### Setup Presets
 
-- Accurate (recommended): MAI-Transcribe-2 with Gemini 3.5 Flash-Lite clean-up. English only.
-- Fast: Whisper Large V3 Turbo with GPT OSS 20B clean-up. Many languages.
+Both presets run through OpenRouter out of the box and can be customized per profile in **Settings › Profiles**.
 
-You can change the models for each profile in Settings › Profiles.
+| Preset | Transcription | Clean-Up | Languages | Error Rate | Typical Wait | Est. Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Accurate** *(recommended)* | MAI-Transcribe-2 | Gemini 3.5 Flash-Lite | English | 4.63% | ~1.5–1.8 s | ~13¢ / hour |
+| **Fast** | Whisper Large V3 Turbo | GPT OSS 20B | Multilingual | 6.95% | ~1.3–1.6 s | ~4¢ / hour |
 
-Transcription:
+*Error rates, wait times, and costs are measured on pasted text via OpenRouter. Calling Groq directly with a Groq key trims roughly 100–300 ms from Whisper and GPT OSS 20B requests.*
 
-- Whisper Large V3 Turbo (OpenRouter or Groq)
-- Whisper Large V3 (OpenRouter or Groq)
-- MAI-Transcribe-2 (OpenRouter; English only). If it fails or is slow, Echo retries with Whisper Large V3 Turbo: on Groq if you have a Groq key, otherwise through OpenRouter.
+### Available Models
 
-Clean-up:
+**Transcription**
 
-- GPT OSS 20B (OpenRouter or Groq)
-- Gemini 3.5 Flash-Lite (OpenRouter)
+| Model | Provider | Languages | Cost | Notes |
+| --- | --- | --- | --- | --- |
+| **MAI-Transcribe-2** | OpenRouter | English | ~$0.10 / hr | Cleanest punctuation and lowest error rate; automatically falls back to Whisper Turbo if slow or unavailable |
+| **Whisper Large V3 Turbo** | OpenRouter or Groq | Multilingual | $0.04 / hr | Fast, low-cost multilingual transcription |
+| **Whisper Large V3** | OpenRouter or Groq | Multilingual | $0.111 / hr | Higher-accuracy multilingual transcription and translation |
 
-## 📝 Requirements
+**Clean-Up**
 
-- macOS 15.0+
-- An OpenRouter API key, which setup asks for: https://openrouter.ai/keys
-- Optional: a Groq API key. It runs Whisper and GPT OSS 20B directly on Groq, which is about 100–300 ms faster per transcription: https://console.groq.com/keys
+| Model | Provider | Notes |
+| --- | --- | --- |
+| **Gemini 3.5 Flash-Lite** | OpenRouter | Most accurate with names and technical terms (~0.65 s) |
+| **GPT OSS 20B** | Groq or OpenRouter | Fastest clean-up (~0.4 s direct on Groq) |
 
-## 🚀 Getting Started
+*Note: Groq bills a 10-second minimum duration per transcription request.*
 
-1. Download the latest DMG: [Download for macOS](https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg) (or visit the [releases page](https://github.com/Rkaede/echo/releases))
-2. Open the DMG and drag the app to your Applications folder
-3. Open the app and follow the setup: enter your OpenRouter API key, then choose the Accurate or the Fast models
-4. Grant microphone and accessibility permissions when setup asks
-5. Try a dictation: hold Fn while you talk, or tap Fn to start and tap it again to stop
+## Shortcuts
 
-To add a Groq API key, open Settings › Providers.
+| Action | Shortcut | Details |
+| --- | --- | --- |
+| Hands-free recording | Tap `Fn` | Release within 300 ms to keep recording; press `Fn` again to stop |
+| Push-to-talk | Hold `Fn` | Hold for 300 ms or longer; release to stop |
+| Cancel recording | `Esc` | Cancels immediately in push-to-talk; press twice to confirm in hands-free mode |
+| Start/stop a profile | Custom *(default: `⌥Space` for General Dictation)* | Configurable per profile in **Settings › Shortcuts** |
+| Switch profile while recording | `←` / `→` | Configurable in **Settings › Shortcuts**; skips profiles without an API key |
+| Toggle Notes Mode | `⌃⌥N` | Configurable in **Settings › Shortcuts** |
 
-## ⌨️ Shortcuts
+> [!TIP]
+> If pressing `Fn` opens the macOS Emoji picker or system dictation, adjust what the Globe (`Fn`) key does in **System Settings › Keyboard**.
 
-- Hands-free recording: tap and release Fn within 300 ms; press Fn again to stop.
-- Push-to-talk: hold Fn for 300 ms or longer; release to stop.
-- Previous profile recording shortcuts are preserved but inactive. Profile navigation remains available while recording.
+## Privacy
 
-## 🐛 Troubleshooting
+> [!IMPORTANT]
+> Echo sends your audio to a cloud provider for transcription, and sends the transcript too when LLM clean-up is enabled. If you need fully offline transcription, consider a local alternative such as Superwhisper.
 
-- No transcription?
-  - Confirm the API key for the profile's model (Groq or OpenRouter) is valid and saved in Settings.
-- Auto-paste not working?
-  - Ensure Accessibility permission is granted. Re-prompt from Settings > Permissions.
-- Overlay not visible?
-  - It appears at the bottom center of the active display. Display changes are monitored; try pressing the hotkey again after focusing any app.
-- Hotkeys not responding?
-  - Check the macOS Fn/Globe setting for conflicting system actions.
-  - Fn recording, ensure Accessibility permission is granted.
+- **OpenRouter**: Echo sends audio and transcripts to OpenRouter, which routes requests to the selected model's host (Whisper and GPT OSS 20B through OpenRouter are routed to Groq). Review [OpenRouter's Privacy Policy](https://openrouter.ai/privacy).
+- **Groq**: Audio and transcripts are sent directly to Groq. Review [Groq's Privacy Policy](https://groq.com/privacy-policy) and this [community post](https://community.groq.com/help-center-14/how-does-groq-handle-my-data-190) regarding data retention.
 
-## 🛣️ Roadmap
+**What Echo does locally:**
+- Stores your OpenRouter and Groq API keys in the **macOS Keychain** (never in plain text).
+- Writes temporary WAV recordings to `/tmp/echo/` and deletes them after processing. If transcription fails, Echo keeps up to the three most recent failed recordings in Application Support so you can retry them from the menu bar.
+- Keeps **History** off by default. When enabled, raw and cleaned transcripts (and optionally audio files) are stored in a local SQLite database. Using **Copy Instructions** gives the coding agent you paste it into the path to that local database.
+- Uses **Accessibility** for global shortcuts and simulating `⌘V` to paste into the active app, and **Screen Recording** only for Notes Mode screenshots.
 
-- Profiles with configurable recording settings and profile navigation shortcuts
-- LLM post processing
-- Per-app paste behavior (append newline, keep clipboard, etc.)
-- Dictionary/word replacements
-- Take screenshot for additional context
+## Troubleshooting
 
-## 🤝 Contributing
+- **No transcription or API error:** Confirm your API key for the active profile's provider (OpenRouter or Groq) is saved in **Settings › Providers**.
+- **Auto-paste or `Fn` shortcut not working:** Verify **Accessibility** is enabled in **Settings › Permissions**, and check **System Settings › Keyboard** for conflicting Globe (`Fn`) actions.
+- **Overlay not visible:** The overlay appears at the bottom center of the active display. Focus any app window and press the recording shortcut again.
+- **Still stuck?** Open **Settings › General › Open Logs Folder** to inspect diagnostic logs (including console and CoreAudio output) and include them when filing an issue.
 
-Issues and PRs are welcome. Please include clear repro steps and environment details when reporting bugs.
+## Building from Source
 
-## 📄 License
+Requires **macOS 15.0+** and **Xcode**.
 
-MIT
+```bash
+git clone https://github.com/Rkaede/echo.git
+cd echo
+open Echo.xcodeproj
+```
+
+Or build and test from the command line:
+
+```bash
+xcodebuild -scheme Echo -configuration Debug build
+xcodebuild -scheme Echo test
+```
+
+## Acknowledgments
+
+- Recording sound effects are synthesized using a Swift port of [Cuelume](https://github.com/danielwh2/cuelume) by Daniel Belyi (MIT License).
+- Automatic updates are powered by [Sparkle](https://sparkle-project.org/).
+
+## Contributing
+
+Issues and pull requests are welcome. When reporting a bug, please include your macOS version, Echo version, reproduction steps, and relevant logs from **Settings › General › Open Logs Folder**.
+
+## License
+
+[MIT](LICENSE)
