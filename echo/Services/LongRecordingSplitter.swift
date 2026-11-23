@@ -41,10 +41,11 @@ enum LongRecordingSplitter {
     return cuts
   }
 
-  /// Writes the parts beside `fileURL` and returns them in order. A recording short enough
-  /// for one request comes back as a single part: the original file.
+  /// Writes the parts into `directory` (beside `fileURL` when nil) and returns them in order.
+  /// A recording short enough for one request comes back as a single part: the original file.
   static func split(
     _ fileURL: URL,
+    into directory: URL? = nil,
     maxPartSeconds: TimeInterval = maxPartSeconds,
     searchSeconds: TimeInterval = searchSeconds
   ) throws -> [Part] {
@@ -62,9 +63,10 @@ enum LongRecordingSplitter {
     }
 
     let base = fileURL.deletingPathExtension().lastPathComponent
-    let directory = fileURL.deletingLastPathComponent()
+    let directory = directory ?? fileURL.deletingLastPathComponent()
     var parts: [Part] = []
     do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       for (index, bounds) in zip([0] + cuts, cuts + [totalFrames]).enumerated() {
         let url = directory.appendingPathComponent("\(base)-part\(index + 1).wav")
         try copyFrames(from: source, range: bounds.0..<bounds.1, to: url)

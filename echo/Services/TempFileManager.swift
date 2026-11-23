@@ -9,8 +9,18 @@ class TempFileManager: ObservableObject {
   private let maxFileAge: TimeInterval = 60 * 60 // 1 hour
   private var cleanupTimer: Timer?
   
+  /// Where recordings are written while they are recorded and transcribed.
+  nonisolated static let directory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("echo")
+
+  /// A recording (`recording_<time>.wav`) or one part of a long one. The parts of a retried
+  /// failed recording are named after it (`recording-<date>-part1.wav`), so both spellings count.
+  nonisolated static func isRecordingFile(_ url: URL) -> Bool {
+    url.lastPathComponent.hasPrefix("recording") && url.pathExtension == "wav"
+  }
+
   private init() {
-    self.tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("echo")
+    self.tempDirectory = Self.directory
     createTempDirectoryIfNeeded()
   }
   
@@ -57,34 +67,46 @@ class TempFileManager: ObservableObject {
     }
   }
   
+  /// How long ago a file was last written, or nil when neither date is known. A recording
+  /// still in progress was created long ago but written a moment ago, so it is judged by
+  /// its last write: a dictation of over an hour must not be removed while it is recorded.
+  nonisolated static func age(creationDate: Date?, modificationDate: Date?, now: Date) -> TimeInterval? {
+    guard let lastWritten = [creationDate, modificationDate].compactMap({ $0 }).max() else {
+      return nil
+    }
+    return now.timeIntervalSince(lastWritten)
+  }
+
   private func cleanupOrphanedFiles() {
     do {
-      let contents = try FileManager.default.contentsOfDirectory(at: tempDirectory, includingPropertiesForKeys: [.creationDateKey], options: [])
-      
-      let recordingFiles = contents.filter { url in
-        url.lastPathComponent.hasPrefix("recording_") && url.pathExtension == "wav"
-      }
-      
+      let dateKeys: Set<URLResourceKey> = [.creationDateKey, .contentModificationDateKey]
+      let contents = try FileManager.default.contentsOfDirectory(
+        at: tempDirectory, includingPropertiesForKeys: Array(dateKeys), options: [])
+
+      let recordingFiles = contents.filter(Self.isRecordingFile)
+
       var cleanedCount = 0
       let currentTime = Date()
-      
+
       for fileURL in recordingFiles {
         do {
-          let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey])
-          
-          if let creationDate = resourceValues.creationDate {
-            let fileAge = currentTime.timeIntervalSince(creationDate)
-            
+          let resourceValues = try fileURL.resourceValues(forKeys: dateKeys)
+
+          if let fileAge = Self.age(
+            creationDate: resourceValues.creationDate,
+            modificationDate: resourceValues.contentModificationDate,
+            now: currentTime)
+          {
             if fileAge > maxFileAge {
               try FileManager.default.removeItem(at: fileURL)
               cleanedCount += 1
               print("TempFileManager: Removed orphaned file: \(fileURL.lastPathComponent) (age: \(Int(fileAge/60)) minutes)")
             }
           } else {
-            // If we can't get creation date, err on the side of caution and delete very old files
+            // If we can't get either date, err on the side of caution and delete the file
             try FileManager.default.removeItem(at: fileURL)
             cleanedCount += 1
-            print("TempFileManager: Removed file with unknown creation date: \(fileURL.lastPathComponent)")
+            print("TempFileManager: Removed file with unknown dates: \(fileURL.lastPathComponent)")
           }
         } catch {
           print("TempFileManager: Failed to process file \(fileURL.lastPathComponent): \(error)")
@@ -107,9 +129,7 @@ class TempFileManager: ObservableObject {
   func getTempDirectoryInfo() -> (path: String, fileCount: Int) {
     do {
       let contents = try FileManager.default.contentsOfDirectory(at: tempDirectory, includingPropertiesForKeys: nil, options: [])
-      let recordingFiles = contents.filter { url in
-        url.lastPathComponent.hasPrefix("recording_") && url.pathExtension == "wav"
-      }
+      let recordingFiles = contents.filter(Self.isRecordingFile)
       return (tempDirectory.path, recordingFiles.count)
     } catch {
       print("TempFileManager: Failed to get directory info: \(error)")

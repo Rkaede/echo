@@ -634,8 +634,10 @@ extension TranscriptionService {
   ) async throws -> (TranscriptionResultWithTiming, String) {
     var parts: [LongRecordingSplitter.Part] = []
     if recordingDuration > LongRecordingSplitter.maxPartSeconds {
+      // The parts go in the temp folder even when a kept failed recording is retried: beside
+      // it they would count as failed recordings themselves, and a crash would leave them.
       parts = try await Task.detached(priority: .userInitiated) {
-        try LongRecordingSplitter.split(audioFileURL)
+        try LongRecordingSplitter.split(audioFileURL, into: TempFileManager.directory)
       }.value
     }
     guard parts.count > 1 else {

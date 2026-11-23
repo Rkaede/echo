@@ -71,6 +71,23 @@ final class LongDictationXCTests: XCTestCase {
     }
   }
 
+  func testSplitWritesItsPartsIntoTheGivenFolder() throws {
+    // A retried failed recording is split into the temp folder, not beside itself, where the
+    // parts would be listed as failed recordings.
+    let kept = directory.appendingPathComponent("failed", isDirectory: true)
+    let temp = directory.appendingPathComponent("temp", isDirectory: true)
+    try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+    let url = kept.appendingPathComponent("recording-20261123-101500.wav")
+    try writeTone(to: url, seconds: 5, silences: [1.6..<1.9, 3.4..<3.7])
+
+    let parts = try LongRecordingSplitter.split(url, into: temp, maxPartSeconds: 2, searchSeconds: 0.5)
+
+    XCTAssertEqual(parts.count, 3)
+    XCTAssertTrue(parts.allSatisfy { $0.url.deletingLastPathComponent().path == temp.path })
+    XCTAssertTrue(parts.allSatisfy { TempFileManager.isRecordingFile($0.url) }, "left-over parts must be cleaned up")
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: kept.path), [url.lastPathComponent])
+  }
+
   func testSplitReturnsTheOriginalWhenShortEnough() throws {
     let url = directory.appendingPathComponent("short.wav")
     try writeTone(to: url, seconds: 1, silences: [])
@@ -110,6 +127,24 @@ final class LongDictationXCTests: XCTestCase {
     guard case .reject = SpeechGate.transcriptDecision(segments: combined.result.segments) else {
       return XCTFail("an all-silent recording should still be rejected")
     }
+  }
+
+  // MARK: - Temporary file clean-up
+
+  func testARecordingStillBeingWrittenIsNotOldHoweverLongAgoItStarted() {
+    let now = Date()
+    let started = now.addingTimeInterval(-75 * 60)
+
+    // 75 minutes into a dictation: created long ago, written a second ago.
+    XCTAssertEqual(
+      TempFileManager.age(
+        creationDate: started, modificationDate: now.addingTimeInterval(-1), now: now),
+      1)
+    // An orphan from an earlier session was last written long ago too.
+    XCTAssertEqual(
+      TempFileManager.age(creationDate: started, modificationDate: started, now: now), 75 * 60)
+    XCTAssertEqual(TempFileManager.age(creationDate: started, modificationDate: nil, now: now), 75 * 60)
+    XCTAssertNil(TempFileManager.age(creationDate: nil, modificationDate: nil, now: now))
   }
 
   // MARK: - Cleaning long transcripts in sections
