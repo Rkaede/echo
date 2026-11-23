@@ -9,6 +9,16 @@ struct HistoryView: View {
   @State private var isLoadingMore = false
   @State private var searchResults: [TranscriptionHistory] = []
   @State private var isSearching = false
+  @State private var textVersion: TextVersion = .cleaned
+
+  /// Which text the detail pane shows for a dictation that was cleaned up. The choice stays
+  /// as you move between dictations, so several can be compared the same way.
+  private enum TextVersion: String, CaseIterable, Identifiable {
+    case cleaned = "Cleaned"
+    case raw = "Raw"
+
+    var id: String { rawValue }
+  }
 
   private let itemsPerPage = 50
   
@@ -186,8 +196,17 @@ struct HistoryView: View {
             selectedTranscription = transcription
           }
           .contextMenu {
-            Button("Copy Text") {
-              copyToClipboard(transcription.transcribedText)
+            if let cleaned = transcription.postProcessedText {
+              Button("Copy Cleaned Text") {
+                copyToClipboard(cleaned)
+              }
+              Button("Copy Raw Transcript") {
+                copyToClipboard(transcription.transcribedText)
+              }
+            } else {
+              Button("Copy Text") {
+                copyToClipboard(transcription.transcribedText)
+              }
             }
 
             Button("Delete", role: .destructive) {
@@ -260,7 +279,7 @@ struct HistoryView: View {
             
             HStack(spacing: 8) {
               Button(action: {
-                copyToClipboard(transcription.transcribedText)
+                copyToClipboard(shownText(for: transcription))
               }) {
                 HStack(spacing: 4) {
                   Image(systemName: "doc.on.doc")
@@ -294,7 +313,20 @@ struct HistoryView: View {
             .padding(.vertical, 8)
 
           VStack(alignment: .leading, spacing: 12) {
-            Text(transcription.transcribedText)
+            // Only dictations that were cleaned up have two texts to choose between.
+            if transcription.postProcessedText != nil {
+              Picker("Text", selection: $textVersion) {
+                ForEach(TextVersion.allCases) { version in
+                  Text(version.rawValue).tag(version)
+                }
+              }
+              .pickerStyle(.segmented)
+              .labelsHidden()
+              .fixedSize()
+              .help("Cleaned is the text Echo pasted. Raw is the transcript before clean-up.")
+            }
+
+            Text(shownText(for: transcription))
               .textSelection(.enabled)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -331,6 +363,24 @@ struct HistoryView: View {
         Text(transcription.modelUsed)
       }
 
+      if let model = transcription.postProcessingModel {
+        GridRow {
+          Text("Clean-up Model:")
+            .foregroundColor(.secondary)
+          Text(cleanUpModelLabel(model))
+        }
+      }
+
+      if let profileId = transcription.profileId,
+        let profile = ProfilesService.shared.profiles.first(where: { $0.id == profileId })
+      {
+        GridRow {
+          Text("Profile:")
+            .foregroundColor(.secondary)
+          Text(profile.title)
+        }
+      }
+
       if let app = transcription.applicationContext {
         GridRow {
           Text("Application:")
@@ -353,6 +403,23 @@ struct HistoryView: View {
         Text(String(format: "%.2fs", transcription.totalTranscriptionTime))
       }
     }
+  }
+
+  /// The text the detail pane shows and its Copy button copies: the cleaned text when the
+  /// dictation has one and it is chosen, otherwise the raw transcript.
+  private func shownText(for transcription: TranscriptionHistory) -> String {
+    if textVersion == .cleaned, let cleaned = transcription.postProcessedText {
+      return cleaned
+    }
+    return transcription.transcribedText
+  }
+
+  /// The stored clean-up model as Settings names it, or the stored ID for a model that is no
+  /// longer offered.
+  private func cleanUpModelLabel(_ model: String) -> String {
+    guard let option = PostProcessingModelOption.allOptions.first(where: { $0.value == model })
+    else { return model }
+    return "\(option.label) · \(option.provider.displayName)"
   }
 
   private func deleteTranscription(_ transcription: TranscriptionHistory) {
@@ -396,22 +463,7 @@ struct HistoryView: View {
       
       await MainActor.run {
         self.searchResults = results.map { (transcription, snippet) in
-          TranscriptionHistory(
-            id: transcription.id,
-            timestamp: transcription.timestamp,
-            transcribedText: transcription.transcribedText,
-            duration: transcription.duration,
-            audioFileReference: transcription.audioFileReference,
-            languageDetected: transcription.languageDetected,
-            modelUsed: transcription.modelUsed,
-            wordCount: transcription.wordCount,
-            applicationContext: transcription.applicationContext,
-            uploadTime: transcription.uploadTime,
-            groqProcessingTime: transcription.groqProcessingTime,
-            totalTranscriptionTime: transcription.totalTranscriptionTime,
-            confidence: transcription.confidence,
-            searchSnippet: snippet
-          )
+          transcription.withSearchSnippet(snippet)
         }
         self.isSearching = false
       }

@@ -77,6 +77,36 @@ struct TranscriptionHistory: Identifiable, Codable, Equatable {
 }
 
 extension TranscriptionHistory {
+    /// The same dictation with a search snippet attached. Copies every field, so a search
+    /// result is the whole row; when a field is added to the struct, add it here too.
+    func withSearchSnippet(_ snippet: String) -> TranscriptionHistory {
+        TranscriptionHistory(
+            id: id,
+            timestamp: timestamp,
+            transcribedText: transcribedText,
+            duration: duration,
+            audioFileReference: audioFileReference,
+            languageDetected: languageDetected,
+            modelUsed: modelUsed,
+            wordCount: wordCount,
+            applicationContext: applicationContext,
+            uploadTime: uploadTime,
+            pureUploadTime: pureUploadTime,
+            downloadTime: downloadTime,
+            totalNetworkTime: totalNetworkTime,
+            groqProcessingTime: groqProcessingTime,
+            totalTranscriptionTime: totalTranscriptionTime,
+            confidence: confidence,
+            searchSnippet: snippet,
+            didFail: didFail,
+            errorMessage: errorMessage,
+            errorCategory: errorCategory,
+            profileId: profileId,
+            postProcessedText: postProcessedText,
+            postProcessingModel: postProcessingModel
+        )
+    }
+
     // Shared because these are read from view bodies for every row on every render, and
     // building a formatter costs far more than using one.
     private static let timestampFormatter: DateFormatter = {
