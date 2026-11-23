@@ -91,8 +91,17 @@ final class PasteService {
     var postPaste: (pid_t) -> Bool
     var sleep: (UInt64) async throws -> Void
 
+    /// Whether macOS lets Echo send the paste shortcut. `CGPreflightPostEventAccess` keeps
+    /// answering no for the rest of the launch once Echo has asked for the access and not had
+    /// it, which is what happens in setup: Echo asks, then the user allows it. Trusting that
+    /// answer alone blocked every paste until Echo was relaunched. The event tap needs the
+    /// same access and is created only after macOS allows it, so it counts as well.
+    static func canPostEvents() -> Bool {
+      CGPreflightPostEventAccess() || GlobalShortcutMonitor.shared.hasEventTap
+    }
+
     static let live = Environment(
-      hasAccessibilityPermission: { AXIsProcessTrusted() && CGPreflightPostEventAccess() },
+      hasAccessibilityPermission: { AXIsProcessTrusted() && canPostEvents() },
       frontmostProcessIdentifier: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
       modifierFlags: { CGEventSource.flagsState(.hidSystemState) },
       postPaste: { processIdentifier in

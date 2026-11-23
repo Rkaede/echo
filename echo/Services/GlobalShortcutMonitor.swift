@@ -4,6 +4,9 @@ import CoreGraphics
 class GlobalShortcutMonitor {
   static let shared = GlobalShortcutMonitor()
   private var eventTap: CFMachPort?
+  /// Whether the event tap exists. macOS only lets Echo create it once Echo is allowed to
+  /// handle keyboard events, so this shows that access was allowed during this launch.
+  var hasEventTap: Bool { eventTap != nil }
   private var runLoopSource: CFRunLoopSource?
   private let loggerCategory = "GlobalShortcutMonitor"
   private var isFnKeyPressed = false
@@ -36,8 +39,28 @@ class GlobalShortcutMonitor {
     stopMonitoring()
   }
 
-  func startMonitoring() {
+  /// Creates the event tap. Trying to create it before Echo is allowed under Accessibility
+  /// makes macOS ask for that access there and then: it shows its own prompt, on whichever
+  /// Space is in front, and adds Echo to the Accessibility list in System Settings.
+  ///
+  /// At launch that is too early (setup has not said what it is for, and the Space in front
+  /// may be a full-screen terminal), so without `askingForAccess` this waits until Echo is
+  /// allowed. `PermissionManager` passes `askingForAccess` when the user presses the button
+  /// that asks for the permission.
+  func startMonitoring(askingForAccess: Bool = false) {
     guard eventTap == nil else { return }
+
+    guard askingForAccess || AXIsProcessTrusted() else {
+      if eventTapCheckTimer == nil {
+        log(
+          "Accessibility is not allowed yet; the event tap will be created once it is",
+          category: loggerCategory,
+          level: .info
+        )
+      }
+      retryWhenAccessibilityIsAllowed()
+      return
+    }
 
     // Create event mask for the events we want to monitor
     let eventMask =
@@ -108,9 +131,9 @@ class GlobalShortcutMonitor {
     )
   }
 
-  /// macOS refuses the event tap until Echo is allowed under Accessibility, which a new user
-  /// does during setup, after launch. Checks until it is allowed and then creates the tap, so
-  /// fn and the shortcuts work without relaunching Echo.
+  /// The event tap needs Echo to be allowed under Accessibility, which a new user does during
+  /// setup, after launch. Checks until it is allowed and then creates the tap, so fn and the
+  /// shortcuts work without relaunching Echo.
   private func retryWhenAccessibilityIsAllowed() {
     guard eventTapCheckTimer == nil else { return }
     eventTapCheckTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in

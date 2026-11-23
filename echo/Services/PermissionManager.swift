@@ -14,7 +14,12 @@ class PermissionManager: ObservableObject {
   
   @Published var microphoneStatus: AppPermissionStatus = .unknown
   @Published var accessibilityStatus: AppPermissionStatus = .unknown
-  
+  /// Whether Accessibility has been asked for since Echo launched.
+  @Published private(set) var hasAskedForAccessibility = false
+
+  private var accessibilityCheckTimer: Timer?
+  private var settingsFallbackWorkItem: DispatchWorkItem?
+
   private init() {
     checkAllPermissions()
   }
@@ -38,7 +43,15 @@ class PermissionManager: ObservableObject {
   }
   
   func checkAccessibilityPermission() {
-    accessibilityStatus = AXIsProcessTrusted() ? .granted : .denied
+    let trusted = AXIsProcessTrusted()
+    accessibilityStatus = trusted ? .granted : .denied
+    if trusted {
+      settingsFallbackWorkItem?.cancel()
+      settingsFallbackWorkItem = nil
+      accessibilityCheckTimer?.invalidate()
+      accessibilityCheckTimer = nil
+      GlobalShortcutMonitor.shared.startMonitoring()
+    }
   }
   
   func requestMicrophonePermission() {
@@ -49,44 +62,92 @@ class PermissionManager: ObservableObject {
     }
   }
   
+  /// Asks for Accessibility, and falls back to opening System Settings if macOS does not show
+  /// its own prompt on screen.
+  ///
+  /// Asking is what adds Echo to the Accessibility list, and which request does it depends on
+  /// the macOS version. On macOS 27 it is the attempt to create the keyboard event tap; the
+  /// Accessibility request alone left Echo off the list. Both are made here, when the user asks
+  /// rather than at launch.
+  ///
+  /// The first time Echo asks, macOS shows its own dialog (`universalAccessAuthWarn`) with an
+  /// "Open System Settings" button and registers Echo in the Accessibility list. Opening System
+  /// Settings at the same time would put both on screen together, so we check briefly whether
+  /// that dialog appears on the current Space and only open System Settings directly if it does
+  /// not (for example, after an earlier launch already triggered it, or on a second click).
   func requestAccessibilityPermission() {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
-    _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-    bringAccessibilityPromptForward()
+    settingsFallbackWorkItem?.cancel()
+    settingsFallbackWorkItem = nil
+    watchForAccessibilityPermission()
 
-    // Start a timer to check periodically since there's no callback
-    Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-      let isTrusted = AXIsProcessTrusted()
-      if isTrusted {
-        DispatchQueue.main.async {
-          self.accessibilityStatus = .granted
-        }
-        timer.invalidate()
-      }
-    }
-  }
-  
-  /// The system shows the accessibility prompt from its own background process at the normal
-  /// window level and doesn't activate it, so it can open behind every other window. Hand
-  /// activation to that process once its window is on screen. Checks for up to 3 seconds.
-  private func bringAccessibilityPromptForward(attempt: Int = 0) {
-    let promptBundleID = "com.apple.accessibility.universalAccessAuthWarn"
-    if let prompt = NSRunningApplication.runningApplications(withBundleIdentifier: promptBundleID).first,
-      Self.hasOnScreenWindow(pid: prompt.processIdentifier)
-    {
-      NSApp.yieldActivation(to: prompt)
-      prompt.activate(from: .current, options: [])
+    if hasAskedForAccessibility {
+      openAccessibilitySettings()
       return
     }
-    guard attempt < 12 else { return }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-      self.bringAccessibilityPromptForward(attempt: attempt + 1)
+
+    hasAskedForAccessibility = true
+    GlobalShortcutMonitor.shared.startMonitoring(askingForAccess: true)
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
+    _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+
+    openAccessibilitySettingsIfPromptAbsent(attempt: 0)
+  }
+
+  private func openAccessibilitySettingsIfPromptAbsent(attempt: Int) {
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.settingsFallbackWorkItem = nil
+      guard !AXIsProcessTrusted() else {
+        self.checkAccessibilityPermission()
+        return
+      }
+      if Self.isSystemAccessibilityPromptVisible() {
+        return
+      }
+      if attempt < 5 {
+        self.openAccessibilitySettingsIfPromptAbsent(attempt: attempt + 1)
+      } else {
+        self.openAccessibilitySettings()
+      }
+    }
+    settingsFallbackWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+  }
+
+  private static func isSystemAccessibilityPromptVisible() -> Bool {
+    let promptBundleID = "com.apple.accessibility.universalAccessAuthWarn"
+    let pids = Set(
+      NSRunningApplication.runningApplications(withBundleIdentifier: promptBundleID)
+        .map(\.processIdentifier)
+    )
+    guard !pids.isEmpty else { return false }
+    let windows =
+      CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    return windows.contains { window in
+      guard let ownerPID = window[kCGWindowOwnerPID as String] as? pid_t,
+        pids.contains(ownerPID)
+      else { return false }
+      if let bounds = window[kCGWindowBounds as String] as? [String: Any],
+        let width = bounds["Width"] as? CGFloat,
+        let height = bounds["Height"] as? CGFloat
+      {
+        return width > 0 && height > 0
+      }
+      return true
     }
   }
 
-  private static func hasOnScreenWindow(pid: pid_t) -> Bool {
-    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
-    return windows.contains { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid }
+  /// Checks each second until Accessibility is allowed, as macOS gives no notice of it.
+  private func watchForAccessibilityPermission() {
+    guard accessibilityCheckTimer == nil else { return }
+    accessibilityCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+      guard AXIsProcessTrusted() else { return }
+      timer.invalidate()
+      DispatchQueue.main.async {
+        self?.accessibilityCheckTimer = nil
+        self?.checkAccessibilityPermission()
+      }
+    }
   }
 
   func openMicrophoneSettings() {

@@ -300,16 +300,22 @@ private struct AccessibilityStep: View {
       if permissions.accessibilityStatus == .granted {
         CheckStatus("Allowed").frame(height: 44).padding(.top, 36)
       } else {
-        Button("Open System Settings") {
+        Button(waiting || permissions.hasAskedForAccessibility ? "Open System Settings" : "Allow Accessibility") {
           waiting = true
           permissions.requestAccessibilityPermission()
         }
         .buttonStyle(RedPillButtonStyle())
-        .padding(.top, 36)
-
-        if waiting {
-          WaitingStatus("Waiting for the switch…").padding(.top, 18)
+        // Hung 18 pt below the button (which is 44 pt high) rather than stacked under it. An
+        // overlay takes no part in the layout, so showing it does not make the step taller
+        // and move what is above.
+        .overlay(alignment: .top) {
+          if waiting {
+            WaitingStatus("Waiting for you to turn on Echo under Accessibility…")
+              .fixedSize()
+              .padding(.top, 44 + 18)
+          }
         }
+        .padding(.top, 36)
       }
     }
     .onAppear { permissions.checkAccessibilityPermission() }
