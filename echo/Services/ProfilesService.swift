@@ -172,9 +172,11 @@ class ProfilesService: ObservableObject {
 
         let trimmedPPModel = profile.postProcessingModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPPModel.isEmpty else { throw ProfileValidationError.invalidPostProcessingModel }
-        if let option = PostProcessingModelOption.allOptions.first(where: { $0.value == trimmedPPModel }) {
-            if option.disabled { throw ProfileValidationError.invalidPostProcessingModel }
-        } else {
+        // A model Echo no longer offers is allowed: profiles saved by an earlier version still
+        // hold one, `PostProcessingModelOption.resolve` runs them on the default, and the
+        // editor replaces it on its next save. Rejecting it here would block every other
+        // change to such a profile (its shortcut, turning it on or off, duplicating it).
+        if PostProcessingModelOption.allOptions.contains(where: { $0.value == trimmedPPModel && $0.disabled }) {
             throw ProfileValidationError.invalidPostProcessingModel
         }
 

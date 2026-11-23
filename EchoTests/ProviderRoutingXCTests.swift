@@ -152,6 +152,23 @@ final class ProviderRoutingXCTests: XCTestCase {
     XCTAssertEqual(fields.map(\.value), ["microsoft/mai-transcribe-2", "en"])
   }
 
+  func testUnknownPostProcessingModelResolvesToAProviderWithAKey() {
+    // A profile from an earlier version, on a model that has been removed.
+    let removed = "llama-3.3-70b-versatile"
+    XCTAssertEqual(
+      PostProcessingModelOption.resolve(removed, hasGroqKey: true, hasOpenRouterKey: true).value,
+      "openai/gpt-oss-20b")
+    XCTAssertEqual(
+      PostProcessingModelOption.resolve(removed, hasGroqKey: false, hasOpenRouterKey: true).value,
+      "openrouter/openai/gpt-oss-20b")
+    // A model that is still offered is kept, whatever keys are saved.
+    XCTAssertEqual(
+      PostProcessingModelOption.resolve(
+        "google/gemini-3.5-flash-lite", hasGroqKey: true, hasOpenRouterKey: false
+      ).value,
+      "google/gemini-3.5-flash-lite")
+  }
+
   func testFailedTranscriptionPointsToTheKeyOnlyWhenTheKeyWasRejected() {
     for status in [401, 403] {
       let guidance = TranscriptionService.failureGuidance(

@@ -532,7 +532,11 @@ class TranscriptionService: ObservableObject {
         !transcribedText.isEmpty
       {
         appState.updateStatus(.postProcessing)
-        let ppModel = PostProcessingModelOption.resolve(profile.postProcessingModel).value
+        let ppModel = PostProcessingModelOption.resolve(
+          profile.postProcessingModel,
+          hasGroqKey: settingsManager.hasAPIKey(for: .groq),
+          hasOpenRouterKey: settingsManager.hasAPIKey(for: .openRouter)
+        ).value
         do {
           let processed = try await postProcessor.processText(
             transcribedText, promptTemplate: profile.postProcessingPrompt,

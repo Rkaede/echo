@@ -133,8 +133,20 @@ extension PostProcessingModelOption {
   /// The option for a stored model ID. Profiles saved with a model that is no longer offered
   /// fall back to the default rather than sending a request that may fail.
   static func resolve(_ value: String) -> PostProcessingModelOption {
+    offered(value) ?? recommendedOption!
+  }
+
+  /// As `resolve(_:)`, but a model that is no longer offered falls back to the default for a
+  /// provider whose key is saved, so clean-up still runs with only an OpenRouter key.
+  static func resolve(
+    _ value: String, hasGroqKey: Bool, hasOpenRouterKey: Bool
+  ) -> PostProcessingModelOption {
+    offered(value) ?? defaultOption(hasGroqKey: hasGroqKey, hasOpenRouterKey: hasOpenRouterKey)
+  }
+
+  /// The option Echo still offers for a stored model ID, if there is one.
+  private static func offered(_ value: String) -> PostProcessingModelOption? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return allOptions.first { $0.value == trimmed && !$0.disabled }
-      ?? recommendedOption!
   }
 }
