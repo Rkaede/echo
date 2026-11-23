@@ -13,7 +13,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const checkout = process.argv[2];
 if (!checkout) {
@@ -111,6 +111,7 @@ ${cues.map((cue) => `    case .${cue}:\n      return ${recipe(theme[cue], `${nam
 }
 `;
 
-const target = resolve(new URL("..", import.meta.url).pathname, "echo/Services/Cuelume/CuelumeRecipes.swift");
+// fileURLToPath, not .pathname: a checkout path with a space in it would stay percent-encoded.
+const target = resolve(fileURLToPath(new URL("..", import.meta.url)), "echo/Services/Cuelume/CuelumeRecipes.swift");
 writeFileSync(target, out);
 console.log(`wrote ${target} from Cuelume ${version} (${commit})`);
