@@ -680,16 +680,24 @@ extension TranscriptionService {
   /// Joins the results for consecutive parts of one recording. A part the speech gate
   /// rejects (all silence, where Whisper invents text) adds no text, but its segments are
   /// kept, so a recording that is silent throughout is still rejected as a whole.
+  ///
+  /// OpenRouter responses carry no segments. If such a part gave text, the joined result has
+  /// no segments either: the segments of another part (one that fell back to Whisper on Groq
+  /// and was silent, say) must not get the whole recording rejected.
   nonisolated static func combine(
     _ parts: [TranscriptionResultWithTiming], models: [String], partDurations: [TimeInterval]
   ) -> (TranscriptionResultWithTiming, String) {
     var texts: [String] = []
     var segments: [TranscriptionResult.Segment] = []
+    var hasTextWithoutSegments = false
     var offset: TimeInterval = 0
     for (part, duration) in zip(parts, partDurations) {
       if case .transcribe = SpeechGate.transcriptDecision(segments: part.result.segments) {
         let text = part.result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty { texts.append(text) }
+        if !text.isEmpty {
+          texts.append(text)
+          if (part.result.segments ?? []).isEmpty { hasTextWithoutSegments = true }
+        }
       }
       for segment in part.result.segments ?? [] {
         segments.append(
@@ -707,7 +715,7 @@ extension TranscriptionService {
 
     let result = TranscriptionResult(
       text: texts.joined(separator: " "), language: parts.first?.result.language,
-      duration: offset, segments: segments.isEmpty ? nil : segments)
+      duration: offset, segments: segments.isEmpty || hasTextWithoutSegments ? nil : segments)
     let timing = TranscriptionResultWithTiming(
       result: result,
       uploadTime: parts.reduce(0) { $0 + $1.uploadTime },

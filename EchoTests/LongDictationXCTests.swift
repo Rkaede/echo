@@ -129,6 +129,23 @@ final class LongDictationXCTests: XCTestCase {
     }
   }
 
+  func testCombineKeepsTextFromPartsWithoutSegmentsWhenAFallbackPartIsSilent() {
+    // MAI-Transcribe-2 on OpenRouter returns no segments. The last part fell back to Whisper
+    // on Groq, which flagged its quiet tail as non-speech.
+    let silence = segment(start: 0, end: 5, noSpeech: 0.9, logProb: -1.5)
+    let (combined, _) = TranscriptionService.combine(
+      [
+        part("First part.", segments: nil),
+        part("Second part.", segments: nil),
+        part("Thank you.", segments: [silence]),
+      ],
+      models: ["microsoft/mai-transcribe-2", "microsoft/mai-transcribe-2", "whisper-large-v3-turbo"],
+      partDurations: [600, 600, 300])
+
+    XCTAssertEqual(combined.result.text, "First part. Second part.")
+    XCTAssertEqual(SpeechGate.transcriptDecision(segments: combined.result.segments), .transcribe)
+  }
+
   // MARK: - Temporary file clean-up
 
   func testARecordingStillBeingWrittenIsNotOldHoweverLongAgoItStarted() {
@@ -269,7 +286,7 @@ final class LongDictationXCTests: XCTestCase {
     try file.write(from: buffer)
   }
 
-  private func part(_ text: String, segments: [TranscriptionResult.Segment])
+  private func part(_ text: String, segments: [TranscriptionResult.Segment]?)
     -> TranscriptionResultWithTiming
   {
     TranscriptionResultWithTiming(
