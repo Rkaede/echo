@@ -16,7 +16,7 @@
 
 A lightweight macOS app for instant speech-to-text. Tap Fn to record hands-free, or hold Fn for push-to-talk. Recording uses the active profile.
 
-Your speech is transcribed via Groq's Whisper models, or MAI-Transcribe-2 through OpenRouter, and automatically pasted into your current app.
+Your speech is transcribed by Whisper or MAI-Transcribe-2, through OpenRouter or Groq, and automatically pasted into your current app.
 
 - Fully open source
 - Native app (no electron, no webview)
@@ -33,19 +33,21 @@ Your speech is transcribed via Groq's Whisper models, or MAI-Transcribe-2 throug
 
 ## 📉 Costs
 
-Groq and OpenRouter are paid services.
+OpenRouter and Groq are paid services.
 
-- Whisper Large V3 Turbo (Groq): $0.04/hour
-- Whisper Large V3 (Groq): $0.111/hour
-- MAI-Transcribe-2 (OpenRouter): about $0.10/hour
+- Whisper Large V3 Turbo: $0.04/hour
+- Whisper Large V3: $0.111/hour
+- MAI-Transcribe-2: about $0.10/hour
+- With clean-up, the Fast setup costs about 4¢ per hour of speech and the Accurate setup about 13¢
 - Groq's minimum billable duration: 10 seconds
 - Typical usage: ~$1–$2/month for most people
 
 ## 🚨 Privacy (IMPORTANT)
 
-Echo uses the Groq API to transcribe audio. Review Groq's [Privacy Policy](https://groq.com/privacy-policy) and this [community post](https://community.groq.com/help-center-14/how-does-groq-handle-my-data-190). There are inconsistencies between the policy and community statements about data retention. If privacy is a concern, consider a fully local solution (e.g., Superwhisper).
+Echo sends your audio to a cloud service to transcribe it, and the transcript too when clean-up is on. Which service depends on the models your profile uses. If privacy is a concern, consider a fully local solution (e.g., Superwhisper).
 
-If you choose an OpenRouter model, Echo sends the audio (MAI-Transcribe-2) or the transcript text (Gemini clean-up) to OpenRouter, which passes it to the model's host. Review OpenRouter's [Privacy Policy](https://openrouter.ai/privacy).
+- **OpenRouter models** (what setup chooses): Echo sends the audio and the transcript to OpenRouter, which passes them to the model's host. Whisper through OpenRouter runs on Groq, so Groq's policy applies to it as well. Review OpenRouter's [Privacy Policy](https://openrouter.ai/privacy).
+- **Groq models**: Echo sends them straight to Groq. Review Groq's [Privacy Policy](https://groq.com/privacy-policy) and this [community post](https://community.groq.com/help-center-14/how-does-groq-handle-my-data-190). There are inconsistencies between the policy and community statements about data retention.
 
 What Echo does:
 
@@ -56,32 +58,39 @@ What Echo does:
 
 ## 🤖 Models
 
-Models are chosen per profile in Settings › Profiles.
+Setup offers two pairs of models, both through OpenRouter:
+
+- Accurate (recommended): MAI-Transcribe-2 with Gemini 3.5 Flash-Lite clean-up. English only.
+- Fast: Whisper Large V3 Turbo with GPT OSS 20B clean-up. Many languages.
+
+You can change the models for each profile in Settings › Profiles.
 
 Transcription:
 
-- Whisper Large V3 Turbo (Groq, default)
-- Whisper Large V3 (Groq)
-- MAI-Transcribe-2 (OpenRouter; English only). If it fails or is slow, Echo retries with Whisper Large V3 Turbo on Groq.
+- Whisper Large V3 Turbo (OpenRouter or Groq)
+- Whisper Large V3 (OpenRouter or Groq)
+- MAI-Transcribe-2 (OpenRouter; English only). If it fails or is slow, Echo retries with Whisper Large V3 Turbo: on Groq if you have a Groq key, otherwise through OpenRouter.
 
 Clean-up:
 
-- GPT OSS 20B (Groq, default)
+- GPT OSS 20B (OpenRouter or Groq)
 - Gemini 3.5 Flash-Lite (OpenRouter)
 
 ## 📝 Requirements
 
 - macOS 15.0+
-- A Groq API key: https://console.groq.com
-- Optional: an OpenRouter API key for MAI-Transcribe-2 and Gemini: https://openrouter.ai/keys
+- An OpenRouter API key, which setup asks for: https://openrouter.ai/keys
+- Optional: a Groq API key. It runs Whisper and GPT OSS 20B directly on Groq, which is about 100–300 ms faster per transcription: https://console.groq.com/keys
 
 ## 🚀 Getting Started
 
 1. Download the latest DMG: [Download for macOS](https://github.com/Rkaede/echo/releases/latest/download/Echo.dmg) (or visit the [releases page](https://github.com/Rkaede/echo/releases))
 2. Open the DMG and drag the app to your Applications folder
-3. Open the app and follow the onboarding process
-4. Grant microphone and accessibility permissions
-5. Enter your Groq API key
+3. Open the app and follow the setup: enter your OpenRouter API key, then choose the Accurate or the Fast models
+4. Grant microphone and accessibility permissions when setup asks
+5. Try a dictation: hold Fn while you talk, or tap Fn to start and tap it again to stop
+
+To add a Groq API key, open Settings › Providers.
 
 ## ⌨️ Shortcuts
 

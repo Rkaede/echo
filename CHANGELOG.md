@@ -4,17 +4,24 @@
 
 ### New Features
 
-- **OpenRouter models.** Add an OpenRouter API key in General settings, then choose a model per profile. MAI-Transcribe-2 (English only) makes fewer errors than Whisper and punctuates more cleanly, for a slightly longer wait. If it fails or is slow, Echo retries with Whisper Large V3 Turbo on Groq. Gemini 3.5 Flash-Lite is the more accurate of the two clean-up models, especially with names and technical terms. Your Groq key still covers the defaults.
+- **OpenRouter models.** Add an OpenRouter API key in Providers settings, then choose a model per profile. MAI-Transcribe-2 (English only) makes fewer errors than Whisper and punctuates more cleanly, for a slightly longer wait. If it fails or is slow, Echo retries with Whisper Large V3 Turbo: on Groq if you have a Groq key, otherwise through OpenRouter. Gemini 3.5 Flash-Lite is the more accurate of the two clean-up models, especially with names and technical terms. Your Groq key still covers the defaults.
+- **Echo with only an OpenRouter key.** Whisper Large V3 Turbo, Whisper Large V3 and GPT OSS 20B can also run through OpenRouter, which sends them to Groq, so one OpenRouter key covers transcription and clean-up. Calling Groq directly with a Groq key is about 100–300 ms faster.
+- **New setup.** Setup has been redesigned. It asks for an OpenRouter key, offers a Fast or an Accurate pair of models, and lets you try a dictation before you finish. If a Groq key is already saved, you can keep using it.
 - **Long dictations.** Recordings over 10 minutes are sent in parts, cut at pauses, so a dictation of an hour or more transcribes instead of failing at the upload limit. Long transcripts are cleaned up a section at a time. A prompt that uses {{TRANSCRIPTION}} still gets the whole transcript at once, so a prompt that turns a dictation into an email keeps working.
 - **Retry Failed Recording.** If a transcription fails, Echo keeps the recording, and Retry Failed Recording in the menu bar sends it again. Echo keeps the three most recent.
-- **Copy Prompt to Improve Clean-Up.** A new button in each profile's post-processing settings copies instructions for Claude Code or another coding agent. The agent reads that profile's dictation history, compares the raw transcripts with the cleaned text, and suggests a better prompt with a list of the names and terms you use. History must be turned on, and the agent you paste it into will read your history.
+- **Improve Prompt with an Agent.** A new Copy Instructions button in each profile's post-processing settings copies instructions for Claude Code or another coding agent. The agent reads that profile's dictation history, compares the raw transcripts with the cleaned text, and suggests a better prompt with a list of the names and terms you use. History must be turned on, and the agent you paste it into will read your history.
+- **New sounds.** The recording sounds are now synthesised with Cuelume instead of played from files. Choose from twelve sounds in four styles in Sound settings. If you had picked one of the old click sounds, Echo switches to the new default.
+- **New app and menu bar icons.**
 
 ### Improvements
 
+- **Providers settings.** The API keys have moved from General to a new Providers section in Settings.
+- **Drag Settings from anywhere.** The Settings window now moves when you drag any empty part of it.
 - **Better clean-up by default.** The clean-up prompt is now sent as instructions, with your dictation as a separate message, so the model no longer answers a question you dictate or follows an instruction you dictate. Profiles still using an old default prompt switch to the new one. Prompts you have edited are left as they are, and a prompt that includes {{TRANSCRIPTION}} works as before.
-- **A shorter list of clean-up models.** GPT OSS 20B on Groq is the default and the fastest. Gemini 3.5 Flash-Lite runs through OpenRouter. Profiles set to a model that has been removed now use GPT OSS 20B.
+- **A shorter list of clean-up models.** GPT OSS 20B on Groq is the default and the fastest, and it can also run through OpenRouter. Gemini 3.5 Flash-Lite runs through OpenRouter. Profiles set to a model that has been removed now use GPT OSS 20B.
 - **Comparable error rates.** The word error rate shown for each transcription model now comes from one independent benchmark (Artificial Analysis), so the models can be compared.
-- **History keeps the cleaned text.** Each dictation now saves the cleaned text next to the raw transcript, along with the profile and clean-up model used.
+- **History keeps the cleaned text.** Each dictation now saves the cleaned text next to the raw transcript, along with the profile and clean-up model used. The History window shows the cleaned text, with a switch to the raw transcript.
+- **Profiles without a key are skipped.** Switching profile while recording now passes over a profile whose speech-to-text provider has no API key saved.
 
 ### Fixes
 
