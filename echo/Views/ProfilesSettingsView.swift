@@ -720,7 +720,7 @@ private struct MissingKeyNote: View {
 
   var body: some View {
     if settings.apiKey(for: provider).isEmpty {
-      Label("Add your \(provider.displayName) API key in General settings to use this model.",
+      Label("Add your \(provider.displayName) API key in Providers settings to use this model.",
             systemImage: "exclamationmark.triangle.fill")
         .font(.caption)
         .foregroundColor(.orange)
