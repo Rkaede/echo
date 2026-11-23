@@ -3,6 +3,11 @@ import XCTest
 
 @testable import Echo
 
+private actor Counter {
+  private(set) var value = 0
+  func increment() { value += 1 }
+}
+
 final class LongDictationXCTests: XCTestCase {
   private var directory: URL!
 
@@ -220,6 +225,32 @@ final class LongDictationXCTests: XCTestCase {
     } catch {
       XCTAssertTrue(error is PostProcessingError)
     }
+  }
+
+  func testACancelledCleanUpStartsNoMoreSectionsAndThrows() async {
+    let started = Counter()
+    let task = Task {
+      try await PostProcessingPrompt.cleanUpSections(
+        ["one", "two", "three", "four", "five", "six"], maxConcurrent: 2
+      ) { section in
+        await started.increment()
+        try await Task.sleep(for: .seconds(30))
+        return section
+      }
+    }
+    while await started.value < 2 {
+      try? await Task.sleep(for: .milliseconds(5))
+    }
+    task.cancel()
+
+    do {
+      _ = try await task.value
+      XCTFail("a cancelled clean-up should throw")
+    } catch {
+      XCTAssertTrue(error is CancellationError, "\(error)")
+    }
+    let count = await started.value
+    XCTAssertEqual(count, 2, "no section should start after the cancel")
   }
 
   func testCutOffCleanUpIsReportedNotPasted() throws {

@@ -117,6 +117,8 @@ enum PostProcessingPrompt {
                 if index >= maxConcurrent, let (done, result) = await group.next() {
                     record(done, result)
                 }
+                // Cancelled (a newer recording took over, say): start no more sections.
+                if Task.isCancelled { break }
                 group.addTask {
                     do { return (index, .success(try await cleanUp(section))) }
                     catch { return (index, .failure(error)) }
@@ -126,6 +128,8 @@ enum PostProcessingPrompt {
                 record(done, result)
             }
         }
+        // A cancelled clean-up has no result: sections that finished first are not one.
+        try Task.checkCancellation()
         if let firstError, cleaned.allSatisfy({ $0 == nil }) { throw firstError }
         return zip(sections, cleaned).map { raw, clean in clean ?? raw }.joined(separator: " ")
     }
