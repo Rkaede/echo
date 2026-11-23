@@ -37,6 +37,8 @@ class GlobalShortcutMonitor {
   }
 
   func startMonitoring() {
+    guard eventTap == nil else { return }
+
     // Create event mask for the events we want to monitor
     let eventMask =
       (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
@@ -77,14 +79,20 @@ class GlobalShortcutMonitor {
         userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
       )
     else {
-      log(
-        "Failed to create event tap",
-        category: loggerCategory,
-        level: .error
-      )
+      // Logged once: the retry below would otherwise repeat it every second.
+      if eventTapCheckTimer == nil {
+        log(
+          "Failed to create event tap",
+          category: loggerCategory,
+          level: .error
+        )
+      }
+      retryWhenAccessibilityIsAllowed()
       return
     }
 
+    eventTapCheckTimer?.invalidate()
+    eventTapCheckTimer = nil
     self.eventTap = eventTap
 
     // Create a run loop source and add it to the current run loop
@@ -100,6 +108,20 @@ class GlobalShortcutMonitor {
     )
   }
 
+  /// macOS refuses the event tap until Echo is allowed under Accessibility, which a new user
+  /// does during setup, after launch. Checks until it is allowed and then creates the tap, so
+  /// fn and the shortcuts work without relaunching Echo.
+  private func retryWhenAccessibilityIsAllowed() {
+    guard eventTapCheckTimer == nil else { return }
+    eventTapCheckTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+      guard let self else {
+        timer.invalidate()
+        return
+      }
+      if AXIsProcessTrusted() { self.startMonitoring() }
+    }
+  }
+
   private func interruptFnGesture() {
     fnGesture.reset()
     let keyTime = ProcessInfo.processInfo.systemUptime
@@ -108,6 +130,8 @@ class GlobalShortcutMonitor {
 
   func stopMonitoring() {
     interruptFnGesture()
+    eventTapCheckTimer?.invalidate()
+    eventTapCheckTimer = nil
     if let eventTap = eventTap {
       CGEvent.tapEnable(tap: eventTap, enable: false)
       self.eventTap = nil
