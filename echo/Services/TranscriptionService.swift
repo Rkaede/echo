@@ -240,6 +240,16 @@ class TranscriptionService: ObservableObject {
       return .success(())
     }
 
+    // As when recording starts: the keys are loaded lazily, and until they are, the fallback
+    // to Whisper looks unavailable.
+    settingsManager.ensureAPIKeyLoaded()
+    let transcriptionProvider = TranscriptionData.provider(for: activeTranscriptionModel)
+    guard settingsManager.hasAPIKey(for: transcriptionProvider) else {
+      let error = TranscriptionError.noAPIKey(transcriptionProvider)
+      appState.setError(error.localizedDescription)
+      return .failure(error)
+    }
+
     let duration =
       (try? AVAudioFile(forReading: audioFileURL)).map {
         Double($0.length) / $0.processingFormat.sampleRate
@@ -250,6 +260,11 @@ class TranscriptionService: ObservableObject {
       category: loggerCategory, level: .info)
 
     isCancelled = false
+    // For two seconds after a cancel the overlay shows "cancelled", and that status ignores
+    // every change but a fresh start. Clear it first, or the retry would run unseen.
+    if appState.status == .cancelled {
+      appState.updateStatus(.idle)
+    }
     appState.updateStatus(.processing)
     return await startPipeline(
       audioFileURL: audioFileURL, recordingDuration: duration,
@@ -433,6 +448,10 @@ class TranscriptionService: ObservableObject {
         )
         appState.transcriptionText = ""
         notesModeService.discardPendingScreenshot()
+        // A retried recording with no speech in it has nothing left to retry.
+        if retrying {
+          failedRecordings.remove(audioFileURL)
+        }
         appState.updateStatus(.noSpeechDetected)
         return .success(())
       }
