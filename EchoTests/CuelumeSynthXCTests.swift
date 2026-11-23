@@ -36,6 +36,17 @@ final class CuelumeSynthXCTests: XCTestCase {
     }
   }
 
+  func testSoftClipHoldsAtItsCeilingPastFullScale() {
+    XCTAssertEqual(CuelumeSynth.softClip(0.5), 0.5)
+    XCTAssertEqual(CuelumeSynth.softClip(-0.5), -0.5)
+    XCTAssertEqual(CuelumeSynth.softClip(1), 0.85, accuracy: 1e-12)
+    // Without the clamp a level of 2 came out as about -0.82: inverted.
+    XCTAssertEqual(CuelumeSynth.softClip(2), 0.85, accuracy: 1e-12)
+    XCTAssertEqual(CuelumeSynth.softClip(-1.3), -0.85, accuracy: 1e-12)
+    let levels = stride(from: 0.0, through: 3.0, by: 0.01).map(CuelumeSynth.softClip)
+    XCTAssertTrue(zip(levels, levels.dropFirst()).allSatisfy { $0 <= $1 }, "never falls as the input rises")
+  }
+
   func testRenderLastsForTheLongestLayerPlusTheRoom() {
     let recipe = CuelumeTheme.standard.recipe(for: .ready)
     let longest = recipe.layers.filter { $0.from <= .normal }

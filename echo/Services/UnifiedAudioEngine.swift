@@ -1255,7 +1255,13 @@ class UnifiedAudioEngine: ObservableObject {
     cancelIdleStop()
     ensurePlaybackEngineStarted()
 
-    guard let playable = convertedForPlayer(buffer, label: label) else {
+    // If the engine could not start, a scheduled buffer would never play or complete: the
+    // caller would wait on its completion and the pending count would never fall.
+    guard playbackEngine.isRunning, let playable = convertedForPlayer(buffer, label: label) else {
+      // Nothing was scheduled, so no playback completion will stop the engine again.
+      if pendingPlaybackCount == 0 {
+        schedulePlaybackEngineIdleStop()
+      }
       completion?()
       return
     }

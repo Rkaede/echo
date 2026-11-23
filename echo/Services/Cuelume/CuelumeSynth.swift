@@ -226,10 +226,13 @@ enum CuelumeSynth {
     }
   }
 
-  private static func softClip(_ level: Double) -> Double {
-    let over = abs(level) - clipKnee
-    guard over > 0 else { return level }
+  /// Rounds levels above the knee off towards a ceiling. Past full scale the level is held at
+  /// the ceiling, as Web Audio's WaveShaperNode clamps its input; without that the curve bends
+  /// back down and, from about 1.7, flips the sign.
+  static func softClip(_ level: Double) -> Double {
     let shoulder = 1 - clipKnee
+    let over = min(abs(level) - clipKnee, shoulder)
+    guard over > 0 else { return level }
     return (level < 0 ? -1 : 1) * (clipKnee + over - (over * over) / (2 * shoulder))
   }
 
