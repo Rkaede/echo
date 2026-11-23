@@ -114,6 +114,21 @@ struct TranscriptionData {
     }
   }
 
+  /// The model a new or default profile starts with. With only an OpenRouter key it is
+  /// OpenRouter's default. Otherwise it is the saved choice, unless that is an OpenRouter model
+  /// (setup saves one) and the OpenRouter key has since been removed.
+  static func newProfileModel(
+    selected: String, hasGroqKey: Bool, hasOpenRouterKey: Bool
+  ) -> String {
+    if !hasGroqKey && hasOpenRouterKey {
+      return defaultModel(for: .openRouter)
+    }
+    if provider(for: selected) == .openRouter && !hasOpenRouterKey {
+      return defaultModel(for: .groq)
+    }
+    return selected
+  }
+
   /// Picks a Whisper Turbo fallback for a slow or failing OpenRouter transcription.
   /// Prefers direct Groq when a Groq key is configured; otherwise falls back to Whisper Turbo
   /// on OpenRouter (unless that model is the one that already failed).

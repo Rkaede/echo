@@ -254,11 +254,11 @@ struct ProfilesSettingsView: View {
     let now = Date()
     let settings = SettingsManager.shared
     settings.ensureAPIKeyLoaded()
-    let openRouterOnly = !settings.hasAPIKey && settings.hasOpenRouterAPIKey
-    let defaultTranscriptionModel =
-      openRouterOnly
-      ? TranscriptionData.defaultModel(for: .openRouter)
-      : settings.selectedModel
+    let defaultTranscriptionModel = TranscriptionData.newProfileModel(
+      selected: settings.selectedModel,
+      hasGroqKey: settings.hasAPIKey,
+      hasOpenRouterKey: settings.hasOpenRouterAPIKey
+    )
     let defaultPostProcessingModel =
       PostProcessingModelOption.defaultOption(
         hasGroqKey: settings.hasAPIKey,

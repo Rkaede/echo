@@ -169,6 +169,25 @@ final class ProviderRoutingXCTests: XCTestCase {
       "google/gemini-3.5-flash-lite")
   }
 
+  func testNewProfileModelFollowsTheSavedKeys() {
+    let mai = "microsoft/mai-transcribe-2"
+    // Setup saved an OpenRouter model; the OpenRouter key was later replaced by a Groq key.
+    XCTAssertEqual(
+      TranscriptionData.newProfileModel(selected: mai, hasGroqKey: true, hasOpenRouterKey: false),
+      "whisper-large-v3-turbo")
+    XCTAssertEqual(
+      TranscriptionData.newProfileModel(selected: mai, hasGroqKey: true, hasOpenRouterKey: true),
+      mai)
+    XCTAssertEqual(
+      TranscriptionData.newProfileModel(
+        selected: "whisper-large-v3", hasGroqKey: true, hasOpenRouterKey: false),
+      "whisper-large-v3")
+    XCTAssertEqual(
+      TranscriptionData.newProfileModel(
+        selected: "whisper-large-v3", hasGroqKey: false, hasOpenRouterKey: true),
+      "openai/whisper-large-v3-turbo")
+  }
+
   func testFailedTranscriptionPointsToTheKeyOnlyWhenTheKeyWasRejected() {
     for status in [401, 403] {
       let guidance = TranscriptionService.failureGuidance(

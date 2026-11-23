@@ -204,10 +204,12 @@ class ProfilesService: ObservableObject {
     }
 
     private var defaultTranscriptionModelForSeed: String {
-        if preferredDefaultProvider == .openRouter {
-            return TranscriptionData.defaultModel(for: .openRouter)
-        }
-        return settings.selectedModel
+        settings.ensureAPIKeyLoaded()
+        return TranscriptionData.newProfileModel(
+            selected: settings.selectedModel,
+            hasGroqKey: settings.hasAPIKey,
+            hasOpenRouterKey: settings.hasOpenRouterAPIKey
+        )
     }
 
     private var defaultPostProcessingModelForSeed: String {
