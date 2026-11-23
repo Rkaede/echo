@@ -152,6 +152,27 @@ final class ProviderRoutingXCTests: XCTestCase {
     XCTAssertEqual(fields.map(\.value), ["microsoft/mai-transcribe-2", "en"])
   }
 
+  func testFailedTranscriptionPointsToTheKeyOnlyWhenTheKeyWasRejected() {
+    for status in [401, 403] {
+      let guidance = TranscriptionService.failureGuidance(
+        for: APIError.httpError(statusCode: status, message: "{}"))
+      XCTAssertEqual(guidance.title, "API key rejected", "\(status)")
+      XCTAssertEqual(guidance.hint, "Check Settings › Providers", "\(status)")
+    }
+    // Retrying can fix these, so they keep the retry hint.
+    let retryable: [Error] = [
+      APIError.httpError(statusCode: 429, message: "{}"),
+      APIError.httpError(statusCode: 503, message: "{}"),
+      URLError(.timedOut),
+      URLError(.notConnectedToInternet),
+    ]
+    for error in retryable {
+      let guidance = TranscriptionService.failureGuidance(for: error)
+      XCTAssertEqual(guidance.title, "Transcription failed", "\(error)")
+      XCTAssertEqual(guidance.hint, "Retry from the Echo menu", "\(error)")
+    }
+  }
+
   func testFallbackModelRunsOnGroq() {
     XCTAssertEqual(TranscriptionData.provider(for: TranscriptionData.fallbackModel), .groq)
     XCTAssertEqual(

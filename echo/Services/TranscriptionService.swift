@@ -612,9 +612,10 @@ class TranscriptionService: ObservableObject {
       let transcriptionError = TranscriptionError.transcriptionFailed(error)
       // Keep the recording so it can be retried; a long dictation is too costly to lose.
       if retrying || failedRecordings.save(audioFileURL) != nil {
+        let guidance = Self.failureGuidance(for: error)
         appState.setError(
           transcriptionError.localizedDescription + " The recording was kept.",
-          recoveryHint: "Retry from the Echo menu", title: "Transcription failed")
+          recoveryHint: guidance.hint, title: guidance.title)
       } else {
         appState.setError(transcriptionError.localizedDescription)
       }
@@ -634,6 +635,17 @@ extension TranscriptionService {
   /// The transcription model for the active profile, or the legacy global setting.
   var activeTranscriptionModel: String {
     profilesService.activeProfile?.transcriptionModel ?? settingsManager.selectedModel
+  }
+
+  /// What the overlay says when a transcription fails and its recording is kept. Retrying
+  /// cannot help while the provider rejects the API key (HTTP 401 or 403), so that points to
+  /// where the key is fixed; the recording is still there to retry afterwards. The overlay
+  /// has about 134 pt for the hint, on one line: a longer one is cut off.
+  nonisolated static func failureGuidance(for error: Error) -> (title: String, hint: String) {
+    if case APIError.httpError(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
+      return ("API key rejected", "Check Settings › Providers")
+    }
+    return ("Transcription failed", "Retry from the Echo menu")
   }
 
   /// How long to wait for an OpenRouter transcription before falling back to Groq Whisper.
